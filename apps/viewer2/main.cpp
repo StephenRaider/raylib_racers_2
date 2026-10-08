@@ -1,7 +1,7 @@
 // rr_viewer2: Raylib Racers 2's race viewer on the new renderer. For now one car on one
 // track: John Fone (the racingline robot) driving a 2013 car round Highmoor Ridge.
 //
-//   rr_viewer2 [--track highmoor] [--car f1_2013_02] [--spec f1_2013] [--robot racingline] [--laps 30]
+//   rr_viewer2 [--track highmoor] [--car f1_2013_02] [--spec f1_2013] [--robot racingline] [--laps N]
 //              [--sky NAME] [--cam 1-6] [--msaa 1|2|4] [--vsync] [--shots DIR] [--bench]
 //              [--exhaust-ir FILE.wav] [--no-sound] [--wav FILE [--wav-start SECONDS] [--wav-length SECONDS]]
 //
@@ -167,7 +167,7 @@ int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::string carSpec = "f1_2013", trackName = "highmoor", carId = "f1_2013_02", robot = "racingline", skyName = "kloofendal_partly_cloudy";
     std::string shotsDir;
-    int width = 1600, height = 900, laps = 30, msaa = 4, startCam = 1;
+    int width = 1600, height = 900, laps = 0, msaa = 4, startCam = 1;
     bool vsync = false, bench = false, sound = true;
     std::string wavPath, irPath;
     float wavStart = 0, wavLength = 20;
@@ -209,6 +209,18 @@ int main(int argc, char** argv) {
     // the race: one car
     rr::RaceConfig cfg;
     cfg.track = trackName;
+    // A 2013 grand prix is the fewest whole laps over 305 km (set --laps to override).
+    if (laps <= 0) {
+        laps = 30;
+        for (const std::string& d : {dir + "/tracks", std::string(RR_SOURCE_DIR "/tracks"), std::string("tracks")}) {
+            rr::Track probe;
+            std::string e2;
+            if (fs::exists(d + "/" + trackName + ".trk") && probe.load(d + "/" + trackName + ".trk", &e2)) {
+                laps = std::max(1, (int)std::ceil(305000.0f / probe.length()));
+                break;
+            }
+        }
+    }
     cfg.laps = laps;
     cfg.quiet = true;
     cfg.botHost = rr::botHostPath(dir);
@@ -302,6 +314,17 @@ int main(int argc, char** argv) {
         text(mono, TextFormat("NOW  %s", lapTime(race.time() - c.lapStart).c_str()), 28 * scale, 80 * scale, 20, RAYWHITE);
         text(mono, TextFormat("LAST %s", lapTime(c.lapTimes.empty() ? 0 : c.lapTimes.back()).c_str()), 28 * scale, 104 * scale, 20, RAYWHITE);
         text(mono, TextFormat("BEST %s", lapTime(c.bestLap).c_str()), 188 * scale, 104 * scale, 20, Color{180, 120, 255, 255});
+        // fuel (its weight is simulated) and tyres, under the timing
+        {
+            const char* names[] = {"?", "SOFT", "MEDIUM", "HARD"};
+            const float wear = std::max(c.state.tireWear[0], c.state.tireWear[1]);
+            panel((int)(16 * scale), (int)(156 * scale), (int)(330 * scale), (int)(54 * scale));
+            text(mono, TextFormat("FUEL %5.1f kg  %.0f kg car", std::max(0.0f, c.state.fuel) * c.phys.fuelDensity,
+                                  c.phys.mass + std::max(0.0f, c.state.fuel) * c.phys.fuelDensity),
+                 28 * scale, 162 * scale, 16, RAYWHITE);
+            text(mono, TextFormat("TYRES %-6s %2.0f%% worn", names[std::clamp(c.state.compound, 0, 3)], wear * 100.0f), 28 * scale,
+                 184 * scale, 16, wear > 0.7f ? Color{255, 120, 80, 255} : RAYWHITE);
+        }
         // speed, gear, revs and pedals, bottom right
         const float bx = W - 300 * scale, by = H - 150 * scale;
         panel((int)bx, (int)by, (int)(284 * scale), (int)(134 * scale));

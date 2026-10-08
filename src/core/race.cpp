@@ -173,7 +173,8 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
         c.robotCfg.ambient_temp = cfg.ambient;
         c.robotCfg.starting_compound_set = e.tires != 0;
         c.robotCfg.pits_closed = cfg.pitsClosed;
-        c.robotCfg.starting_fuel_set = e.fuel > 0;
+        // with no refuelling the starting load is fixed by the rules: a full tank
+        c.robotCfg.starting_fuel_set = e.fuel > 0 || c.phys.noRefuel > 0.5f;
         if (e.fuel > 0) c.robotCfg.initial_fuel = std::min(e.fuel, c.phys.fuelCapacity);
         c.robotCfg.session = cfg.session;
         c.robotCfg.session_laps = cfg.laps;
@@ -188,6 +189,7 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
             return false;
         }
         c.robotCfg.initial_fuel = clampf(c.robotCfg.initial_fuel, 0.0f, c.phys.fuelCapacity);
+        if (c.phys.noRefuel > 0.5f) c.robotCfg.initial_fuel = c.phys.fuelCapacity;
         if (cfg.fuelLimit > 0) c.robotCfg.initial_fuel = std::min(c.robotCfg.initial_fuel, cfg.fuelLimit);
         if (c.robotCfg.tire_compound < RR_TIRE_SOFT || c.robotCfg.tire_compound > RR_TIRE_HARD)
             c.robotCfg.tire_compound = RR_TIRE_MEDIUM;
@@ -777,7 +779,7 @@ void Race::updatePit(Car& c) {
         bool atBox = std::fabs(wrapDs(c.trackS - c.pitBoxS)) < 2.5f && std::fabs(c.lateral * side - boxLat) < 2.0f;
         if (c.control.pit_request && !cfg_.pitsClosed && atBox && speed < 0.5f && !c.finished && !over_) {
             c.pitOrder = c.control;
-            float fuel = clampf(c.pitOrder.pit_fuel, 0.0f, c.phys.fuelCapacity - c.state.fuel);
+            float fuel = c.phys.noRefuel > 0.5f ? 0.0f : clampf(c.pitOrder.pit_fuel, 0.0f, c.phys.fuelCapacity - c.state.fuel);
             c.pitOrder.pit_fuel = fuel;
             bool tyres = c.pitOrder.pit_tires >= RR_TIRE_SOFT && c.pitOrder.pit_tires <= RR_TIRE_HARD;
             if (!tyres) c.pitOrder.pit_tires = 0;

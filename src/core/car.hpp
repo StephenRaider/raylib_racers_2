@@ -93,6 +93,8 @@ struct CarParams {
     float pitServiceScale = 1.0f;
     // Engine: 0 the 2000s 3.0 l V10 (19,000 rpm), 1 the 2013 2.4 l V8 (18,000 rpm, 560 kW).
     float engineV8 = 0.0f;
+    // 1: no refuelling in the pits (2010 onwards); a stop changes tyres and repairs only.
+    float noRefuel = 0.0f;
     // Prepared for 2013's energy recovery and drag reduction; the simulation does not use
     // them yet. kersPower W and kersEnergy J per lap (a boost of 60 kW for 6.67 s), and what
     // the open DRS flap does to the drag and downforce coefficients.

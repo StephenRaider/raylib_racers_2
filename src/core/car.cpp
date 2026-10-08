@@ -45,7 +45,7 @@ const CarParams::Field* CarParams::fields(int* count) {
         F(fuelPerJoule), F(wearPerJoule), F(tireHeatCap), F(tireSlideHeat), F(tireLonHeat), F(tireRollHeat),
         F(tireCoolBase), F(tireCoolSpeed), F(blanketTemp), F(brakeHeatCap), F(brakeCoolBase), F(brakeCoolSpeed),
         F(brakeToRim), F(rimHeatCap), F(rimCoolBase), F(rimCoolSpeed), F(rimToTyre), F(brakeTempLo), F(brakeTempHi), F(maxAeroLoss), F(damageForMaxLoss), F(maxDragGain), F(maxPowerLoss), F(maxGripLoss), F(torqueScale),
-        F(pitServiceScale), F(engineV8), F(kersPower), F(kersEnergy), F(drsDragScale), F(drsDownforceScale),
+        F(pitServiceScale), F(engineV8), F(noRefuel), F(kersPower), F(kersEnergy), F(drsDragScale), F(drsDownforceScale),
     };
 #undef F
     *count = (int)(sizeof f / sizeof f[0]);
