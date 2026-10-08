@@ -114,12 +114,33 @@ TRACKS = {
         (-200,-450,50,11),                         # Clearways
         (-140,0,120,12),                           # Clark
     ], names=['Paddock Hill', 'Druids', '', 'Graham Hill', 'Surtees', "Pilgrim's Drop", 'Hawthorn', 'Westfield', 'Dingle Dell', 'Sheene', 'Stirlings', 'Clearways', 'Clark']),
-
+    # RR2's main test track: an original hill circuit with real elevation and banking.
+    # Corners: (x, y, radius, width, height at the apex, bank in degrees, + for a right-hander).
+    "highmoor": dict(
+    name="Highmoor Ridge", scenery="hills", length=4600, width=13, pitspeed=20,
+    about="Hill circuit: a plunge into turn 1, a climb to a banked summit hairpin, the corkscrew drop and a flat-out rise back to the line.",
+    start=(300,0), runoff=9, verts=[
+        (800,0,30,14, 8,3),                         # The Plunge, at the foot of the start straight
+        (820,-180,45,13, 12,-3),                    # Mill, left
+        (1000,-300,40,13, 18,3),                    # Mill, right
+        (1020,-480,60,13, 26,-3),                   # Ridge, climbing
+        (1300,-560,100,13, 36,4),                   # Long Ridge, uphill and blind
+        (1330,-900,20,12, 44,8),                    # Summit hairpin, banked
+        (1080,-760,35,12, 42,-4),                   # Corkscrew in, over the brow
+        (960,-880,30,12, 22,5),                     # Corkscrew out, at the bottom of the drop
+        (600,-900,25,12, 8,2),                      # Valley hairpin
+        (640,-560,50,13, 12,-3),                    # Brook
+        (380,-400,45,13, 12,4),                     # Chapel
+        (100,-460,40,13, 10,3),                     # Hollow
+        (-60,0,60,14, 22,3),                        # Highmoor, climbing onto the start straight
+    ], rises=[(11, 0.5, 13)],
+    names=['The Plunge', 'Mill', '', 'Ridge', 'Long Ridge', 'Summit', 'Corkscrew', '', 'Valley', 'Brook', 'Chapel', 'Hollow', 'Highmoor']),
 }
 
 
 def path(verts, start, step=2.0):
     """Points (x, y, width, in_corner) round the lap, beginning nearest `start`."""
+    verts = [v[:4] for v in verts]
     n = len(verts)
     info = []
     for i, (x, y, r, w) in enumerate(verts):
@@ -293,14 +314,74 @@ def build(key, t):
     else:
         pts = path(t["verts"], t["start"])
         k = t["length"] / arc_s(pts)[1]
-        verts = [(x * k, y * k, r * k, w) for x, y, r, w in t["verts"]]
+        verts = [(v[0] * k, v[1] * k, v[2] * k) + tuple(v[3:]) for v in t["verts"]]
         pts = path(verts, (t["start"][0] * k, t["start"][1] * k))
-        labels = [(min(range(len(pts)), key=lambda q: (pts[q][0] - v[0]) ** 2 + (pts[q][1] - v[1]) ** 2), name)
-                  for v, name in zip(verts, t["names"]) if name]
+        apex = [min(range(len(pts)), key=lambda q: (pts[q][0] - v[0]) ** 2 + (pts[q][1] - v[1]) ** 2) for v in verts]
+        labels = [(a, name) for a, name in zip(apex, t["names"]) if name]
+        if len(t["verts"][0]) > 4:
+            pts = relief(t, verts, pts, apex)
     bad = overlaps(pts, 2 * t["runoff"] + 4)
     if bad:
         print(f"  warning: {key} comes close to itself at s = {bad[:3]}")
     return pts, labels
+
+
+def relief(t, verts, pts, apex):
+    """Adds height and bank to each point: (x, y, width, in_corner, h, bank).
+
+    Each corner vertex carries (..., h, bank): the road height at its apex and its bank
+    angle (degrees, + raises the left edge, so + for a right-hander). `rises` adds height
+    knots on the straights: (after corner i, fraction of the way to the next, h).
+    Heights follow a Hermite curve through the knots; banks fade in and out over
+    `bank_fade` metres either side of each corner."""
+    s, total = arc_s(pts)
+    n = len(pts)
+    knots = [(s[a], v[4]) for a, v in zip(apex, verts)]
+    for i, f, h in t.get("rises", []):
+        a, b = s[apex[i]], s[apex[(i + 1) % len(verts)]]
+        knots.append(((a + ((b - a) % total) * f) % total, h))
+    knots.sort()
+    ext = [(k - total, h) for k, h in knots] + knots + [(k + total, h) for k, h in knots]
+    def height(sv):
+        j = max(q for q in range(len(ext)) if ext[q][0] <= sv)
+        (sp, hp), (s0, h0), (s1, h1), (sn, hn) = ext[j - 1], ext[j], ext[j + 1], ext[j + 2]
+        L = s1 - s0
+        m0 = (h1 - hp) / (s1 - sp) * L
+        m1 = (hn - h0) / (sn - s0) * L
+        u = (sv - s0) / L
+        u2, u3 = u * u, u * u * u
+        return (2 * u3 - 3 * u2 + 1) * h0 + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * h1 + (u3 - u2) * m1
+    # corner runs (contiguous in_corner points), each owned by the vertex whose apex it holds
+    runs, i0 = [], next(i for i in range(n) if not pts[i][3])
+    q = 0
+    while q < n:
+        i = (i0 + q) % n
+        if pts[i][3]:
+            e = q
+            while e < n and pts[(i0 + e) % n][3]:
+                e += 1
+            idx = [(i0 + z) % n for z in range(q, e)]
+            owner = next((vi for vi, a in enumerate(apex) if a in idx), None)
+            if owner is None:
+                owner = min(range(len(apex)), key=lambda vi: min(abs(apex[vi] - z) for z in idx))
+            runs.append((s[idx[0]], s[idx[-1]], verts[owner][5]))
+            q = e
+        else:
+            q += 1
+    fade = t.get("bank_fade", 50.0)
+    def bank(sv):
+        best, val = 0.0, 0.0
+        for a, b, deg in runs:
+            if (sv - a) % total <= (b - a) % total:
+                d = 0.0
+            else:
+                d = min((a - sv) % total, (sv - b) % total)
+            w = max(0.0, 1 - d / fade)
+            w = w * w * (3 - 2 * w)
+            if w > best:
+                best, val = w, deg * w
+        return val
+    return [p[:4] + (height(sv), bank(sv)) for p, sv in zip(pts, s)]
 
 
 def write(key, t, pts):
@@ -327,7 +408,8 @@ def write(key, t, pts):
     for a, b in zip([pts[-1]] + pts, pts):
         acc += math.hypot(b[0] - a[0], b[1] - a[1])
         if acc >= (9.5 if b[3] else 24):  # denser control points in corners
-            lines.append(f"p {b[0]:.1f} {b[1]:.1f} {b[2]:g}")
+            relief = f" h={b[4]:.2f} bank={b[5]:.1f}" if len(b) > 4 else ""
+            lines.append(f"p {b[0]:.1f} {b[1]:.1f} {b[2]:g}{relief}")
             acc = 0.0
     with open(f"tracks/{key}.trk", "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -378,6 +460,28 @@ def plot(key, t, pts, labels, pit, outdir):
     ax.text(x0 + 250, y0 - span * 0.035, "500 m", color="white", ha="center", fontsize=7)
     fig.savefig(f"{outdir}/{key}.png", bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
+    if len(pts[0]) > 4:  # elevation and bank along the lap
+        fig, ax = plt.subplots(figsize=(9, 3), dpi=110)
+        fig.patch.set_facecolor("#14161c")
+        ax.set_facecolor("#14161c")
+        ax.fill_between(s, [p[4] for p in pts], min(p[4] for p in pts) - 5, color="#3a4a3a")
+        ax.plot(s, [p[4] for p in pts], color="#c8ccd6", lw=1.5)
+        ax2 = ax.twinx()
+        ax2.plot(s, [p[5] for p in pts], color="#ff8030", lw=1, alpha=0.8)
+        ax2.set_ylim(-30, 30)
+        for i, name in labels:
+            ax.text(s[i], pts[i][4] + 2, name, color="#8fc8ff", fontsize=7, ha="center", rotation=60)
+        for a, c in ((ax, "white"), (ax2, "#ff8030")):
+            a.tick_params(colors=c, labelsize=7)
+        ax.set_xlabel("distance (m)", color="white", fontsize=8)
+        ax.set_ylabel("height (m)", color="white", fontsize=8)
+        ax2.set_ylabel("bank (deg)", color="#ff8030", fontsize=8)
+        grade = [(pts[(i + 1) % len(pts)][4] - pts[i - 1][4]) / max(1e-3, s[(i + 1) % len(pts)] - s[i - 1])
+                 for i in range(1, len(pts) - 1)]
+        ax.set_title(f"{t['name']} profile: {max(p[4] for p in pts) - min(p[4] for p in pts):.0f} m relief, "
+                     f"grades {min(grade) * 100:+.0f}% to {max(grade) * 100:+.0f}%", color="white", fontsize=10)
+        fig.savefig(f"{outdir}/{key}_profile.png", bbox_inches="tight", facecolor=fig.get_facecolor())
+        plt.close(fig)
 
 
 def main():
@@ -395,3 +499,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
