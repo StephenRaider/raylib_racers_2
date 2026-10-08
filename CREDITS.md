@@ -41,6 +41,12 @@ The Mercedes from "[FREE!] 2013 F1 Pack" (https://skfb.ly/pCRIA) by Dave Love, l
 CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Changes: the pack's single model
 split into one car (body and wheels, metres, RR layout; see its `car.json`).
 
+## assets/sound
+
+`exhaust_f1v10.wav` is `smooth_35.wav` from [engine-sim](https://github.com/ange-yaghi/engine-sim)
+by Ange Yaghi (AngeTheGreat), MIT licence (copy in `assets/sound/ENGINE_SIM_LICENSE.txt`): the exhaust
+impulse response of its F1 V10 engine. The V8 sound runs its firing pulses through it.
+
 ## assets/scenery
 
 See [assets/scenery/CREDITS.md](assets/scenery/CREDITS.md) (Low Poly Forest Tree Pack, CC BY 4.0;
