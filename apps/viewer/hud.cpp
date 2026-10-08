@@ -176,7 +176,11 @@ void Hud::drawTower(const rr::Race& race, const HudState& st) {
     float h = 104 + rowH * cars.size() + 8;
     panel({x, 16, w, h});
 
+#ifdef RR2_RENDERER
+    text("RAYLIB RACERS 2", x + 16, 26, 15, kAccent, true);
+#else
     text("RAYLIB RACERS", x + 16, 26, 15, kAccent, true);
+#endif
     text(race.track().name().c_str(), x + 16, 46, 19, kText);
     char buf[96];
     std::snprintf(buf, sizeof buf, "LAP %d / %d", leader.currentLap(race.laps()), race.laps());

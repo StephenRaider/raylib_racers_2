@@ -142,12 +142,18 @@ if(RR_BUILD_VIEWER)
   endif()
 
   # viewer v2: races on the new renderer (one car for now)
+  # The RR1 viewer's own main, menu, HUD, testing screens, director and sound, built with
+  # RR2_RENDERER so that its Renderer is the one in apps/viewer2/renderer2.* (PBR, 2013 cars).
   add_executable(rr_viewer2
-    apps/viewer2/main.cpp
-    apps/viewer2/car_render.cpp
-    apps/viewer/engine_sound.cpp
-    apps/viewer/race_audio.cpp)
-  target_include_directories(rr_viewer2 PRIVATE apps/viewer)
+    apps/viewer/main.cpp
+    apps/viewer/director.cpp
+    apps/viewer/hud.cpp apps/viewer/hud_results.cpp apps/viewer/hud_menu.cpp apps/viewer/hud_test.cpp
+    apps/viewer/menu.cpp apps/viewer/test_figures.cpp apps/viewer/liveries.cpp
+    apps/viewer/engine_sound.cpp apps/viewer/race_audio.cpp
+    apps/viewer2/renderer2.cpp
+    apps/viewer2/car_render.cpp)
+  target_compile_definitions(rr_viewer2 PRIVATE RR2_RENDERER=1)
+  target_include_directories(rr_viewer2 PRIVATE apps/viewer apps/viewer2)
   target_link_libraries(rr_viewer2 PRIVATE rr_gfx)
   target_compile_options(rr_viewer2 PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)
   rr_output(rr_viewer2 "${RR_OUT}")

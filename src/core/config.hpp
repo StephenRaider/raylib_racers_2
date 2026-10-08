@@ -28,6 +28,7 @@ inline std::shared_ptr<std::vector<unsigned char>> newWeekendMemory() {
 
 struct RaceConfig {
     std::string track = "circuit";
+    std::string carSpec;       // car spec for entries that name none ("" = the built-in F1 car)
     int laps = 3;
     std::vector<EntrySpec> entries;
     uint64_t seed = 1;

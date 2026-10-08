@@ -17,6 +17,9 @@ public:
         float metalness = 0.0f, roughness = 0.3f, clearcoat = 1.0f, clearcoatRoughness = 0.03f;
     };
     bool load(const std::string& dir, const Finish& paint, std::string* err);
+    // Another car of the same model: shares this one's meshes and textures, has its own suspension.
+    void shareFrom(const CarRender& src);
+    bool isOwner() const { return owner_; }
     void unload();
 
     // Follows the car: wheels on the road, the body on its suspension. dt in seconds.
@@ -58,6 +61,7 @@ private:
     // each a damped spring chasing what the loads ask for
     float pitch_ = 0, roll_ = 0, heave_ = 0, vp_ = 0, vr_ = 0, vh_ = 0;
     bool first_ = true;
+    bool owner_ = true;  // false: the meshes belong to the car this one shares them with
     int hint_ = 0;
 
     bool loadPart(const std::string& file, const Finish& paint, int liveryMaterial, std::vector<Part>* out, bool wheel,

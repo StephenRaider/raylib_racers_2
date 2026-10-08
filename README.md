@@ -1,12 +1,28 @@
-# Raylib Racers
+# Raylib Racers 2
 
 A small, fast TORCS-style racing simulator for testing driving algorithms.
 Cars are driven by **robots**: shared libraries written in C or C++ that read
 sensors and return steering, throttle and brake. Races run headless at hundreds
 of times real time for experiments, or in a raylib 3D viewer to watch them.
-Version 1.0 is tagged `v1.0`.
 
-![Start of a race, TV camera](docs/images/start.jpg)
+**New in Raylib Racers 2** (Raylib Racers 1 is tagged `v1.0`):
+
+- **Hills and banking.** Tracks carry a height and a bank angle per control point;
+  the car feels grade, banking, crests and compressions, and robots get the 3D
+  track (robot API version 9). The new test track, **Highmoor Ridge** (4.6 km,
+  37 m of climb and drop, a banked summit hairpin, a corkscrew), is built on it.
+- **A new renderer** (`rr_viewer2`): physically based materials, HDRI sky lighting,
+  cascaded sun shadows, 4x MSAA, instanced trees with levels of detail and
+  baked terrain occlusion; 2013 F1 cars with clear-coat paint, steering front
+  wheels, a turning steering wheel and a suspension that rolls, pitches and squats.
+  The menu, HUD, testing screens and director are Raylib Racers 1's, unchanged.
+- **A 2013 car** (`specs/f1_2013.json`): 642 kg, a 2.4 l V8 (560 kW at 18,000 rpm),
+  about 3 g of downforce, no refuelling (a fixed start load, tyre-only stops) and
+  305 km races. KERS and DRS values are in the spec for later.
+- **A V8 sound**: eight firings a cycle through a recorded F1 exhaust response, with
+  gearshift effects and the odd pop.
+
+![Start of a race on Highmoor Ridge, TV camera (Raylib Racers 2)](docs/images/start.jpg)
 
 ## What is in the box
 
@@ -53,7 +69,7 @@ Version 1.0 is tagged `v1.0`.
 | ![Director camera](docs/images/director.jpg) | ![Overview camera](docs/images/overview.jpg) |
 | ![Cinematic camera](docs/images/cinematic.jpg) | ![Helicopter camera](docs/images/helicopter.jpg) |
 | ![Orbit camera](docs/images/orbit.jpg) | ![TV camera](docs/images/tv.jpg) |
-| ![Pit stop: the car is held in its box while the crew works](docs/images/pitstop.jpg) | ![Pit lane: speed limiter on, heading for the box](docs/images/pitlane.jpg) |
+| ![Testing menu](docs/images/testing_menu.jpg) | ![Testing: dashboard over the live car](docs/images/testing_dashboard.jpg) |
 | ![Quick race menu](docs/images/menu.jpg) | ![Grid page: livery, algorithm and start tyres per car](docs/images/grid.jpg) |
 | ![Championship: calendar, rules and saved seasons](docs/images/championship.jpg) | ![Race end: results with the fastest lap](docs/images/results.jpg) |
 | ![Testing: telemetry dashboard while scrubbing a run](docs/images/testing.jpg) | ![Testing: track and events window with the delta to the best lap](docs/images/testing_track.jpg) |
@@ -366,17 +382,22 @@ laptop GPU.
 
 ### Viewer v2
 
-`rr_viewer2` is the race viewer on the new renderer. It drives the 2013 car spec (`specs/f1_2013.json`: 642 kg, a 2.4 l V8 with 560 kW at 18,000 rpm,
-about 3 g of downforce at 300 km/h; no refuelling: a fixed 215 l start load and tyre-only stops; KERS and DRS values are in the file but not simulated yet), set with `--spec`. Its races run the fewest whole laps over 305 km (67 laps of Highmoor), unless `--laps` is given. For now it runs one car on one
-track: John Fone (the `racingline` robot, which plans for hills and banking) in the 2013
-Mercedes on Highmoor Ridge. The front wheels steer, the body rolls, pitches and squats on
-its springs, the paint has a metallic base under a clear coat, and the car casts a contact
-shadow. Cameras: 1 chase, 2 T-cam, 3 nose, 4 TV, 5 helicopter, 6 orbit (drag, wheel);
-`[` `]` slow down or speed up time, Space pauses, F12 saves a screenshot.
+`rr_viewer2` is the Raylib Racers 1 viewer (same menu, HUD, testing screens, director,
+race-end windows and keys, see "Run" above) with its renderer replaced by the PBR one:
+`apps/viewer/main.cpp` is built with `RR2_RENDERER`, which swaps `Renderer` for
+`apps/viewer2/renderer2.*`. It starts on Highmoor Ridge with the 2013 car spec
+(`specs/f1_2013.json`: 642 kg, a 2.4 l V8 with 560 kW at 18,000 rpm, about 3 g of
+downforce at 300 km/h; no refuelling: a fixed 215 l start load and tyre-only stops;
+KERS and DRS values are in the file but not simulated yet) and runs the fewest whole
+laps over 305 km (67 laps of Highmoor Ridge) unless `--laps` is given. Only one 2013 car
+model is bundled (the Mercedes, `assets/cars/f1_2013_02`): every team wears it for now.
+The V8 sound plays through a recorded F1 exhaust response (`assets/sound`); `M` mutes.
 
 ```
-./build/rr_viewer2                       # --car f1_2013_02 --robot racingline --laps 30
-./build/rr_viewer2 --shots shots/        # photograph the first minute from every camera
+./build/rr_viewer2                                   # the menu
+./build/rr_viewer2 --test --no-menu --car racingline  # a testing run with the telemetry screens
+./build/rr_viewer2 --no-menu --camera 7              # a race with the director camera
+./build/rr_viewer2 --screenshot shot.png --at 40 --no-menu   # a screenshot of the race at 40 s
 ```
 
 The materials and skies come from `tools/import_assets.py` (CC0, see
@@ -388,8 +409,9 @@ The materials and skies come from `tools/import_assets.py` (CC0, see
 include/rr/robot_api.h   robot ABI (C)
 src/core/                track, car physics, race, robot loader, CLI, car specs
 apps/headless/           rr_race
-apps/viewer/             rr_viewer (renderer, HUD)
-apps/trackview/          rr_trackview: RR2's PBR track renderer
+apps/viewer/             rr_viewer (renderer, HUD, menu, testing screens; also rr_viewer2's main)
+apps/viewer2/            rr_viewer2's renderer, and its car (clear coat, suspension)
+apps/trackview/          the PBR renderer and the 3D track; rr_trackview
 bots/                    example robots and shared helpers
 tracks/                  circuit, oval and seven real-inspired circuits (.trk)
 specs/                   car specs and development rules (JSON)
@@ -401,8 +423,8 @@ assets/cars/f1_gearari/  F1 car: body and wheel glTF, car.json, liveries (see it
 ## Current limits and next steps
 
 - Hills and banking are simulated (grade, bank, crests and compressions), but
-  `rr_viewer` still draws every track flat; `rr_trackview` shows the 3D track
-  without cars. One car model.
+  `rr_viewer` still draws every track flat; `rr_viewer2` and `rr_trackview` draw the
+  3D track. Only the Mercedes model is bundled, so every team wears it.
 - Overtaking between closely matched cars is still rare. `gapfollow` and
   `simple` never pit, so in long races they run out of fuel or tyres.
 - Possible next steps: a track editor, per-team car setups, parameter sweeps

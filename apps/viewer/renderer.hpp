@@ -1,4 +1,7 @@
 #pragma once
+#ifdef RR2_RENDERER
+#include "../viewer2/renderer2.hpp"  // Raylib Racers 2: the same interface on the PBR renderer
+#else
 #include <string>
 #include <vector>
 
@@ -123,3 +126,5 @@ private:
     Vector3 trackCenter_{};
     float trackExtent_ = 500;
 };
+
+#endif  // RR2_RENDERER

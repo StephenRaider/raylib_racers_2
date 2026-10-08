@@ -125,7 +125,27 @@ bool CarRender::load(const std::string& dir, const Finish& paint, std::string* e
            loadPart(dir + "/wheel_rear.glb", paint, -1, &wheel_parts_[1], true, wheels_[2].radius, err);
 }
 
+void CarRender::shareFrom(const CarRender& src) {
+    body_parts_ = src.body_parts_;
+    steer_parts_ = src.steer_parts_;
+    wheel_parts_[0] = src.wheel_parts_[0];
+    wheel_parts_[1] = src.wheel_parts_[1];
+    for (int i = 0; i < 4; ++i) wheels_[i] = src.wheels_[i];
+    wheelbase_ = src.wheelbase_;
+    track_ = src.track_;
+    steerHub_ = src.steerHub_;
+    steerAxis_ = src.steerAxis_;
+    owner_ = false;
+}
+
 void CarRender::unload() {
+    if (!owner_) {
+        body_parts_.clear();
+        steer_parts_.clear();
+        wheel_parts_[0].clear();
+        wheel_parts_[1].clear();
+        return;
+    }
     for (auto* list : {&body_parts_, &steer_parts_, &wheel_parts_[0], &wheel_parts_[1]}) {
         for (Part& p : *list) UnloadMesh(p.mesh);
         list->clear();

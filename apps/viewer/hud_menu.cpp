@@ -149,7 +149,11 @@ void Hud::trackShape(const std::vector<rr::Vec2>& pts, Rectangle box, Color c, f
 void Hud::drawTopBar(const MenuState& m, std::vector<MenuHit>& hits, float& top) {
     const float sw = (float)GetScreenWidth();
     const float mx = std::max(24.0f, sw * 0.03f);
+#ifdef RR2_RENDERER
+    text("RAYLIB RACERS 2", mx, 26, 15, kAccent, true);
+#else
     text("RAYLIB RACERS", mx, 26, 15, kAccent, true);
+#endif
     const char* title = m.testing() ? "Testing" : m.champ() ? "Championship" : m.weekend() ? "Race weekend" : "Quick race";
     text(title, mx, 46, 34, kText, true);
     // session tabs

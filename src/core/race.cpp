@@ -128,10 +128,11 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
     for (size_t i = 0; i < cfg.entries.size(); ++i) {
         const auto& e = cfg.entries[i];
         Car& c = cars_[i];
-        if (!e.spec.empty()) {
-            std::string path = findDataFile(e.spec, specDirs);
+        const std::string specName = e.spec.empty() ? cfg.carSpec : e.spec;
+        if (!specName.empty()) {
+            std::string path = findDataFile(specName, specDirs);
             if (path.empty()) {
-                if (err) *err = "car spec '" + e.spec + "' not found";
+                if (err) *err = "car spec '" + specName + "' not found";
                 return false;
             }
             if (!loadCarSpec(path, c.phys, err)) return false;

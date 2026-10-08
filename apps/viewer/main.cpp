@@ -104,6 +104,8 @@ std::vector<std::string> listTracks(const Paths& paths) {
 // Drives three laps of `track` with the racingline robot alone (no pit stops) and
 // measures a flying lap: time, fuel and tyre wear. The menu uses it to show tyre life
 // and fuel range in laps of this track.
+std::string gCarSpec;  // the car spec the calibration laps use ("" = the built-in car)
+
 TrackStats calibrate(const std::string& track, const Paths& paths) {
     TrackStats t;
     t.file = t.title = track;
@@ -111,6 +113,7 @@ TrackStats calibrate(const std::string& track, const Paths& paths) {
     c.track = track;
     c.laps = 3;
     c.quiet = true;
+    c.carSpec = gCarSpec;
     c.entries = {{"racingline", "pit=0", ""}};
     rr::Race r;
     std::string err;
@@ -191,6 +194,15 @@ int main(int argc, char** argv) {
         return 0;
     }
     const std::vector<rr::EntrySpec> cliEntries = cfg.entries;
+#ifdef RR2_RENDERER
+    // Raylib Racers 2: the 2013 car, on Highmoor Ridge unless a track is asked for
+    if (cfg.carSpec.empty()) cfg.carSpec = "f1_2013";
+    bool trackGiven = false;
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--track" || std::string(argv[i]) == "-t") trackGiven = true;
+    if (!trackGiven) cfg.track = "highmoor";
+    gCarSpec = cfg.carSpec;
+#endif
 
     const std::string dir = rr::exeDir(argv[0]);
     cfg.botHost = rr::botHostPath(dir);
@@ -324,7 +336,21 @@ int main(int argc, char** argv) {
         menu.track = 0;
     }
     menu.laps = cfg.laps == 3 ? 10 : cfg.laps;  // 3 is the headless default; a race to watch is longer
+#ifdef RR2_RENDERER
+    // a 2013 grand prix: the fewest whole laps over 305 km (unless --laps was given)
+    auto gpLaps = [&]() {
+        const float len = menu.tracks[menu.track].length;
+        if (cfg.laps == 3 && len > 500) menu.laps = std::max(1, (int)std::ceil(305000.0f / len));
+    };
+#endif
     menu.tankLitres = rr::CarParams{}.fuelCapacity;
+#ifdef RR2_RENDERER
+    {   // the 2013 car's fixed start load (no refuelling)
+        rr::CarParams p;
+        if (rr::loadCarSpec(rr::findDataFile(cfg.carSpec, {RR_SOURCE_DIR "/specs", dir + "/specs", "specs"}), p, nullptr))
+            menu.tankLitres = p.fuelCapacity;
+    }
+#endif
     auto ensureStats = [&]() {
         TrackStats& ts = menu.tracks[menu.track];
         if (!ts.measured) ts = calibrate(ts.file, paths);
@@ -335,6 +361,9 @@ int main(int argc, char** argv) {
             if (!t.measured) t = calibrate(t.file, paths);
         menu.setWearRate(cfg.wearRate);
         menu.resetCalendar();
+#ifdef RR2_RENDERER
+        gpLaps();
+#endif
     }
 
     auto race = makeRace(cfg, paths);
@@ -345,7 +374,11 @@ int main(int argc, char** argv) {
     unsigned flags = FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE;
     if (!shotMode) flags |= FLAG_VSYNC_HINT;
     SetConfigFlags(flags);
+    #ifdef RR2_RENDERER
+    InitWindow(cfg.width, cfg.height, "Raylib Racers 2");
+#else
     InitWindow(cfg.width, cfg.height, "Raylib Racers");
+#endif
     if (cfg.fullscreen) ToggleFullscreen();
     SetTargetFPS(shotMode ? 0 : 120);
     SetExitKey(KEY_NULL);  // Esc goes back to the menu
@@ -374,6 +407,14 @@ int main(int argc, char** argv) {
     }
 
     RaceAudio audio;
+#ifdef RR2_RENDERER
+    // the 2013 V8 on its F1 exhaust, in a little trackside room
+    audio.engine = EngineSynth::V8;
+    audio.heightOf = carHeightForSound;
+    audio.setReverb(0.22f);
+    audio.setExhaustImpulse(loadExhaustImpulse(paths.assets), 1.5f);
+    audio.setMaster(0.6f);
+#endif
     if (!shotMode && !audio.init()) std::fprintf(stderr, "note: no audio device, running without sound\n");
 
     HudState st;
@@ -1056,6 +1097,9 @@ int main(int argc, char** argv) {
             }
             if (act == MenuAction::TrackChanged) {
                 ensureStats();
+#ifdef RR2_RENDERER
+                gpLaps();
+#endif
                 if (!applyMenu()) quit = true;
             }
             if (act == MenuAction::ListLineups) {
