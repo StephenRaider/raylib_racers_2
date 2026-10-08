@@ -54,6 +54,9 @@ private:
         float cyl[8] = {1, 1, 1, 1, 1, 1, 1, 1};
         float bang = 0, bangPh = 0, bangHz = 100, bangLevel = 1;
         float thrSlow = 0, volleyClock = 0, jit = 0;
+        // each cylinder's exhaust blowdown pulse reaches the collector after its own pipe length
+        float pendT[8] = {}, pendG[8] = {};
+        float pulseSlow = 0;  // the slow, negative scavenging tail of a pulse
         int volley = 0;
         bool lifted = false;
     };

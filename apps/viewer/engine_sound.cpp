@@ -209,13 +209,30 @@ void EngineSynth::render(float* out, int frames) {
                         const float r = 0.5f + 0.5f * noise();
                         c.pulseGain *= r < 0.45f ? 0.25f : 1.2f + 2.2f * r;
                         // a hard, unburnt firing sometimes goes off in the pipe
-                        if (r > 0.9f && c.bang < 0.2f) {
-                            c.bang = 0.5f + 0.5f * (0.5f + 0.5f * noise());
+                        if (r > 0.965f && c.bang < 0.2f) {
+                            c.bang = 0.3f + 0.3f * (0.5f + 0.5f * noise());
                             c.bangHz = 80.0f + 50.0f * (0.5f + 0.5f * noise());
                         }
                     }
                 }
-                c.pulse += c.pulseGain;
+                if (v8) {
+                    // (after engine-sim's exhaust model: the pulse is the cylinder's blowdown, and it
+                    // arrives after that cylinder's header length, 0.3-1.4 ms of sound travel here)
+                    static const float kDelayMs[8] = {0.0f, 0.55f, 1.15f, 0.30f, 0.85f, 1.40f, 0.20f, 0.95f};
+                    c.pendT[firing & 7] = kDelayMs[firing & 7] * 1e-3f;
+                    c.pendG[firing & 7] = c.pulseGain;
+                } else {
+                    c.pulse += c.pulseGain;
+                }
+            }
+            if (v8) {
+                for (int k = 0; k < 8; ++k)
+                    if (c.pendG[k] != 0 && (c.pendT[k] -= dt) <= 0) {
+                        c.pulse += c.pendG[k];
+                        c.pulseSlow += c.pendG[k];
+                        c.pendG[k] = 0;
+                    }
+                c.pulseSlow *= std::exp(-dt / 0.006f);
             }
             c.pulse *= kPulseDecay;
             c.rough += (c.pulseGain - c.rough) * kRough;
@@ -245,17 +262,17 @@ void EngineSynth::render(float* out, int frames) {
                 c.thrSlow += (thr - c.thrSlow) * (dt / 0.25f);
                 if (!c.lifted && c.thrSlow - thr > 0.5f && c.rpm > 0.45f * c.maxRpm) {
                     c.lifted = true;
-                    c.volley = 3 + (int)(4.0f * (0.5f + 0.5f * noise()));
+                    c.volley = 1 + (int)(2.0f * (0.5f + 0.5f * noise()));
                     c.volleyClock = 0.02f;
                 }
                 if (thr > 0.3f) c.lifted = false;
                 if (c.volley > 0) {
                     c.volleyClock -= dt;
                     if (c.volleyClock <= 0) {
-                        c.bang = 0.7f + 0.5f * (0.5f + 0.5f * noise());
+                        c.bang = 0.4f + 0.3f * (0.5f + 0.5f * noise());
                         c.bangHz = 75.0f + 55.0f * (0.5f + 0.5f * noise());
                         c.volley--;
-                        c.volleyClock = 0.03f + 0.13f * (0.5f + 0.5f * noise());
+                        c.volleyClock = 0.06f + 0.2f * (0.5f + 0.5f * noise());
                     }
                 }
                 c.bangPh += kTwoPi * c.bangHz * dt;
@@ -267,8 +284,8 @@ void EngineSynth::render(float* out, int frames) {
 
             // exhaust: firing pulses, harmonics and pops ring the pipe resonances
             // (the pulse train's mean level is the pulse rate times its decay time)
-            const float pulseMean = v8 ? cycleHz * pulses * 0.0012f : 1.6f;
-            const float exc = eng + (c.pulse - pulseMean) * (0.10f + 0.22f * thr) * (v8 ? 1.25f : 1.0f) + popSig * 0.8f;
+            const float pulseMean = v8 ? cycleHz * pulses * (0.0012f - 0.18f * 0.006f) : 1.6f;
+            const float exc = eng + ((v8 ? c.pulse - 0.18f * c.pulseSlow : c.pulse) - pulseMean) * (0.10f + 0.22f * thr) * (v8 ? 2.6f : 1.0f) + popSig * 0.8f;
             float formants = 0;
             for (int k = 0; k < 3; ++k) {
                 const SvfCoef& q = svf.c[k];
