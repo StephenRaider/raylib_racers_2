@@ -390,7 +390,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (sound && shotsDir.empty() && !bench && !audio.init()) std::fprintf(stderr, "note: no audio device, running without sound\n");
-    float volume = 1.0f;
+    float volume = 0.6f;
     bool muted = false;
 
     if (!shotsDir.empty()) {

@@ -304,10 +304,10 @@ void EngineSynth::render(float* out, int frames) {
                     c.pulseGain *= cy;
                     if (thr < 0.15f && c.rpm > 0.3f * c.maxRpm) {
                         const float r = 0.5f + 0.5f * noise();
-                        c.pulseGain *= r < 0.45f ? 0.25f : 1.2f + 2.2f * r;
+                        c.pulseGain *= r < 0.45f ? 0.35f : 1.1f + 1.0f * r;  // a gentle burble
                         // a hard, unburnt firing sometimes goes off in the pipe
-                        if (r > 0.965f && c.bang < 0.2f) {
-                            c.bang = 0.3f + 0.3f * (0.5f + 0.5f * noise());
+                        if (r > 0.99f && c.bang < 0.2f) {
+                            c.bang = 0.15f + 0.15f * (0.5f + 0.5f * noise());
                             c.bangHz = 80.0f + 50.0f * (0.5f + 0.5f * noise());
                         }
                     }
@@ -359,14 +359,14 @@ void EngineSynth::render(float* out, int frames) {
                 c.thrSlow += (thr - c.thrSlow) * (dt / 0.25f);
                 if (!c.lifted && c.thrSlow - thr > 0.5f && c.rpm > 0.45f * c.maxRpm) {
                     c.lifted = true;
-                    c.volley = 1 + (int)(2.0f * (0.5f + 0.5f * noise()));
+                    c.volley = noise() > 0.2f ? 0 : 1;  // most lifts are clean; one in a few gets a single bang
                     c.volleyClock = 0.02f;
                 }
                 if (thr > 0.3f) c.lifted = false;
                 if (c.volley > 0) {
                     c.volleyClock -= dt;
                     if (c.volleyClock <= 0) {
-                        c.bang = 0.4f + 0.3f * (0.5f + 0.5f * noise());
+                        c.bang = 0.22f + 0.15f * (0.5f + 0.5f * noise());
                         c.bangHz = 75.0f + 55.0f * (0.5f + 0.5f * noise());
                         c.volley--;
                         c.volleyClock = 0.06f + 0.2f * (0.5f + 0.5f * noise());
