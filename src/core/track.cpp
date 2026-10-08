@@ -26,6 +26,12 @@ Vec2 catmullRom(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, float u) {
     return b1 * ((t2 - t) / (t2 - t1)) + b2 * ((t - t1) / (t2 - t1));
 }
 
+// Uniform Catmull-Rom for a scalar between v1 and v2 (u in [0,1]).
+float catmullRom1(float v0, float v1, float v2, float v3, float u) {
+    float u2 = u * u, u3 = u2 * u;
+    return 0.5f * (2 * v1 + (v2 - v0) * u + (2 * v0 - 5 * v1 + 4 * v2 - v3) * u2 + (3 * v1 - v0 - 3 * v2 + v3) * u3);
+}
+
 }  // namespace
 
 bool Track::load(const std::string& path, std::string* err) {
@@ -35,7 +41,7 @@ bool Track::load(const std::string& path, std::string* err) {
         return false;
     }
     std::vector<Vec2> ctrl;
-    std::vector<float> widths;
+    std::vector<float> widths, heights, banks;
     std::string line;
     int lineNo = 0;
     while (std::getline(in, line)) {
@@ -65,14 +71,35 @@ bool Track::load(const std::string& path, std::string* err) {
         } else if (key == "pitspeed") {
             ss >> pitCfg_.speed_limit;
         } else if (key == "p") {
-            float x, y, w = -1;
+            float x, y, w = -1, h = 0, bank = 0;
+            const std::string usage = path + ":" + std::to_string(lineNo) + ": expected 'p x y [width] [h=m] [bank=deg]'";
             if (!(ss >> x >> y)) {
-                if (err) *err = path + ":" + std::to_string(lineNo) + ": expected 'p x y [width]'";
+                if (err) *err = usage;
                 return false;
             }
-            ss >> w;
+            std::string tok;
+            bool first = true;
+            while (ss >> tok) {
+                auto num = [&](const std::string& v, float* out) {
+                    char* end = nullptr;
+                    *out = std::strtof(v.c_str(), &end);
+                    return !v.empty() && end && *end == 0;
+                };
+                bool ok;
+                if (tok.rfind("h=", 0) == 0) ok = num(tok.substr(2), &h);
+                else if (tok.rfind("bank=", 0) == 0) ok = num(tok.substr(5), &bank);
+                else if (first && tok == "-") ok = true;
+                else ok = first && num(tok, &w);
+                if (!ok) {
+                    if (err) *err = usage;
+                    return false;
+                }
+                first = false;
+            }
             ctrl.push_back({x, y});
             widths.push_back(w);
+            heights.push_back(h);
+            banks.push_back(bank);
         } else {
             if (err) *err = path + ":" + std::to_string(lineNo) + ": unknown key '" + key + "'";
             return false;
@@ -80,18 +107,28 @@ bool Track::load(const std::string& path, std::string* err) {
     }
     for (auto& w : widths)
         if (w <= 0) w = defaultWidth_;
-    return build(ctrl, widths, err);
+    return build(ctrl, widths, err, heights, banks);
 }
 
-bool Track::build(const std::vector<Vec2>& ctrl, const std::vector<float>& widths, std::string* err) {
+bool Track::build(const std::vector<Vec2>& ctrl, const std::vector<float>& widths, std::string* err,
+                  const std::vector<float>& heights, const std::vector<float>& banks) {
     const int n = (int)ctrl.size();
     if (n < 4) {
         if (err) *err = "a track needs at least 4 control points";
         return false;
     }
+    if ((!heights.empty() && (int)heights.size() != n) || (!banks.empty() && (int)banks.size() != n)) {
+        if (err) *err = "heights and banks need one value per control point";
+        return false;
+    }
+    auto hAt = [&](int i) { return heights.empty() ? 0.0f : heights[(i + n) % n]; };
+    auto bAt = [&](int i) { return banks.empty() ? 0.0f : banks[(i + n) % n] * kPi / 180.0f; };
+    is3D_ = false;
+    for (int i = 0; i < n; ++i)
+        if (hAt(i) != 0 || bAt(i) != 0) is3D_ = true;
     // 1. Dense spline polyline.
     std::vector<Vec2> dense;
-    std::vector<float> denseW;
+    std::vector<float> denseW, denseZ, denseB;
     for (int i = 0; i < n; ++i) {
         Vec2 p0 = ctrl[(i - 1 + n) % n], p1 = ctrl[i], p2 = ctrl[(i + 1) % n], p3 = ctrl[(i + 2) % n];
         float w1 = widths[i], w2 = widths[(i + 1) % n];
@@ -102,6 +139,10 @@ bool Track::build(const std::vector<Vec2>& ctrl, const std::vector<float>& width
             // smoothstep the width so width changes do not kink the edges
             float su = u * u * (3 - 2 * u);
             denseW.push_back(w1 + (w2 - w1) * su);
+            // height and bank follow a Catmull-Rom curve so the grade has no
+            // steps at the control points
+            denseZ.push_back(catmullRom1(hAt(i - 1), hAt(i), hAt(i + 1), hAt(i + 2), u));
+            denseB.push_back(catmullRom1(bAt(i - 1), bAt(i), bAt(i + 1), bAt(i + 2), u));
         }
     }
     // 2. Resample by arc length.
@@ -124,6 +165,9 @@ bool Track::build(const std::vector<Vec2>& ctrl, const std::vector<float>& width
         samples_[i].p = a + (b - a) * f;
         samples_[i].halfWidth = 0.5f * (wa + (wb - wa) * f);
         samples_[i].s = s;
+        size_t jb = (j + 1) % dense.size();
+        samples_[i].z = denseZ[j] + (denseZ[jb] - denseZ[j]) * f;
+        samples_[i].bank = denseB[j] + (denseB[jb] - denseB[j]) * f;
     }
     finalize();
     return true;
@@ -135,6 +179,7 @@ void Track::finalize() {
         Vec2 d = at(i + 1).p - at(i - 1).p;
         samples_[i].t = normalize(d);
         samples_[i].n = perpLeft(samples_[i].t);
+        samples_[i].grade = (at(i + 1).z - at(i - 1).z) / (2 * ds_);
     }
     std::vector<float> raw(n);
     for (int i = 0; i < n; ++i) {
@@ -376,6 +421,18 @@ Vec2 Track::dirAt(float s) const {
     int i = wrap((int)(s / ds_));
     float f = (s - samples_[i].s) / ds_;
     return normalize(samples_[i].t * (1 - f) + at(i + 1).t * f);
+}
+
+float Track::heightAt(float s, float lateral) const {
+    s = std::fmod(s, length_);
+    if (s < 0) s += length_;
+    int i = wrap((int)(s / ds_));
+    float f = (s - samples_[i].s) / ds_;
+    const auto& a = samples_[i];
+    const auto& b = at(i + 1);
+    float z = a.z + (b.z - a.z) * f;
+    float bank = a.bank + (b.bank - a.bank) * f;
+    return z + lateral * std::tan(bank);
 }
 
 void Track::buildEdgeGrid() {

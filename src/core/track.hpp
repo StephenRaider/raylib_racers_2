@@ -14,6 +14,11 @@ struct TrackSample {
     float s = 0;       // arc length from the start line
     float halfWidth = 7;
     float curvature = 0;  // 1/m, + = left
+    // 3D shape. The sim is still 2D: s and curvature are measured in plan view,
+    // and these are for the renderer (and later the 3D bot API).
+    float z = 0;          // centreline height, m
+    float bank = 0;       // road bank angle, rad, + = left edge raised
+    float grade = 0;      // dz/ds, + = uphill in race direction
 };
 
 // Where a point is relative to the track.
@@ -31,14 +36,19 @@ struct TrackLoc {
 //   name   <words>
 //   width  <metres>            default tarmac width
 //   runoff <metres>            tarmac edge to barrier
-//   p <x> <y> [width]          control point, in race order; start line at the first
+//   p <x> <y> [width] [h=<m>] [bank=<deg>]
+//                              control point, in race order; start line at the first.
+//                              width <= 0 or "-" uses the default; h is the road
+//                              height, bank is + when the left edge is higher
 //   pit left|right <entry_s> <lane_start_s> <lane_end_s> <exit_s>
 //                              optional pit lane alongside the track (s in metres)
 //   pitspeed <m/s>             pit lane speed limit (default 22)
 class Track {
 public:
     bool load(const std::string& path, std::string* err);
-    bool build(const std::vector<Vec2>& ctrl, const std::vector<float>& widths, std::string* err);
+    // heights and banks (degrees) are optional: empty means flat.
+    bool build(const std::vector<Vec2>& ctrl, const std::vector<float>& widths, std::string* err,
+               const std::vector<float>& heights = {}, const std::vector<float>& banks = {});
 
     const std::string& name() const { return name_; }
     // The viewer's scenery theme ("scenery forest" in the file; "" = the default mix).
@@ -61,6 +71,11 @@ public:
 
     Vec2 pointAt(float s, float lateral) const;
     Vec2 dirAt(float s) const;
+    // Road surface height at track distance s and lateral offset (banking
+    // included; beyond the tarmac edge the bank plane is simply extended).
+    float heightAt(float s, float lateral = 0) const;
+    // True when any control point has a height or bank.
+    bool is3D() const { return is3D_; }
 
     // Distance along a ray to the first tarmac edge it crosses, or maxRange.
     float raycastEdge(Vec2 origin, Vec2 dir, float maxRange) const;
@@ -114,6 +129,7 @@ private:
     float runoff_ = 6;
     float length_ = 0;
     float ds_ = 1;
+    bool is3D_ = false;
     std::vector<TrackSample> samples_;
     std::vector<RRTrackPoint> apiPoints_;
     RRTrackInfo info_{};

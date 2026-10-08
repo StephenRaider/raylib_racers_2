@@ -309,7 +309,10 @@ See [docs/ROBOTS.md](docs/ROBOTS.md). In short: export
 
 Tracks are text files (`tracks/*.trk`): a name, a default width, the runoff to
 the barrier, an optional pit lane and a list of control points in race order,
-joined by a Catmull-Rom spline. A control point can carry its own width. The loader warns
+joined by a Catmull-Rom spline. A control point can carry its own width, a road
+height (`h=12`, metres) and a bank angle (`bank=6`, degrees, + raises the left
+edge), as in `p 120 40 14 h=12 bank=6` (use `-` for the default width). Height
+and bank only shape the 3D road for now; the race sim is still flat. The loader warns
 when a corner is tighter than the track is wide or when the track overlaps
 itself.
 
