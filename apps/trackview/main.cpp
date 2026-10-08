@@ -183,6 +183,8 @@ int main(int argc, char** argv) {
         };
         const Shot shots[] = {
             {"00_paddock", 0, -170, 4.0f, 16.0f, 20, 0.0f, 3.0f, 55},
+            {"00b_garages_behind", 0, 60, -95.0f, 8.0f, 150, -22.0f, 3.0f, 55},
+            {"00c_stand_behind", 0, 150, 70.0f, 10.0f, 220, 15.0f, 5.0f, 55},
             {"01_grid", 0, -60, -3.5f, 1.1f, 60, -1.0f, 1.0f, 62},
             {"02_plunge_approach", 1, -230, 2.5f, 1.1f, -40, -1.0f, 0.5f, 55},
             {"03_plunge_aerial", 1, 0, 0, 0, 0, 0, 0, 55, {-55, 70, -40}},

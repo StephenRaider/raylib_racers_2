@@ -1201,12 +1201,18 @@ void TrackScene::buildProps(const std::string& assetsDir) {
         float len = std::fmod(s1 - s0 + L, L);
         int bays = std::max(1, (int)(len / 8.0f));
         float bay = len / bays;
-        float g = ground(s0 + len / 2, F) + 0.02f;
+        // The pit straight slopes: each bay sits on its own ground (the lowest corner of
+        // its footprint), so the building steps down the hill with deep foundations.
+        auto bayGround = [&](float a, float e) {
+            return std::min({ground(a, F), ground(e, F), ground(a, F + D), ground(e, F + D)}) + 0.02f;
+        };
         for (int b = 0; b < bays; ++b) {
             float a = s0 + b * bay, e = a + bay;
+            const float g = bayGround(a, e);
             // pillar and side wall between garages, the back wall, the floor
-            blk(white, a, a + 0.6f, F, F + D, g - 1.0f, g + 4.4f, false, 0.6f);
-            blk(white, a, e, F + D * 0.93f, F + D, g - 1.0f, g + 4.4f, false, 0.5f);
+            blk(white, a, a + 0.6f, F, F + D, g - 4.0f, g + 4.4f, false, 0.6f);
+            blk(white, a, e, F + D * 0.93f, F + D, g - 4.0f, g + 4.4f, false, 0.5f);
+            blk(white, a, e, F, F + D, g - 4.0f, g - 0.3f, false, 0.6f);  // foundation, under the floor
             // the garage floor (inside, dark)
             blk(slab, a + 0.6f, e, F, F + D * 0.93f, g - 0.3f, g + 0.01f, false, 0.4f);
             // half-open roller door
@@ -1219,7 +1225,12 @@ void TrackScene::buildProps(const std::string& assetsDir) {
             blk(orange, a, e, F - ps * 2.25f, F - ps * 2.2f, g + 7.45f, g + 7.85f);
         }
         // the closed ends of the building
-        blk(white, s1, s1 + 0.6f, F, F + D, g - 1.0f, g + 7.4f, false, 0.6f);
+        {
+            const float g = bayGround(s1 - bay, s1);
+            blk(white, s1, s1 + 0.6f, F, F + D, g - 4.0f, g + 7.4f, false, 0.6f);
+            const float g0 = bayGround(s0, s0 + bay);
+            blk(white, s0 - 0.6f, s0, F, F + D, g0 - 4.0f, g0 + 7.4f, false, 0.6f);
+        }
         // the paddock behind: worn asphalt out to where the land begins
         {
             Strip st{&slab};
@@ -1241,7 +1252,6 @@ void TrackScene::buildProps(const std::string& assetsDir) {
         // grandstand across the pit straight: stepped concrete, coloured seats, a cantilever roof
         {
             const int os = -ps;
-            const float g0 = ground(tr.pit().lane_start_s + 115.0f, os * (hw + tr.runoff())) + 0.02f;
             const float L0 = hw + tr.runoff() + 2.0f;
             float a0 = tr.pit().lane_start_s + 40.0f, a1 = tr.pit().lane_start_s + 190.0f;
             const int rows = 16;
@@ -1249,17 +1259,20 @@ void TrackScene::buildProps(const std::string& assetsDir) {
             for (float a = a0; a < a1 - 0.1f; a += 10.0f) {
                 float e = std::min(a + 10.0f, a1);
                 int sec = (int)((a - a0) / 10.0f);
+                // each 10 m section on its own ground, stepping with the slope
+                const float g0 = std::min({ground(a, os * L0), ground(e, os * L0), ground(a, os * (L0 + rows * depth)),
+                                           ground(e, os * (L0 + rows * depth))}) + 0.02f;
                 for (int r = 0; r < rows; ++r) {
                     float l0 = os * (L0 + r * depth), l1 = os * (L0 + (r + 1) * depth);
                     float top = g0 + base + r * rise;
-                    blk(white, a, e, l0, l1, g0 - 0.5f, top, false, 0.7f);
+                    blk(white, a, e, l0, l1, g0 - 3.0f, top, false, 0.7f);
                     // seats: blocks of colour, a lettered pattern across sections
                     blk(seats, a + 0.2f, e - 0.2f, os * (L0 + r * depth + 0.25f), os * (L0 + r * depth + 0.7f), top, top + 0.42f);
                     (void)sec;
                 }
                 float back = os * (L0 + rows * depth);
                 float topRow = g0 + base + rows * rise;
-                blk(white, a, e, back, back + os * 0.4f, g0 - 0.5f, topRow + 3.2f, false, 0.7f);  // back wall
+                blk(white, a, e, back, back + os * 0.4f, g0 - 3.0f, topRow + 3.2f, false, 0.7f);  // back wall
                 blk(steel, a, a + 0.4f, back - os * 0.2f, back + os * 0.2f, topRow, topRow + 3.6f);  // roof column
                 // the roof slopes up towards the track
                 Vector3 c[8] = {TP(a, back + os * 0.4f, topRow + 3.6f), TP(e, back + os * 0.4f, topRow + 3.6f),
@@ -1268,8 +1281,10 @@ void TrackScene::buildProps(const std::string& assetsDir) {
                                 TP(e, os * (L0 - 1.5f), topRow + 4.85f), TP(a, os * (L0 - 1.5f), topRow + 4.85f)};
                 block(steel, c, true, 0.7f);
             }
-            blk(white, a1, a1 + 0.4f, os * L0, os * (L0 + rows * depth + 0.4f), g0 - 0.5f, g0 + base + rows * rise + 3.2f);
-            blk(white, a0 - 0.4f, a0, os * L0, os * (L0 + rows * depth + 0.4f), g0 - 0.5f, g0 + base + rows * rise + 3.2f);
+            for (float end : {a0 - 0.4f, a1}) {
+                const float g0 = std::min(ground(end, os * L0), ground(end, os * (L0 + rows * depth))) + 0.02f;
+                blk(white, end, end + 0.4f, os * L0, os * (L0 + rows * depth + 0.4f), g0 - 3.0f, g0 + base + rows * rise + 3.2f);
+            }
         }
 
         // catch fences on the concrete walls of the pit straight
