@@ -22,7 +22,7 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
 - **A V8 sound**: eight firings a cycle through a recorded F1 exhaust response, with
   gearshift effects and the odd pop.
 
-![Start of a race on Highmoor Ridge, TV camera (Raylib Racers 2)](docs/images/start.jpg)
+![Start of a race on Highmoor Ridge, TV camera (Raylib Racers 2)](docs/images/rr2_start.jpg)
 
 ## What is in the box
 
@@ -66,14 +66,14 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
 
 | | |
 |---|---|
-| ![Director camera](docs/images/director.jpg) | ![Overview camera](docs/images/overview.jpg) |
-| ![Cinematic camera](docs/images/cinematic.jpg) | ![Helicopter camera](docs/images/helicopter.jpg) |
-| ![Orbit camera](docs/images/orbit.jpg) | ![TV camera](docs/images/tv.jpg) |
-| ![Testing menu](docs/images/testing_menu.jpg) | ![Testing: dashboard over the live car](docs/images/testing_dashboard.jpg) |
-| ![Quick race menu](docs/images/menu.jpg) | ![Grid page: livery, algorithm and start tyres per car](docs/images/grid.jpg) |
-| ![Championship: calendar, rules and saved seasons](docs/images/championship.jpg) | ![Race end: results with the fastest lap](docs/images/results.jpg) |
-| ![Testing: telemetry dashboard while scrubbing a run](docs/images/testing.jpg) | ![Testing: track and events window with the delta to the best lap](docs/images/testing_track.jpg) |
-| ![Race end: lap chart](docs/images/lapchart.jpg) | |
+| ![Director camera](docs/images/rr2_director.jpg) | ![Overview camera](docs/images/rr2_overview.jpg) |
+| ![Cinematic camera](docs/images/rr2_cinematic.jpg) | ![Helicopter camera](docs/images/rr2_helicopter.jpg) |
+| ![Orbit camera](docs/images/rr2_orbit.jpg) | ![TV camera](docs/images/rr2_tv.jpg) |
+| ![Testing menu](docs/images/rr2_testing_menu.jpg) | ![Testing: dashboard over the live car](docs/images/rr2_testing_dashboard.jpg) |
+| ![Quick race menu](docs/images/rr2_menu.jpg) | ![Grid page: livery, algorithm and start tyres per car](docs/images/rr2_grid.jpg) |
+| ![Championship: calendar, rules and saved seasons](docs/images/rr2_championship.jpg) | ![Race end: results with the fastest lap](docs/images/rr2_results.jpg) |
+| ![Testing: telemetry dashboard while scrubbing a run](docs/images/rr2_testing.jpg) | ![Testing: track and events window with the delta to the best lap](docs/images/rr2_testing_track.jpg) |
+| ![Race end: lap chart](docs/images/rr2_lapchart.jpg) | |
 
 ## Build
 
