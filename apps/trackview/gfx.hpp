@@ -15,6 +15,8 @@ struct TextureSet {
     bool ok() const { return albedo.id != 0; }
 };
 bool loadTextureSet(const std::string& dir, TextureSet* out, std::string* err);
+// A set from one albedo texture (with alpha), with a flat normal map and constant roughness.
+TextureSet flatTextureSet(Texture2D albedo, float roughness);
 void unloadTextureSet(TextureSet& t);
 
 // How a mesh is shaded. Up to three texture layers, mixed per vertex by the vertex
@@ -33,6 +35,9 @@ struct Material {
     bool macroVariation = false;  // break up texture tiling over large areas (terrain)
     bool doubleSided = false;
     float depthBias = 0.0f;       // pulls the surface towards the camera (decals over the road), ~1e-6 units
+    float alphaCut = 0.0f;        // > 0: leaf cut-outs, layer 0's alpha below this is dropped
+    float translucency = 0.0f;    // sunlight through leaves seen from the shady side
+    bool vertexTint = false;      // one-layer materials: the vertex colour's rgb multiplies the albedo
 };
 
 struct Sun {
@@ -55,10 +60,15 @@ public:
     float fogDensity = 0.00022f;
     Sun sun() const;            // after skyYaw and sunIntensity
 
-    // A frame: shadow pass, then the colour pass into the HDR target, then present().
-    // Shadow casters are drawn between beginShadows/endShadows with drawShadow().
-    void beginShadows(Vector3 focus, float radius);
-    void drawShadow(const Mesh& mesh, Matrix model);
+    // A frame: shadow passes, then the colour pass into the HDR target, then present().
+    // Shadow casters are drawn between beginShadows/endShadows with drawShadow(), once per
+    // cascade: 0 sharp and close to the camera, 1 coarse and far.
+    static constexpr int kCascades = 2;
+    void beginShadows(Vector3 focus, float radius, int cascade = 0);
+    void drawShadow(const Mesh& mesh, Matrix model, unsigned alphaTex = 0, float alphaCut = 0.5f, float uvScale = 1.0f);
+    // Whether a world box is in the camera's view (after beginScene) or in the sun's (after beginShadows).
+    bool inView(const BoundingBox& b) const { return boxInClip(b, viewProj_); }
+    bool inShadowView(const BoundingBox& b) const { return boxInClip(b, lightVP_[cascade_]); }
     void endShadows();
     void beginScene(const Camera3D& cam);
     void draw(const Mesh& mesh, const Material& mat, Matrix model);
@@ -73,10 +83,12 @@ public:
 private:
     int w_ = 0, h_ = 0;
     unsigned fbo_ = 0, color_ = 0, depth_ = 0;
-    unsigned shadowFbo_ = 0, shadowTex_ = 0;
+    unsigned shadowFbo_[kCascades] = {}, shadowTex_[kCascades] = {};
     int shadowRes_ = 4096;
-    Matrix lightVP_{};
-    Shader pbr_{}, depth_s_{}, sky_{}, tonemap_{};
+    int cascade_ = 0;
+    Matrix lightVP_[kCascades] = {}, viewProj_{};
+    static bool boxInClip(const BoundingBox& b, const Matrix& m);
+    Shader pbr_{}, depth_s_{}, depthCut_{}, sky_{}, tonemap_{};
     Texture2D skyTex_{}, specTex_{};
     Vector3 sh_[9]{};
     Sun skySun_{};
@@ -86,8 +98,8 @@ private:
     Matrix view_{}, proj_{};
     struct Locs {
         int mvp, model, normalMat, viewPos, lightVP, sunDir, sunColor, sh, skyYaw, fog, exposure, specMax;
-        int layerScale, tint, layerTint, depthBias, roughMul, metalMul, normalStrength, clearcoat, ccRough, macro, layers;
-        int tex[9], shadow, spec;
+        int layerScale, tint, layerTint, depthBias, alphaCut, translucency, vertexTint, roughMul, metalMul, normalStrength, clearcoat, ccRough, macro, layers;
+        int tex[9], shadow[2], spec;
     } L_{};
     void createTargets();
     void freeTargets();

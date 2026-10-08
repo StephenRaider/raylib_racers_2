@@ -346,9 +346,11 @@ elevation profile.
 ### RR2 track view
 
 `rr_trackview` draws a track in 3D with RR2's new renderer: the road built from the
-track's heights and banking, kerbs, armco and concrete walls, gravel traps and the
-moorland around it, lit by an HDRI sky and a shadowing sun with PBR materials. No
-race or cars yet.
+track's heights and banking, kerbs, armco and concrete walls, gravel traps, tyre
+walls, marshal posts, pit garages and a grandstand, conifer plantations and the
+moorland around it with baked sky occlusion, lit by an HDRI sky and a sun with two
+shadow cascades, all with PBR materials. No race or cars yet. `--bench` drives a lap
+and prints the frame time.
 
 ```
 ./build/rr_trackview --track highmoor                # 1-4 cameras, F2 sky, [ ] turn the sky, F12 screenshot

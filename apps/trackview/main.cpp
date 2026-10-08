@@ -72,6 +72,7 @@ int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::string trackName = "highmoor", skyName = "kloofendal_partly_cloudy", shotsDir;
     int width = 1600, height = 900, ssaa = 1;
+    bool bench = false;
     float yawDeg = 0;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -83,6 +84,7 @@ int main(int argc, char** argv) {
         else if (a == "--height") height = std::atoi(next().c_str());
         else if (a == "--ssaa") ssaa = std::max(1, std::atoi(next().c_str()));
         else if (a == "--yaw") yawDeg = (float)std::atof(next().c_str());
+        else if (a == "--bench") bench = true;
         else {
             std::fprintf(stderr, "unknown option %s\n", a.c_str());
             return 2;
@@ -109,7 +111,7 @@ int main(int argc, char** argv) {
                     t.direction > 0 ? "left" : "right", t.apex_s, t.start_s, t.end_s, t.min_radius, t.angle * RAD2DEG,
                     track.heightAt(t.apex_s));
 
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | (shotsDir.empty() ? 0 : FLAG_WINDOW_HIDDEN));
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | (bench ? 0 : FLAG_VSYNC_HINT) | (shotsDir.empty() ? 0 : FLAG_WINDOW_HIDDEN));
     InitWindow(shotsDir.empty() ? width : 320, shotsDir.empty() ? height : 180, "Raylib Racers 2 - track view");
     SetTraceLogLevel(LOG_WARNING);
     std::fprintf(stderr, "window up\n");
@@ -132,7 +134,10 @@ int main(int argc, char** argv) {
 
     auto render = [&](const Camera3D& cam) {
         Vector3 fwd = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
-        gr.beginShadows(Vector3Add(cam.position, Vector3Scale(fwd, 90.0f)), 140.0f);
+        gr.beginShadows(Vector3Add(cam.position, Vector3Scale(fwd, 90.0f)), 140.0f, 0);
+        scene.drawShadows(gr);
+        gr.endShadows();
+        gr.beginShadows(Vector3Add(cam.position, Vector3Scale(fwd, 550.0f)), 750.0f, 1);
         scene.drawShadows(gr);
         gr.endShadows();
         gr.beginScene(cam);
@@ -149,6 +154,7 @@ int main(int argc, char** argv) {
             return 0.0f;
         };
         const Shot shots[] = {
+            {"00_paddock", 0, -170, 4.0f, 16.0f, 20, 0.0f, 3.0f, 55},
             {"01_grid", 0, -60, -3.5f, 1.1f, 60, -1.0f, 1.0f, 62},
             {"02_plunge_approach", 1, -230, 2.5f, 1.1f, -40, -1.0f, 0.5f, 55},
             {"03_plunge_aerial", 1, 0, 0, 0, 0, 0, 0, 55, {-55, 70, -40}},
@@ -203,8 +209,23 @@ int main(int argc, char** argv) {
     free.up = {0, 1, 0};
     free.fovy = 60;
     float yaw = PI, pitch = -0.3f, orbit = 0;
+    int frames = 0;
+    double benchTime = 0, worst = 0;
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
+        if (bench) {
+            // a lap at 90 m/s in 600 frames; report the frame times and stop
+            if (frames > 10) {
+                benchTime += dt;
+                worst = std::max(worst, (double)dt);
+            }
+            dt = track.length() / 600.0f / speed;
+            if (++frames == 610) {
+                std::printf("bench: %.2f ms a frame on average (%.0f fps), worst %.1f ms, at %dx%d\n",
+                            benchTime / 600 * 1000, 600 / benchTime, worst * 1000, GetScreenWidth(), GetScreenHeight());
+                break;
+            }
+        }
         if (IsWindowResized()) gr.resize(GetScreenWidth() * ssaa, GetScreenHeight() * ssaa);
         if (IsKeyPressed(KEY_ONE)) mode = DRIVE;
         if (IsKeyPressed(KEY_TWO)) mode = CHASE;

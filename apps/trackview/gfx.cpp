@@ -63,7 +63,7 @@ in vec4 fragTangent;
 in vec2 fragUV;
 in vec4 fragColor;
 uniform sampler2D albedo0, normal0, orm0, albedo1, normal1, orm1, albedo2, normal2, orm2;
-uniform sampler2D shadowMap;
+uniform sampler2D shadowMap0, shadowMap1;
 uniform sampler2D specAtlas;
 uniform int layers;
 uniform vec3 layerScale;
@@ -71,8 +71,11 @@ uniform vec3 tint;
 uniform vec3 layerTint[3];
 uniform float roughMul, metalMul, normalStrength, clearcoat, ccRough;
 uniform int macroVariation;
+uniform float alphaCut;
+uniform float translucency;
+uniform int vertexTint;
 uniform vec3 viewPos;
-uniform mat4 lightVP;
+uniform mat4 lightVP[2];
 uniform vec3 sunDir;      // towards the sun
 uniform vec3 sunColor;    // irradiance
 uniform vec3 sh[9];       // sky irradiance, spherical harmonics (already scaled)
@@ -121,19 +124,28 @@ float V_Smith(float NoV, float NoL, float a) {
 }
 vec3 F_Schlick(vec3 f0, float VoH) { return f0 + (1.0 - f0) * pow(1.0 - VoH, 5.0); }
 
-float shadow(vec3 n) {
-    vec4 lp = lightVP * vec4(fragPos + n * 0.08, 1.0);
+float shadowIn(sampler2D map, mat4 vp, vec3 n, float offset, float bias, int r, out bool inside) {
+    vec4 lp = vp * vec4(fragPos + n * offset, 1.0);
     vec3 p = lp.xyz / lp.w * 0.5 + 0.5;
-    if (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z >= 1.0) return 1.0;
-    float bias = 0.00008;
-    vec2 texel = 1.0 / vec2(textureSize(shadowMap, 0));
-    float lit = 0.0;
-    for (int x = -2; x <= 2; ++x)
-        for (int y = -2; y <= 2; ++y)
-            lit += (p.z - bias > texture(shadowMap, p.xy + vec2(x, y) * texel).r) ? 0.0 : 1.0;
-    lit /= 25.0;
-    vec2 edge = min(p.xy, 1.0 - p.xy);
-    return mix(1.0, lit, clamp(min(edge.x, edge.y) * 20.0, 0.0, 1.0));
+    inside = p.x > 0.02 && p.x < 0.98 && p.y > 0.02 && p.y < 0.98 && p.z < 1.0;
+    if (!inside) return 1.0;
+    vec2 texel = 1.0 / vec2(textureSize(map, 0));
+    float lit = 0.0, count = 0.0;
+    for (int x = -r; x <= r; ++x)
+        for (int y = -r; y <= r; ++y) {
+            lit += (p.z - bias > texture(map, p.xy + vec2(x, y) * texel).r) ? 0.0 : 1.0;
+            count += 1.0;
+        }
+    return lit / count;
+}
+
+// Two cascades: the sharp one near the camera, then the coarse one out to ~1 km.
+float shadow(vec3 n) {
+    bool inside;
+    float s0 = shadowIn(shadowMap0, lightVP[0], n, 0.08, 0.00008, 2, inside);
+    if (inside) return s0;
+    float s1 = shadowIn(shadowMap1, lightVP[1], n, 0.5, 0.00006, 1, inside);
+    return s1;
 }
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -162,6 +174,13 @@ void sampleLayer(sampler2D a, sampler2D nm, sampler2D o, float scale, vec3 lt, f
 }
 
 void main() {
+    if (alphaCut > 0.0) {
+        // mipmaps average thin leaves and wires away: boost alpha with the mip level
+        vec2 uv0 = fragUV / layerScale.x;
+        vec2 dx = dFdx(uv0 * vec2(textureSize(albedo0, 0))), dy = dFdy(uv0 * vec2(textureSize(albedo0, 0)));
+        float lod = 0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1e-8));
+        if (texture(albedo0, uv0).a * (1.0 + 0.12 * max(lod, 0.0)) < alphaCut) discard;
+    }
     vec3 wts = layers > 1 ? fragColor.rgb : vec3(1.0, 0.0, 0.0);
     wts /= max(wts.r + wts.g + wts.b, 1e-4);
     Surface s = Surface(vec3(0.0), vec3(0.0), vec3(0.0));
@@ -169,6 +188,7 @@ void main() {
     if (layers > 1) sampleLayer(albedo1, normal1, orm1, layerScale.y, layerTint[1], wts.g, s);
     if (layers > 2) sampleLayer(albedo2, normal2, orm2, layerScale.z, layerTint[2], wts.b, s);
     vec3 albedo = s.albedo * tint;
+    if (vertexTint != 0) albedo *= fragColor.rgb;
     if (macroVariation != 0) {
         float m = vnoise(fragPos.xz * 0.025) * 0.6 + vnoise(fragPos.xz * 0.11) * 0.4;
         albedo *= 0.82 + 0.36 * m;
@@ -207,6 +227,11 @@ void main() {
     float ac = ccRough * ccRough;
     float cc = clearcoat * D_GGX(NoH, ac) * V_Smith(NoV, NoL, ac) * Fc;
     col += (kd + spec) * (1.0 - clearcoat * Fc) * sunColor * NoL * sh + cc * sunColor * NoL * sh;
+    if (translucency > 0.0) {
+        // light through the leaves: the shady side of a tree glows a little towards the sun
+        float back = max(dot(-n, L), 0.0) * (0.5 + 0.5 * pow(max(dot(-V, L), 0.0), 4.0));
+        col += diffuseColor / PI * sunColor * back * translucency * shadow(normalize(fragNormal)) * fragColor.a;
+    }
 
     // sky: diffuse from the SH, reflections from the prefiltered atlas
     vec3 E = irradianceSH(n);
@@ -241,6 +266,27 @@ void main() { gl_Position = mvp * vec4(vertexPosition, 1.0); }
 const char* kDepthFS = R"(#version 330
 out vec4 finalColor;
 void main() { finalColor = vec4(1.0); }
+)";
+
+const char* kDepthCutVS = R"(#version 330
+in vec3 vertexPosition;
+in vec2 vertexTexCoord;
+uniform mat4 mvp;
+out vec2 uv;
+void main() { uv = vertexTexCoord; gl_Position = mvp * vec4(vertexPosition, 1.0); }
+)";
+const char* kDepthCutFS = R"(#version 330
+in vec2 uv;
+uniform sampler2D tex;
+uniform float alphaCut;
+uniform float uvScale;
+out vec4 finalColor;
+void main() {
+    vec2 dx = dFdx(uv / uvScale * vec2(textureSize(tex, 0))), dy = dFdy(uv / uvScale * vec2(textureSize(tex, 0)));
+    float lod = 0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1e-8));
+    if (texture(tex, uv / uvScale).a * (1.0 + 0.12 * max(lod, 0.0)) < alphaCut) discard;
+    finalColor = vec4(1.0);
+}
 )";
 
 const char* kSkyVS = R"(#version 330
@@ -357,6 +403,18 @@ bool loadTextureSet(const std::string& dir, TextureSet* out, std::string* err) {
     return true;
 }
 
+TextureSet flatTextureSet(Texture2D albedo, float roughness) {
+    TextureSet t;
+    t.albedo = albedo;
+    Image n = GenImageColor(1, 1, Color{128, 128, 255, 255});
+    Image o = GenImageColor(1, 1, Color{255, (unsigned char)(roughness * 255), 0, 255});
+    t.normal = LoadTextureFromImage(n);
+    t.orm = LoadTextureFromImage(o);
+    UnloadImage(n);
+    UnloadImage(o);
+    return t;
+}
+
 void unloadTextureSet(TextureSet& t) {
     for (Texture2D* x : {&t.albedo, &t.normal, &t.orm})
         if (x->id) UnloadTexture(*x), x->id = 0;
@@ -367,35 +425,40 @@ void unloadTextureSet(TextureSet& t) {
 bool Renderer::init(int width, int height, std::string* err) {
     pbr_ = LoadShaderFromMemory(kPbrVS, withSkyCommon(kPbrFS).c_str());
     depth_s_ = LoadShaderFromMemory(kDepthVS, kDepthFS);
+    depthCut_ = LoadShaderFromMemory(kDepthCutVS, kDepthCutFS);
     sky_ = LoadShaderFromMemory(kSkyVS, withSkyCommon(kSkyFS).c_str());
     tonemap_ = LoadShaderFromMemory(nullptr, kTonemapFS);
-    for (Shader* s : {&pbr_, &depth_s_, &sky_, &tonemap_})
+    for (Shader* s : {&pbr_, &depth_s_, &depthCut_, &sky_, &tonemap_})
         if (s->id == 0 || s->id == rlGetShaderIdDefault()) {
             if (err) *err = "shader compilation failed (OpenGL 3.3 required); see the log above";
             return false;
         }
     auto U = [&](const char* n) { return GetShaderLocation(pbr_, n); };
     L_.mvp = U("mvp"); L_.model = U("matModel"); L_.normalMat = U("matNormal"); L_.viewPos = U("viewPos");
-    L_.lightVP = U("lightVP"); L_.sunDir = U("sunDir"); L_.sunColor = U("sunColor"); L_.sh = U("sh");
+    L_.lightVP = U("lightVP[0]"); L_.sunDir = U("sunDir"); L_.sunColor = U("sunColor"); L_.sh = U("sh");
     L_.skyYaw = U("skyYaw"); L_.fog = U("fogDensity"); L_.specMax = U("specScale");
     L_.layerScale = U("layerScale"); L_.tint = U("tint"); L_.layerTint = U("layerTint"); L_.roughMul = U("roughMul"); L_.metalMul = U("metalMul");
     L_.normalStrength = U("normalStrength"); L_.clearcoat = U("clearcoat"); L_.ccRough = U("ccRough");
     L_.macro = U("macroVariation"); L_.layers = U("layers"); L_.depthBias = U("depthBias");
+    L_.alphaCut = U("alphaCut"); L_.translucency = U("translucency"); L_.vertexTint = U("vertexTint");
     const char* texNames[9] = {"albedo0", "normal0", "orm0", "albedo1", "normal1", "orm1", "albedo2", "normal2", "orm2"};
     for (int i = 0; i < 9; ++i) L_.tex[i] = U(texNames[i]);
-    L_.shadow = U("shadowMap");
+    L_.shadow[0] = U("shadowMap0");
+    L_.shadow[1] = U("shadowMap1");
     L_.spec = U("specAtlas");
 
     // Sun shadow map: a depth texture.
-    shadowFbo_ = rlLoadFramebuffer();
-    shadowTex_ = rlLoadTextureDepth(shadowRes_, shadowRes_, false);
-    rlFramebufferAttach(shadowFbo_, shadowTex_, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
-    if (!rlFramebufferComplete(shadowFbo_)) {
-        if (err) *err = "could not create the shadow-map framebuffer";
-        return false;
+    for (int c = 0; c < kCascades; ++c) {
+        shadowFbo_[c] = rlLoadFramebuffer();
+        shadowTex_[c] = rlLoadTextureDepth(shadowRes_, shadowRes_, false);
+        rlFramebufferAttach(shadowFbo_[c], shadowTex_[c], RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+        if (!rlFramebufferComplete(shadowFbo_[c])) {
+            if (err) *err = "could not create the shadow-map framebuffers";
+            return false;
+        }
+        rlTextureParameters(shadowTex_[c], RL_TEXTURE_MIN_FILTER, RL_TEXTURE_FILTER_NEAREST);
+        rlTextureParameters(shadowTex_[c], RL_TEXTURE_MAG_FILTER, RL_TEXTURE_FILTER_NEAREST);
     }
-    rlTextureParameters(shadowTex_, RL_TEXTURE_MIN_FILTER, RL_TEXTURE_FILTER_NEAREST);
-    rlTextureParameters(shadowTex_, RL_TEXTURE_MAG_FILTER, RL_TEXTURE_FILTER_NEAREST);
 
     cube_ = GenMeshCube(2, 2, 2);
     w_ = width;
@@ -433,11 +496,13 @@ void Renderer::resize(int width, int height) {
 
 void Renderer::shutdown() {
     freeTargets();
-    if (shadowFbo_) rlUnloadFramebuffer(shadowFbo_);
-    shadowFbo_ = 0;
+    for (int c = 0; c < kCascades; ++c) {
+        if (shadowFbo_[c]) rlUnloadFramebuffer(shadowFbo_[c]);
+        shadowFbo_[c] = 0;
+    }
     for (Texture2D* t : {&skyTex_, &specTex_})
         if (t->id) UnloadTexture(*t), t->id = 0;
-    for (Shader* s : {&pbr_, &depth_s_, &sky_, &tonemap_})
+    for (Shader* s : {&pbr_, &depth_s_, &depthCut_, &sky_, &tonemap_})
         if (s->id) UnloadShader(*s), s->id = 0;
     if (cube_.vertexCount) UnloadMesh(cube_), cube_ = Mesh{};
 }
@@ -486,27 +551,62 @@ Sun Renderer::sun() const {
     return s;
 }
 
-void Renderer::beginShadows(Vector3 focus, float radius) {
+void Renderer::beginShadows(Vector3 focus, float radius, int cascade) {
+    cascade_ = cascade;
     rlDrawRenderBatchActive();
     Sun s = sun();
     Vector3 eye = Vector3Add(focus, Vector3Scale(s.dir, radius * 3));
     Matrix view = MatrixLookAt(eye, focus, {0, 1, 0});
     Matrix proj = MatrixOrtho(-radius, radius, -radius, radius, radius * 0.5, radius * 6);
-    lightVP_ = MatrixMultiply(view, proj);
-    rlEnableFramebuffer(shadowFbo_);
+    lightVP_[cascade] = MatrixMultiply(view, proj);
+    rlEnableFramebuffer(shadowFbo_[cascade]);
     rlViewport(0, 0, shadowRes_, shadowRes_);
     rlClearScreenBuffers();
     rlEnableDepthTest();
-    rlEnableShader(depth_s_.id);
 }
 
-void Renderer::drawShadow(const Mesh& m, Matrix model) {
-    Matrix mvp = MatrixMultiply(model, lightVP_);
-    rlSetUniformMatrix(GetShaderLocation(depth_s_, "mvp"), mvp);
+void Renderer::drawShadow(const Mesh& m, Matrix model, unsigned alphaTex, float alphaCut, float uvScale) {
+    Matrix mvp = MatrixMultiply(model, lightVP_[cascade_]);
+    if (alphaTex) {
+        rlEnableShader(depthCut_.id);
+        rlSetUniformMatrix(GetShaderLocation(depthCut_, "mvp"), mvp);
+        rlSetUniform(GetShaderLocation(depthCut_, "alphaCut"), &alphaCut, RL_SHADER_UNIFORM_FLOAT, 1);
+        rlSetUniform(GetShaderLocation(depthCut_, "uvScale"), &uvScale, RL_SHADER_UNIFORM_FLOAT, 1);
+        int slot = 0;
+        rlActiveTextureSlot(0);
+        rlEnableTexture(alphaTex);
+        rlSetUniform(GetShaderLocation(depthCut_, "tex"), &slot, RL_SHADER_UNIFORM_INT, 1);
+        rlDisableBackfaceCulling();
+    } else {
+        rlEnableShader(depth_s_.id);
+        rlSetUniformMatrix(GetShaderLocation(depth_s_, "mvp"), mvp);
+    }
     rlEnableVertexArray(m.vaoId);
     if (m.indices) rlDrawVertexArrayElements(0, m.triangleCount * 3, 0);
     else rlDrawVertexArray(0, m.vertexCount);
     rlDisableVertexArray();
+    if (alphaTex) {
+        rlDisableTexture();
+        rlEnableBackfaceCulling();
+    }
+}
+
+bool Renderer::boxInClip(const BoundingBox& b, const Matrix& m) {
+    // outside when all eight corners are beyond the same clip plane
+    int out[6] = {0, 0, 0, 0, 0, 0};
+    for (int k = 0; k < 8; ++k) {
+        float x = (k & 1) ? b.max.x : b.min.x, y = (k & 2) ? b.max.y : b.min.y, z = (k & 4) ? b.max.z : b.min.z;
+        float cx = m.m0 * x + m.m4 * y + m.m8 * z + m.m12;
+        float cy = m.m1 * x + m.m5 * y + m.m9 * z + m.m13;
+        float cz = m.m2 * x + m.m6 * y + m.m10 * z + m.m14;
+        float cw = m.m3 * x + m.m7 * y + m.m11 * z + m.m15;
+        out[0] += cx < -cw; out[1] += cx > cw;
+        out[2] += cy < -cw; out[3] += cy > cw;
+        out[4] += cz < -cw; out[5] += cz > cw;
+    }
+    for (int i = 0; i < 6; ++i)
+        if (out[i] == 8) return false;
+    return true;
 }
 
 void Renderer::endShadows() {
@@ -518,6 +618,7 @@ void Renderer::beginScene(const Camera3D& cam) {
     cam_ = cam;
     view_ = MatrixLookAt(cam.position, cam.target, cam.up);
     proj_ = MatrixPerspective(cam.fovy * DEG2RAD, (double)w_ / h_, 0.5, 15000.0);
+    viewProj_ = MatrixMultiply(view_, proj_);
     rlEnableFramebuffer(fbo_);
     rlViewport(0, 0, w_, h_);
     rlClearColor(0, 0, 0, 255);
@@ -532,7 +633,8 @@ void Renderer::draw(const Mesh& m, const Material& mat, Matrix model) {
     rlSetUniformMatrix(L_.mvp, mvp);
     rlSetUniformMatrix(L_.model, model);
     rlSetUniformMatrix(L_.normalMat, MatrixTranspose(MatrixInvert(model)));
-    rlSetUniformMatrix(L_.lightVP, lightVP_);
+    rlSetUniformMatrix(L_.lightVP, lightVP_[0]);
+    rlSetUniformMatrix(L_.lightVP + 1, lightVP_[1]);
     rlSetUniform(L_.viewPos, &cam_.position, RL_SHADER_UNIFORM_VEC3, 1);
     Sun s = sun();
     rlSetUniform(L_.sunDir, &s.dir, RL_SHADER_UNIFORM_VEC3, 1);
@@ -555,6 +657,10 @@ void Renderer::draw(const Mesh& m, const Material& mat, Matrix model) {
     rlSetUniform(L_.clearcoat, &mat.clearcoat, RL_SHADER_UNIFORM_FLOAT, 1);
     rlSetUniform(L_.ccRough, &mat.clearcoatRoughness, RL_SHADER_UNIFORM_FLOAT, 1);
     rlSetUniform(L_.depthBias, &mat.depthBias, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L_.alphaCut, &mat.alphaCut, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L_.translucency, &mat.translucency, RL_SHADER_UNIFORM_FLOAT, 1);
+    int vtint = mat.vertexTint ? 1 : 0;
+    rlSetUniform(L_.vertexTint, &vtint, RL_SHADER_UNIFORM_INT, 1);
     int macro = mat.macroVariation ? 1 : 0;
     rlSetUniform(L_.macro, &macro, RL_SHADER_UNIFORM_INT, 1);
 
@@ -571,7 +677,8 @@ void Renderer::draw(const Mesh& m, const Material& mat, Matrix model) {
         bind(L_.tex[l * 3 + 1], t->normal.id);
         bind(L_.tex[l * 3 + 2], t->orm.id);
     }
-    bind(L_.shadow, shadowTex_);
+    bind(L_.shadow[0], shadowTex_[0]);
+    bind(L_.shadow[1], shadowTex_[1]);
     bind(L_.spec, specTex_.id);
 
     if (mat.doubleSided) rlDisableBackfaceCulling();

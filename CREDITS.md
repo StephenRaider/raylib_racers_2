@@ -17,6 +17,11 @@ From [ambientCG](https://ambientcg.com), CC0 1.0. Resized to 1024 px and repacke
 | `gravel` | [Ground062L](https://ambientcg.com/view?id=Ground062L) |
 | `dirt` | [Ground082S](https://ambientcg.com/view?id=Ground082S) |
 | `metal` | [Metal055A](https://ambientcg.com/view?id=Metal055A) |
+| `rubber` | [Rubber004](https://ambientcg.com/view?id=Rubber004) |
+
+`chainlink` (the catch fences) is the wire texture of Poly Haven's
+[Modular Chainlink Fence](https://polyhaven.com/a/modular_chainlink_fence), CC0 1.0,
+with its alpha mask packed in.
 
 ## assets/sky (HDRI skies)
 
@@ -32,7 +37,8 @@ replaced by lit grass, and prefiltered for reflections, by `tools/import_assets.
 
 ## assets/scenery
 
-See [assets/scenery/CREDITS.md](assets/scenery/CREDITS.md) (Low Poly Forest Tree Pack, CC BY 4.0).
+See [assets/scenery/CREDITS.md](assets/scenery/CREDITS.md) (Low Poly Forest Tree Pack, CC BY 4.0;
+also the trees in `rr_trackview`).
 
 ## assets/fonts
 

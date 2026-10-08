@@ -1,9 +1,17 @@
 #include "track_scene.hpp"
 
+#ifdef _MSC_VER
+#pragma warning(disable : 4996)  // sscanf
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <map>
+
+#include "mini_json.hpp"
 
 #include "raymath.h"
 
@@ -185,7 +193,7 @@ bool TrackScene::build(const rr::Track& track, const std::string& assetsDir, uns
     const std::string m = assetsDir + "/materials/";
     struct { gfx::TextureSet* set; const char* name; } sets[] = {
         {&asphalt_, "asphalt"}, {&asphaltWorn_, "asphalt_worn"}, {&concrete_, "concrete"}, {&grass_, "grass"},
-        {&gravel_, "gravel"}, {&dirt_, "dirt"}, {&metal_, "metal"}};
+        {&gravel_, "gravel"}, {&dirt_, "dirt"}, {&metal_, "metal"}, {&rubber_, "rubber"}};
     for (auto& s : sets)
         if (!gfx::loadTextureSet(m + s.name, s.set, err)) return false;
 
@@ -234,8 +242,15 @@ bool TrackScene::build(const rr::Track& track, const std::string& assetsDir, uns
         for (int i = 0; i < n; ++i)
             if (track.inPitArea(track.at(i).s) && gravelSide_[i] * track.pit().side > 0) gravelSide_[i] = 0;
 
+    seed_ = seed;
     buildTerrain(seed);
     buildRoad(seed);
+    buildTrees(assetsDir, seed);
+    buildProps(assetsDir);
+    for (Part& p : parts_) {
+        p.boxes.clear();
+        for (const Mesh& mesh : p.meshes) p.boxes.push_back(GetMeshBoundingBox(mesh));
+    }
     return true;
 }
 
@@ -243,8 +258,9 @@ void TrackScene::unload() {
     for (Part& p : parts_)
         for (Mesh& m : p.meshes) UnloadMesh(m);
     parts_.clear();
-    for (gfx::TextureSet* s : {&asphalt_, &asphaltWorn_, &concrete_, &grass_, &gravel_, &dirt_, &metal_})
-        gfx::unloadTextureSet(*s);
+    for (gfx::TextureSet* s : {&asphalt_, &asphaltWorn_, &concrete_, &grass_, &gravel_, &dirt_, &metal_, &rubber_, &foliage_, &chain_})
+        gfx::unloadTextureSet(*s);  // foliage_ owns the tree atlas
+    treeAtlas_ = Texture2D{};
 }
 
 // Height of the ground at a lateral offset from the centreline: the banked road, then
@@ -350,6 +366,12 @@ void TrackScene::buildRoad(unsigned seed) {
                 const float s = sAt(i);
                 float off = tr.barrierOffset(s, sd, a.halfWidth);
                 const bool concrete = concreteAt(s);
+                if (sd == tr.pit().side && garagesAt(s) && garagesAt(sAt(std::max(i - 1, 0)))) {
+                    wall.cut();
+                    rail.cut();
+                    prevOff = -1;
+                    continue;
+                }
                 if (concrete && prevOff >= 0 && std::fabs(off - prevOff) > 0.5f) {
                     // the barrier steps sideways (pit area): close the end and start a new run
                     wall.cut();
@@ -589,7 +611,7 @@ void TrackScene::buildTerrain(unsigned seed) {
     G.nx = (int)((maxX + margin - G.x0) / G.step) + 1;
     G.nz = (int)((maxZ + margin - G.z0) / G.step) + 1;
     G.h.assign((size_t)G.nx * G.nz, 0.0f);
-    std::vector<unsigned char> wDirt(G.h.size(), 0), wGravel(G.h.size(), 0);
+    std::vector<unsigned char> wDirt(G.h.size(), 0), wGravel(G.h.size(), 0), cover(G.h.size(), 0);
     std::vector<int> hint(G.h.size(), -1);
     // a natural field without the near-track blend, from the far grid's
     Grid natF = F;
@@ -602,6 +624,7 @@ void TrackScene::buildTerrain(unsigned seed) {
             int i = nearest(p, 360.0f, &d);
             float h = nat + (fbm(x / 23.0f, z / 23.0f, 3, sd + 21) - 0.5f) * 1.6f * smoothstepf(30.0f, 120.0f, d);
             float dirt = smoothstepf(0.62f, 0.78f, fbm(x / 60.0f, z / 60.0f, 4, sd + 5)) * 0.8f;
+            float forest = plantation(p);
             float gravel = 0;
             if (i >= 0) {
                 rr::TrackLoc loc = tr.locate(p, i, 4);
@@ -615,10 +638,12 @@ void TrackScene::buildTerrain(unsigned seed) {
                 float edge = edgeProfile(z0, bank, loc.halfWidth, lat);
                 // embankments and cuttings no steeper than about 1 in 2.5
                 float band = 25.0f + 2.5f * std::fabs(h - edge);
-                float w = smoothstepf(barrier + 1.5f, barrier + 1.5f + band, al);
+                float flat = flatUntil(loc.s, side, loc.halfWidth);
+                float w = smoothstepf(flat + 1.5f, flat + 1.5f + band, al);
                 h = edge + (h - edge) * w;
                 bool paved = al < loc.halfWidth + 1.3f || (tr.hasPit() && tr.inPitArea(loc.s) && side == tr.pit().side &&
                                                            al < loc.halfWidth + rr::Track::kPitBarrier + 0.5f);
+                if (garagesAt(loc.s) && side == tr.pit().side && al < flat) paved = true;  // under the paddock slab
                 if (paved) h -= 0.06f;
                 float gs = gravelSide_[loc.idx];
                 if (gs * lat > 0)
@@ -627,12 +652,42 @@ void TrackScene::buildTerrain(unsigned seed) {
                 // worn earth along the foot of the barrier, none on the verge
                 float foot = 1.0f - smoothstepf(0.3f, 1.4f, std::fabs(al - barrier - 0.3f));
                 dirt = std::max(dirt * smoothstepf(barrier, barrier + 8.0f, al), foot * 0.7f);
+                forest *= smoothstepf(barrier + 10.0f, barrier + 16.0f, al);
+                if (tr.hasPit() && tr.inPitArea(loc.s)) forest *= smoothstepf(88.0f, 96.0f, al);  // as the trees
             }
+            dirt = std::max(dirt, forest * 0.9f);  // needles and bare earth under the trees
+            cover[(size_t)iz * G.nx + ix] = (unsigned char)(forest * 255);
             size_t k = (size_t)iz * G.nx + ix;
             G.h[k] = h;
             wDirt[k] = (unsigned char)(std::clamp(dirt, 0.0f, 1.0f) * 255);
             wGravel[k] = (unsigned char)(std::clamp(gravel, 0.0f, 1.0f) * 255);
         }
+    // Baked sky occlusion: how much of the sky each point sees past the hills around it
+    // (horizon angles in 12 directions), and darker ground under the plantations.
+    std::vector<unsigned char> aoNear(G.h.size(), 255);
+    {
+        const int dirs = 12;
+        const float dist[] = {4, 8, 14, 24, 40, 64, 100, 160};
+        for (int iz = 0; iz < G.nz; ++iz)
+            for (int ix = 0; ix < G.nx; ++ix) {
+                float x = G.x0 + ix * G.step, z = G.z0 + iz * G.step;
+                size_t k = (size_t)iz * G.nx + ix;
+                float h0 = G.h[k], vis = 0;
+                for (int d = 0; d < dirs; ++d) {
+                    float a = d * 2 * PI / dirs, ca = std::cos(a), sa = std::sin(a), tmax = 0;
+                    for (float r : dist) {
+                        float px = x + ca * r, pz = z + sa * r;
+                        float hh = G.inside(px, pz) ? G.at(px, pz) : F.at(px, pz);
+                        tmax = std::max(tmax, (hh - h0) / r);
+                    }
+                    vis += 1.0f / (1.0f + tmax * tmax);  // cos^2 of the horizon angle
+                }
+                vis /= dirs;
+                vis *= 1.0f - 0.45f * cover[k] / 255.0f;
+                aoNear[k] = (unsigned char)(std::clamp(vis, 0.0f, 1.0f) * 255);
+            }
+    }
+
     // the far grid hides under the near one
     for (int iz = 0; iz < F.nz; ++iz)
         for (int ix = 0; ix < F.nx; ++ix) {
@@ -644,7 +699,7 @@ void TrackScene::buildTerrain(unsigned seed) {
         }
 
     auto emitGrid = [&](const Grid& g, int chunk, const std::vector<unsigned char>* dirtW,
-                        const std::vector<unsigned char>* gravelW, bool skipNear) {
+                        const std::vector<unsigned char>* gravelW, const std::vector<unsigned char>* aoW, bool skipNear) {
         gfx::MeshBuilder mb;
         for (int cz = 0; cz < g.nz - 1; cz += chunk)
             for (int cx = 0; cx < g.nx - 1; cx += chunk) {
@@ -671,9 +726,10 @@ void TrackScene::buildTerrain(unsigned seed) {
                         dirt = std::max(dirt, smoothstepf(0.93f, 0.80f, nn.y));  // steep ground is bare
                         float gravel = gravelW ? (*gravelW)[k] / 255.0f : 0.0f;
                         float grass = std::max(0.0f, 1.0f - dirt - gravel);
-                        idx[(size_t)(iz - cz) * w + (ix - cx)] =
-                            mb.add(vert({x, g.h[k], z}, nn, {x, z}, (unsigned char)(grass * 255), (unsigned char)(dirt * 255),
-                                        (unsigned char)(gravel * 255)));
+                        Vertex v = vert({x, g.h[k], z}, nn, {x, z}, (unsigned char)(grass * 255), (unsigned char)(dirt * 255),
+                                        (unsigned char)(gravel * 255));
+                        if (aoW) v.c[3] = (*aoW)[k];
+                        idx[(size_t)(iz - cz) * w + (ix - cx)] = mb.add(v);
                     }
                 for (int iz = 0; iz < hgt - 1; ++iz)
                     for (int ix = 0; ix < w - 1; ++ix) {
@@ -699,12 +755,12 @@ void TrackScene::buildTerrain(unsigned seed) {
     mTerrain.roughness = 1.3f;  // no sun glints off the grass
     mTerrain.normalStrength = 0.7f;
     Part nearP;
-    nearP.meshes = emitGrid(G, 128, &wDirt, &wGravel, false);
+    nearP.meshes = emitGrid(G, 128, &wDirt, &wGravel, &aoNear, false);
     nearP.mat = mTerrain;
     nearP.shadows = true;
     parts_.push_back(std::move(nearP));
     Part farP;
-    farP.meshes = emitGrid(F, 128, nullptr, nullptr, true);
+    farP.meshes = emitGrid(F, 128, nullptr, nullptr, nullptr, true);
     farP.mat = mTerrain;
     farP.mat.scale[0] = 9.0f;  // the far grid only ever shows from a distance
     farP.mat.scale[1] = 9.0f;
@@ -712,15 +768,468 @@ void TrackScene::buildTerrain(unsigned seed) {
     parts_.push_back(std::move(farP));
 }
 
+// ---------------------------------------------------------------- trees
+
+float TrackScene::plantation(Vec2 p) const {
+    float m = fbm(p.x / 420.0f + 31.0f, p.y / 420.0f - 7.0f, 4, (int)seed_ + 40);
+    return smoothstepf(0.57f, 0.63f, m);
+}
+
+namespace {
+
+struct TreeMesh {
+    std::vector<Vector3> p, n;
+    std::vector<Vector2> uv;
+    float height = 1;
+};
+
+// The tree OBJs written by tools/import_trees.py: one v/vt/vn per corner, in triangle order.
+bool loadTreeObj(const std::string& path, TreeMesh* out) {
+    char* text = LoadFileText(path.c_str());
+    if (!text) return false;
+    for (char* line = text; *line;) {
+        char* end = line;
+        while (*end && *end != '\n') ++end;
+        float a = 0, b = 0, c = 0;
+        if (line[0] == 'v' && line[1] == ' ' && std::sscanf(line + 2, "%f %f %f", &a, &b, &c) == 3) out->p.push_back({a, b, c});
+        else if (line[0] == 'v' && line[1] == 't' && std::sscanf(line + 3, "%f %f", &a, &b) == 2) out->uv.push_back({a, 1 - b});
+        else if (line[0] == 'v' && line[1] == 'n' && std::sscanf(line + 3, "%f %f %f", &a, &b, &c) == 3) out->n.push_back({a, b, c});
+        line = *end ? end + 1 : end;
+    }
+    UnloadFileText(text);
+    if (out->p.empty() || out->uv.size() != out->p.size() || out->n.size() != out->p.size()) return false;
+    out->height = 0;
+    for (const Vector3& v : out->p) out->height = std::max(out->height, v.y);
+    return out->height > 0;
+}
+
+}  // namespace
+
+void TrackScene::buildTrees(const std::string& assetsDir, unsigned seed) {
+    const std::string dir = assetsDir + "/scenery/trees/";
+    char* text = LoadFileText((dir + "trees.json").c_str());
+    if (!text) return;
+    const mjson::Value root = mjson::parse(text);
+    UnloadFileText(text);
+    std::vector<TreeMesh> conifers, broadleaf, bushes;
+    std::string atlas;
+    const mjson::Value& vs = root["variants"];
+    for (size_t i = 0; i < vs.size(); ++i) {
+        const mjson::Value& part = vs[i]["parts"][0];
+        TreeMesh tm;
+        if (!loadTreeObj(dir + part["mesh"].str(), &tm)) continue;
+        atlas = part["texture"].str();
+        const std::string kind = vs[i]["kind"].str();
+        // the tall pack trees (over 24 m in the source) are the spruces and pines
+        if (kind == "bush") bushes.push_back(tm);
+        else if (vs[i]["height"].num() > 24.0) conifers.push_back(tm);
+        else broadleaf.push_back(tm);
+    }
+    if (conifers.empty() || atlas.empty()) return;
+    treeAtlas_ = LoadTexture((dir + atlas).c_str());
+    GenTextureMipmaps(&treeAtlas_);
+    SetTextureFilter(treeAtlas_, TEXTURE_FILTER_TRILINEAR);
+    foliage_ = gfx::flatTextureSet(treeAtlas_, 0.85f);
+    if (broadleaf.empty()) broadleaf = conifers;
+    if (bushes.empty()) bushes = broadleaf;
+
+    const rr::Track& tr = *tr_;
+    const Grid& G = nearGrid_;
+    const int sd = (int)seed + 77;
+    const float cellSize = 5.5f, tile = 96.0f;
+    struct Inst { const TreeMesh* m; Vector3 base; float yaw, scale; Vector3 tint; float aoFloor; };
+    std::map<std::pair<int, int>, std::vector<Inst>> tiles;
+    int count = 0;
+    for (float y = G.z0 + 10; y < G.z0 + (G.nz - 1) * G.step - 10; y += cellSize)
+        for (float x = G.x0 + 10; x < G.x0 + (G.nx - 1) * G.step - 10; x += cellSize) {
+            int cx = (int)std::floor(x / cellSize), cy = (int)std::floor(y / cellSize);
+            float wx = x + (hashf(cx, cy, sd) - 0.5f) * cellSize * 0.9f;
+            float wz = y + (hashf(cx, cy, sd + 1) - 0.5f) * cellSize * 0.9f;
+            Vec2 p{wx, -wz};
+            float forest = plantation(p);
+            float dist;
+            int i = nearest(p, 400.0f, &dist);
+            if (i >= 0) {
+                rr::TrackLoc loc = tr.locate(p, i, 4);
+                float al = std::fabs(loc.lateral);
+                float barrier = tr.barrierOffset(loc.s, loc.lateral > 0 ? 1 : -1, loc.halfWidth);
+                if (al < barrier + 14.0f) continue;  // keep the runoff and the view clear
+                if (tr.hasPit() && tr.inPitArea(loc.s) && al < 90.0f) continue;  // the paddock
+                forest *= smoothstepf(barrier + 10.0f, barrier + 16.0f, al);
+                if (tr.hasPit() && tr.inPitArea(loc.s)) forest *= smoothstepf(88.0f, 96.0f, al);  // as the trees
+            }
+            float r = hashf(cx, cy, sd + 2);
+            const TreeMesh* m = nullptr;
+            float scale = 1, aoFloor = 0.6f;
+            int pick = (int)(hashf(cx, cy, sd + 3) * 1000);
+            if (r < forest * 0.92f) {
+                m = &conifers[pick % conifers.size()];
+                scale = 13.0f + 8.0f * hashf(cx, cy, sd + 4);
+                aoFloor = 0.35f;  // the lower branches of a plantation get little light
+            } else if (r < forest * 0.92f + 0.08f * smoothstepf(0.05f, 0.4f, forest) + 0.012f) {
+                bool bush = hashf(cx, cy, sd + 5) < 0.55f;
+                m = bush ? &bushes[pick % bushes.size()] : &broadleaf[pick % broadleaf.size()];
+                scale = bush ? 1.4f + 2.2f * hashf(cx, cy, sd + 4) : 7.0f + 7.0f * hashf(cx, cy, sd + 4);
+            }
+            if (!m) continue;
+            // not on steep banks
+            float h0 = groundHeight(wx - 2, wz), h1 = groundHeight(wx + 2, wz);
+            float h2 = groundHeight(wx, wz - 2), h3 = groundHeight(wx, wz + 2);
+            if (std::max(std::fabs(h1 - h0), std::fabs(h3 - h2)) > 2.4f) continue;
+            float hue = hashf(cx, cy, sd + 6);
+            Vector3 tint = {0.82f + 0.2f * hue, 0.86f + 0.16f * hashf(cx, cy, sd + 7), 0.8f + 0.12f * hue};
+            Inst in{m, {wx, std::min({h0, h1, h2, h3}) - 0.1f, wz}, hashf(cx, cy, sd + 8) * 2 * PI, scale / m->height, tint, aoFloor};
+            tiles[{(int)std::floor(wx / tile), (int)std::floor(wz / tile)}].push_back(in);
+            ++count;
+        }
+    gfx::MeshBuilder mb;
+    for (auto& [key, list] : tiles) {
+        mb.reserve(65535);  // each tile starts its own mesh so it culls on its own
+        for (const Inst& in : list) {
+            const TreeMesh& m = *in.m;
+            mb.reserve((int)m.p.size());
+            float c = std::cos(in.yaw), s = std::sin(in.yaw);
+            int first = -1;
+            for (size_t k = 0; k < m.p.size(); ++k) {
+                Vector3 v = m.p[k], nn = m.n[k];
+                Vertex vx{};
+                vx.p = {in.base.x + (c * v.x + s * v.z) * in.scale, in.base.y + v.y * in.scale, in.base.z + (-s * v.x + c * v.z) * in.scale};
+                vx.n = Vector3Normalize({c * nn.x + s * nn.z, nn.y, -s * nn.x + c * nn.z});
+                vx.uv = m.uv[k];
+                float up = std::sqrt(std::clamp(v.y / m.height, 0.0f, 1.0f));
+                vx.c[0] = (unsigned char)(std::min(in.tint.x, 1.0f) * 255);
+                vx.c[1] = (unsigned char)(std::min(in.tint.y, 1.0f) * 255);
+                vx.c[2] = (unsigned char)(std::min(in.tint.z, 1.0f) * 255);
+                vx.c[3] = (unsigned char)((in.aoFloor + (1 - in.aoFloor) * up) * 255);
+                int id = mb.add(vx);
+                if (first < 0) first = id;
+            }
+            for (int k = 0; k + 2 < (int)m.p.size(); k += 3) mb.tri(first + k, first + k + 1, first + k + 2);
+        }
+    }
+    Part trees;
+    trees.meshes = mb.build();
+    trees.mat.layer[0] = &foliage_;
+    trees.mat.alphaCut = 0.45f;
+    trees.mat.doubleSided = true;
+    trees.mat.translucency = 0.7f;
+    trees.mat.vertexTint = true;
+    trees.mat.roughness = 1.0f;
+    trees.alphaTex = treeAtlas_.id;
+    trees.shadows = true;
+    parts_.push_back(std::move(trees));
+    std::printf("trees: %d\n", count);
+}
+
+// ---------------------------------------------------------------- paddock and trackside
+
+bool TrackScene::garagesAt(float s) const {
+    const rr::Track& tr = *tr_;
+    return tr.hasPit() && tr.inSpan(s, tr.pit().lane_start_s + 10.0f, tr.pit().lane_end_s - 10.0f);
+}
+
+bool TrackScene::grandstandAt(float s) const {
+    const rr::Track& tr = *tr_;
+    return tr.hasPit() && tr.inSpan(s, tr.pit().lane_start_s + 30.0f, tr.pit().lane_start_s + 200.0f);
+}
+
+float TrackScene::flatUntil(float s, int side, float hw) const {
+    const rr::Track& tr = *tr_;
+    if (tr.hasPit() && side == tr.pit().side && tr.inPitArea(s)) return hw + rr::Track::kPitBarrier + 45.0f;
+    if (tr.hasPit() && side != tr.pit().side && grandstandAt(s)) return hw + tr.runoff() + 24.0f;
+    return tr.barrierOffset(s, side, hw);
+}
+
+namespace {
+
+// A six-sided block from its eight corners (bottom four, then the top four, in the same order),
+// faces turned outwards; the bottom face only when asked (overhangs). ao darkens the lower edge.
+void block(gfx::MeshBuilder& mb, const Vector3 c[8], bool bottom = false, float aoLow = 1.0f) {
+    Vector3 mid = {0, 0, 0};
+    for (int k = 0; k < 8; ++k) mid = Vector3Add(mid, Vector3Scale(c[k], 0.125f));
+    auto face = [&](Vector3 a, Vector3 b, Vector3 cc, Vector3 d, float aoA, float aoB, float aoC, float aoD) {
+        Vector3 n = Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(cc, a));
+        Vector3 centre = Vector3Scale(Vector3Add(Vector3Add(a, b), Vector3Add(cc, d)), 0.25f);
+        if (Vector3DotProduct(n, Vector3Subtract(centre, mid)) < 0) {
+            std::swap(b, d);
+            std::swap(aoB, aoD);
+        }
+        float lu = Vector3Distance(a, b), lv = Vector3Distance(a, d);
+        mb.reserve(4);
+        Vector3 nn = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(cc, a)));
+        Vertex va = vert(a, nn, {0, 0}), vb = vert(b, nn, {lu, 0}), vc = vert(cc, nn, {lu, lv}), vd = vert(d, nn, {0, lv});
+        va.c[3] = (unsigned char)(aoA * 255); vb.c[3] = (unsigned char)(aoB * 255);
+        vc.c[3] = (unsigned char)(aoC * 255); vd.c[3] = (unsigned char)(aoD * 255);
+        for (Vertex* v : {&va, &vb, &vc, &vd}) v->c[0] = v->c[1] = v->c[2] = 255;
+        int ia = mb.add(va), ib = mb.add(vb), ic = mb.add(vc), id = mb.add(vd);
+        mb.tri(ia, ib, ic);
+        mb.tri(ia, ic, id);
+    };
+    for (int k = 0; k < 4; ++k) {
+        int j = (k + 1) % 4;
+        face(c[k], c[j], c[j + 4], c[k + 4], aoLow, aoLow, 1, 1);
+    }
+    face(c[4], c[5], c[6], c[7], 1, 1, 1, 1);
+    if (bottom) face(c[0], c[1], c[2], c[3], aoLow, aoLow, aoLow, aoLow);
+}
+
+// A vertical cylinder (tyre stacks): n sides, no caps but the top.
+void cylinder(gfx::MeshBuilder& mb, Vector3 base, float r, float h, int n, unsigned char tint) {
+    mb.reserve(n * 4 + n + 2);
+    for (int k = 0; k < n; ++k) {
+        float a0 = 2 * PI * k / n, a1 = 2 * PI * (k + 1) / n;
+        Vector3 d0 = {std::cos(a0), 0, std::sin(a0)}, d1 = {std::cos(a1), 0, std::sin(a1)};
+        Vector3 p0 = Vector3Add(base, Vector3Scale(d0, r)), p1 = Vector3Add(base, Vector3Scale(d1, r));
+        Vertex v[4] = {vert(p0, d0, {r * a0, 0}), vert(p1, d1, {r * a1, 0}), vert(Vector3Add(p1, {0, h, 0}), d1, {r * a1, h}),
+                       vert(Vector3Add(p0, {0, h, 0}), d0, {r * a0, h})};
+        int id[4];
+        for (int q = 0; q < 4; ++q) {
+            v[q].c[0] = v[q].c[1] = v[q].c[2] = tint;
+            v[q].c[3] = q < 2 ? 150 : 255;
+            id[q] = mb.add(v[q]);
+        }
+        // outward faces: counter-clockwise seen from outside
+        mb.tri(id[0], id[2], id[1]);
+        mb.tri(id[0], id[3], id[2]);
+    }
+    Vertex c = vert(Vector3Add(base, {0, h, 0}), {0, 1, 0}, {0, 0});
+    c.c[0] = c.c[1] = c.c[2] = tint;
+    int ic = mb.add(c);
+    int first = -1;
+    for (int k = 0; k <= n; ++k) {
+        float a = 2 * PI * k / n;
+        Vertex v = vert(Vector3Add(base, {std::cos(a) * r, h, std::sin(a) * r}), {0, 1, 0}, {std::cos(a) * r, std::sin(a) * r});
+        v.c[0] = v.c[1] = v.c[2] = tint;
+        int id = mb.add(v);
+        if (first >= 0) mb.tri(ic, id, id - 1);
+        first = id;
+    }
+}
+
+}  // namespace
+
+void TrackScene::buildProps(const std::string& assetsDir) {
+    const rr::Track& tr = *tr_;
+    const float L = tr.length();
+    // a point beside the track: s along it, lateral offset, absolute height
+    auto TP = [&](float s, float lat, float h) { return W(tr.pointAt(s, lat), h); };
+    auto ground = [&](float s, float lat) {
+        const auto& a = tr.at(tr.indexAt(s));
+        return edgeProfile(a.z, a.bank, a.halfWidth, lat);
+    };
+    // a block between two track distances and two lateral offsets (any order), heights h0..h1
+    auto blk = [&](gfx::MeshBuilder& mb, float s0, float s1, float l0, float l1, float h0, float h1, bool bottom = false,
+                   float ao = 1.0f) {
+        Vector3 c[8] = {TP(s0, l0, h0), TP(s1, l0, h0), TP(s1, l1, h0), TP(s0, l1, h0),
+                        TP(s0, l0, h1), TP(s1, l0, h1), TP(s1, l1, h1), TP(s0, l1, h1)};
+        block(mb, c, bottom, ao);
+    };
+    gfx::MeshBuilder white, glass, steel, seats, slab, tyres, fence, orange;
+
+    if (tr.hasPit()) {
+        const int ps = tr.pit().side;
+        const float hw = tr.at(tr.indexAt(tr.pit().lane_start_s)).halfWidth;
+        const float F = ps * (hw + rr::Track::kPitBarrier + 0.3f);  // garage fronts
+        const float D = ps * 14.0f;                                 // depth
+        float s0 = tr.pit().lane_start_s + 10.0f, s1 = tr.pit().lane_end_s - 10.0f;
+        float len = std::fmod(s1 - s0 + L, L);
+        int bays = std::max(1, (int)(len / 8.0f));
+        float bay = len / bays;
+        float g = ground(s0 + len / 2, F) + 0.02f;
+        for (int b = 0; b < bays; ++b) {
+            float a = s0 + b * bay, e = a + bay;
+            // pillar and side wall between garages, the back wall, the floor
+            blk(white, a, a + 0.6f, F, F + D, g - 1.0f, g + 4.4f, false, 0.6f);
+            blk(white, a, e, F + D * 0.93f, F + D, g - 1.0f, g + 4.4f, false, 0.5f);
+            // the garage floor (inside, dark)
+            blk(slab, a + 0.6f, e, F, F + D * 0.93f, g - 0.3f, g + 0.01f, false, 0.4f);
+            // half-open roller door
+            blk(steel, a + 0.6f, e, F + ps * 0.25f, F + ps * 0.35f, g + 2.9f, g + 4.4f);
+            // upper floor: glass front, solid block behind, roof slab overhanging the pit lane
+            blk(glass, a, e, F, F + ps * 0.25f, g + 4.4f, g + 7.4f);
+            blk(white, a, e, F + ps * 0.25f, F + D, g + 4.4f, g + 7.4f);
+            blk(white, a, e, F - ps * 2.2f, F + D + ps * 0.3f, g + 7.4f, g + 7.9f, true, 0.8f);
+            // a team colour band along the fascia
+            blk(orange, a, e, F - ps * 2.25f, F - ps * 2.2f, g + 7.45f, g + 7.85f);
+        }
+        // the closed ends of the building
+        blk(white, s1, s1 + 0.6f, F, F + D, g - 1.0f, g + 7.4f, false, 0.6f);
+        // the paddock behind: worn asphalt out to where the land begins
+        {
+            Strip st{&slab};
+            for (int i = 0; i <= tr.size(); ++i) {
+                float s = i >= tr.size() ? L : tr.at(i).s;
+                if (!tr.inPitArea(s)) { st.cut(); continue; }
+                const auto& sm = tr.at(i);
+                float in = ps * (sm.halfWidth + rr::Track::kPitBarrier + (garagesAt(s) ? 0.3f + 14.0f : 0.3f));
+                float out = ps * (sm.halfWidth + rr::Track::kPitBarrier + 45.0f);
+                Vertex v0 = vert(W(sm.p + sm.n * in, ground(s, in)), {0, 1, 0}, {in, s});
+                Vertex v1 = vert(W(sm.p + sm.n * out, ground(s, out)), {0, 1, 0}, {out, s});
+                for (Vertex* v : {&v0, &v1}) v->c[0] = v->c[1] = v->c[2] = 255;
+                std::vector<Vertex> r = {v0, v1};
+                if (ps < 0) std::swap(r[0], r[1]);
+                st.ring(r);
+            }
+        }
+
+        // grandstand across the pit straight: stepped concrete, coloured seats, a cantilever roof
+        {
+            const int os = -ps;
+            const float g0 = ground(tr.pit().lane_start_s + 115.0f, os * (hw + tr.runoff())) + 0.02f;
+            const float L0 = hw + tr.runoff() + 2.0f;
+            float a0 = tr.pit().lane_start_s + 40.0f, a1 = tr.pit().lane_start_s + 190.0f;
+            const int rows = 16;
+            const float depth = 0.9f, rise = 0.48f, base = 1.4f;
+            for (float a = a0; a < a1 - 0.1f; a += 10.0f) {
+                float e = std::min(a + 10.0f, a1);
+                int sec = (int)((a - a0) / 10.0f);
+                for (int r = 0; r < rows; ++r) {
+                    float l0 = os * (L0 + r * depth), l1 = os * (L0 + (r + 1) * depth);
+                    float top = g0 + base + r * rise;
+                    blk(white, a, e, l0, l1, g0 - 0.5f, top, false, 0.7f);
+                    // seats: blocks of colour, a lettered pattern across sections
+                    blk(seats, a + 0.2f, e - 0.2f, os * (L0 + r * depth + 0.25f), os * (L0 + r * depth + 0.7f), top, top + 0.42f);
+                    (void)sec;
+                }
+                float back = os * (L0 + rows * depth);
+                float topRow = g0 + base + rows * rise;
+                blk(white, a, e, back, back + os * 0.4f, g0 - 0.5f, topRow + 3.2f, false, 0.7f);  // back wall
+                blk(steel, a, a + 0.4f, back - os * 0.2f, back + os * 0.2f, topRow, topRow + 3.6f);  // roof column
+                // the roof slopes up towards the track
+                Vector3 c[8] = {TP(a, back + os * 0.4f, topRow + 3.6f), TP(e, back + os * 0.4f, topRow + 3.6f),
+                                TP(e, os * (L0 - 1.5f), topRow + 4.6f), TP(a, os * (L0 - 1.5f), topRow + 4.6f),
+                                TP(a, back + os * 0.4f, topRow + 3.85f), TP(e, back + os * 0.4f, topRow + 3.85f),
+                                TP(e, os * (L0 - 1.5f), topRow + 4.85f), TP(a, os * (L0 - 1.5f), topRow + 4.85f)};
+                block(steel, c, true, 0.7f);
+            }
+            blk(white, a1, a1 + 0.4f, os * L0, os * (L0 + rows * depth + 0.4f), g0 - 0.5f, g0 + base + rows * rise + 3.2f);
+            blk(white, a0 - 0.4f, a0, os * L0, os * (L0 + rows * depth + 0.4f), g0 - 0.5f, g0 + base + rows * rise + 3.2f);
+        }
+
+        // catch fences on the concrete walls of the pit straight
+        for (int side : {1, -1}) {
+            if (side == ps) continue;  // the garages face the pit lane
+            float a0 = tr.pit().entry_s, a1 = tr.pit().exit_s;
+            float span = std::fmod(a1 - a0 + L, L);
+            for (float d = 0; d < span; d += 3.0f) {
+                float s = a0 + d, e = a0 + std::min(d + 3.0f, span);
+                if (!tr.inPitArea(s) || !tr.inPitArea(e)) continue;  // on the concrete only
+                const auto& sm = tr.at(tr.indexAt(s));
+                float off = side * (tr.barrierOffset(s, side, sm.halfWidth) + 0.29f);
+                float h0 = ground(s, off) + 0.95f, h1 = ground(e, off) + 0.95f;
+                // the mesh, both sides
+                Vector3 p0 = TP(s, off, h0), p1 = TP(e, off, h1), p2 = TP(e, off, h1 + 3.0f), p3 = TP(s, off, h0 + 3.0f);
+                quad(fence, p0, p1, p2, p3, {s, 0}, {e, 0}, {e, 3.0f}, {s, 3.0f});
+                // a post
+                blk(steel, s, s + 0.08f, off - 0.04f, off + 0.04f, h0 - 0.3f, h0 + 3.1f);
+            }
+        }
+    }
+
+    // marshal posts outside every corner, tyre walls in front of the armco at the slow ones
+    for (const auto& turn : tr.turns()) {
+        int out = -turn.direction;
+        float s = turn.apex_s;
+        const auto& sm = tr.at(tr.indexAt(s));
+        float off = tr.barrierOffset(s, out, sm.halfWidth);
+        float lat = out * (off + 3.5f);
+        float g = ground(s, lat) + 0.02f;
+        blk(white, s - 1.1f, s + 1.1f, lat - 1.1f, lat + 1.1f, g - 0.5f, g + 2.4f, false, 0.6f);
+        blk(orange, s - 1.4f, s + 1.4f, lat - 1.4f, lat + 1.4f, g + 2.4f, g + 2.65f, true);
+        if (turn.min_radius < 45.0f) {
+            for (float d = -25.0f; d <= 45.0f; d += 0.62f) {
+                float st = turn.apex_s + d;
+                const auto& a = tr.at(tr.indexAt(st));
+                float lo = out * (tr.barrierOffset(st, out, a.halfWidth) - 0.4f);
+                Vector3 b = TP(st, lo, ground(st, lo) - 0.05f);
+                int stack = (int)std::floor((d + 25.0f) / 0.62f);
+                unsigned char tint = (stack / 4) % 2 ? 255 : 40;  // white-banded every fourth stack
+                cylinder(tyres, b, 0.3f, 0.95f, 10, tint);
+            }
+        }
+    }
+
+    auto part = [&](gfx::MeshBuilder& mb, gfx::Material mat, bool shadows, unsigned alphaTex = 0) {
+        Part p;
+        p.meshes = mb.build();
+        p.mat = mat;
+        p.shadows = shadows;
+        p.alphaTex = alphaTex;
+        if (!p.meshes.empty()) parts_.push_back(std::move(p));
+    };
+    gfx::Material mWhite;
+    mWhite.layer[0] = &concrete_;
+    mWhite.scale[0] = 3.0f;
+    mWhite.tint = {1.05f, 1.05f, 1.05f};
+    mWhite.normalStrength = 0.5f;
+    part(white, mWhite, true);
+    gfx::Material mSlab;
+    mSlab.layer[0] = &asphaltWorn_;
+    mSlab.scale[0] = 4.0f;
+    mSlab.depthBias = 1.0f;
+    part(slab, mSlab, false);
+    gfx::Material mGlass;
+    mGlass.layer[0] = &metal_;
+    mGlass.scale[0] = 6.0f;
+    mGlass.tint = {0.25f, 0.32f, 0.38f};
+    mGlass.roughness = 0.08f;
+    mGlass.normalStrength = 0.0f;
+    part(glass, mGlass, true);
+    gfx::Material mSteel;
+    mSteel.layer[0] = &metal_;
+    mSteel.scale[0] = 2.0f;
+    mSteel.tint = {0.7f, 0.72f, 0.75f};
+    mSteel.roughness = 0.6f;
+    part(steel, mSteel, true);
+    gfx::Material mOrange = mWhite;
+    mOrange.tint = {1.0f, 0.38f, 0.05f};
+    mOrange.roughness = 0.6f;
+    part(orange, mOrange, true);
+    gfx::Material mSeats;
+    mSeats.layer[0] = &concrete_;
+    mSeats.scale[0] = 1.0f;
+    mSeats.tint = {0.08f, 0.22f, 0.6f};  // RR blue
+    mSeats.roughness = 0.45f;
+    mSeats.normalStrength = 0.2f;
+    part(seats, mSeats, true);
+    gfx::Material mTyres;
+    mTyres.layer[0] = &rubber_;
+    mTyres.scale[0] = 0.6f;
+    mTyres.vertexTint = true;
+    mTyres.tint = {0.35f, 0.35f, 0.35f};
+    part(tyres, mTyres, true);
+    if (fence.vertexCount() > 0) {
+        Texture2D ct = LoadTexture((assetsDir + "/materials/chainlink/albedo.png").c_str());
+        if (ct.id) {
+            GenTextureMipmaps(&ct);
+            SetTextureFilter(ct, TEXTURE_FILTER_TRILINEAR);
+            SetTextureWrap(ct, TEXTURE_WRAP_REPEAT);
+            chain_ = gfx::flatTextureSet(ct, 0.5f);
+            gfx::Material mFence;
+            mFence.layer[0] = &chain_;
+            mFence.scale[0] = 1.0f;
+            mFence.alphaCut = 0.35f;
+            mFence.doubleSided = true;
+            mFence.metalness = 0.0f;
+            mFence.tint = {1.8f, 1.8f, 1.85f};
+            part(fence, mFence, true, ct.id);
+        }
+    }
+}
+
 // ---------------------------------------------------------------- draw
 
 void TrackScene::drawShadows(gfx::Renderer& r) const {
-    for (const Part& p : parts_)
-        if (p.shadows)
-            for (const Mesh& m : p.meshes) r.drawShadow(m, MatrixIdentity());
+    for (const Part& p : parts_) {
+        if (!p.shadows) continue;
+        for (size_t i = 0; i < p.meshes.size(); ++i)
+            if (r.inShadowView(p.boxes[i]))
+                r.drawShadow(p.meshes[i], MatrixIdentity(), p.alphaTex, p.mat.alphaCut, p.mat.scale[0]);
+    }
 }
 
 void TrackScene::draw(gfx::Renderer& r) const {
     for (const Part& p : parts_)
-        for (const Mesh& m : p.meshes) r.draw(m, p.mat, MatrixIdentity());
+        for (size_t i = 0; i < p.meshes.size(); ++i)
+            if (r.inView(p.boxes[i])) r.draw(p.meshes[i], p.mat, MatrixIdentity());
 }

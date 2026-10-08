@@ -26,11 +26,15 @@ private:
     const rr::Track* tr_ = nullptr;
     struct Part {
         std::vector<Mesh> meshes;
+        std::vector<BoundingBox> boxes;  // one per mesh, for culling
         gfx::Material mat;
         bool shadows = true;
+        unsigned alphaTex = 0;           // cut-out shadows (leaves)
     };
     std::vector<Part> parts_;
     gfx::TextureSet asphalt_, asphaltWorn_, concrete_, grass_, gravel_, dirt_, metal_;
+    Texture2D treeAtlas_{};
+    gfx::TextureSet foliage_, rubber_, chain_;
 
     // terrain heights, for groundHeight(): a fine grid near the track and a coarse one beyond
     struct Grid {
@@ -53,5 +57,16 @@ private:
 
     void buildRoad(unsigned seed);
     void buildTerrain(unsigned seed);
+    void buildTrees(const std::string& assetsDir, unsigned seed);
+    void buildProps(const std::string& assetsDir);
+    // The paddock: pit garages along the pit lane, a grandstand across from them.
+    bool garagesAt(float s) const;     // pit side, along the pit lane
+    bool grandstandAt(float s) const;  // the other side of the pit straight
+    // How far out (lateral, from the centreline) the ground stays level with the track
+    // before blending into the land: the barrier, or the paddock and grandstand behind it.
+    float flatUntil(float s, int side, float halfWidth) const;
+    // 0..1: how much a plan-view point lies in a conifer plantation (before keeping clear of the track)
+    float plantation(rr::Vec2 p) const;
+    unsigned seed_ = 1;
     std::vector<float> gravelSide_;  // per sample: + gravel trap on the left, - on the right, 0 none
 };

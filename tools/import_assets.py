@@ -35,6 +35,12 @@ MATERIALS = {
     "gravel": ("Ground062L", 1024, "gravel traps"),
     "dirt": ("Ground082S", 1024, "forest floor and dirt patches"),
     "metal": ("Metal055A", 1024, "armco and posts"),
+    "rubber": ("Rubber004", 1024, "tyre walls"),
+}
+# Poly Haven model textures used on their own: key -> (zip, colour map, alpha map, size)
+CUTOUTS = {
+    "chainlink": ("modular_chainlink_fence_2k.fbx.zip", "textures/modular_chainlink_fence_wire_diff_2k.png",
+                  "textures/modular_chainlink_fence_wire_alpha_2k.png", 1024),
 }
 SKIES = {
     "kloofendal_partly_cloudy": "kloofendal_48d_partly_cloudy_puresky_2k.exr",
@@ -51,7 +57,8 @@ def read_map(z, name, size, mode):
 
 
 def material(src, key, acg, size):
-    path = os.path.join(src, f"{acg}_2K-JPG.zip")
+    path = next(os.path.join(src, f"{acg}_{res}-JPG.zip") for res in ("2K", "1K", "4K")
+                if os.path.exists(os.path.join(src, f"{acg}_{res}-JPG.zip")))
     out = os.path.join("assets", "materials", key)
     os.makedirs(out, exist_ok=True)
     with zipfile.ZipFile(path) as z:
@@ -64,6 +71,22 @@ def material(src, key, acg, size):
         ao = np.asarray(read_map(z, find("AmbientOcclusion"), size, "L")) if find("AmbientOcclusion") else np.full_like(rough, 255)
         metal = np.asarray(read_map(z, find("Metalness"), size, "L")) if find("Metalness") else np.zeros_like(rough)
         Image.fromarray(np.dstack([ao, rough, metal])).save(os.path.join(out, "orm.jpg"), quality=92)
+    return out
+
+
+def cutout(src, key, zname, colour, alpha, size):
+    """A colour map with an alpha mask in one RGBA PNG (fences)."""
+    out = os.path.join("assets", "materials", key)
+    os.makedirs(out, exist_ok=True)
+    with zipfile.ZipFile(os.path.join(src, zname)) as z:
+        rgb = Image.open(io.BytesIO(z.read(colour))).convert("RGB").resize((size, size), Image.LANCZOS)
+        a = np.asarray(Image.open(io.BytesIO(z.read(alpha))), dtype=np.float64)
+        if a.ndim == 3:
+            a = a[..., 0]
+        a = a / a.max() * 255.0
+        a = Image.fromarray(a.astype(np.uint8)).resize((size, size), Image.LANCZOS)
+    rgb.putalpha(a)
+    rgb.save(os.path.join(out, "albedo.png"), optimize=True)
     return out
 
 
@@ -208,6 +231,8 @@ def main():
     src = sys.argv[1]
     for key, (acg, size, _) in MATERIALS.items():
         print("material", key, "<-", acg, "->", material(src, key, acg, size))
+    for key, (zname, colour, alpha, size) in CUTOUTS.items():
+        print("cutout", key, "->", cutout(src, key, zname, colour, alpha, size))
     for key, fname in SKIES.items():
         info = sky(src, key, fname)
         print("sky", key, info.get("sun_dir"), info.get("sun_irradiance"), "sky up", info["sky_irradiance_up"])
