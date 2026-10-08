@@ -189,13 +189,17 @@ void CarRender::update(const rr::Car& car, const rr::Track& track, const TrackSc
                                  MatrixTranslate(0, pivot + heave_, 0));
     body_ = MatrixMultiply(susp, road);
 
+    // The road-wheel angle is small at racing speeds (a couple of degrees in a fast bend),
+    // which reads as the car turning more than its wheels do; show it 2.5 times larger, up
+    // to about 24 degrees.
+    const float visualSteer = std::clamp(st.steerAngle * 2.5f, -0.42f, 0.42f);
     // wheels: on the road, front ones steered, all spinning with the car's speed
     for (int i = 0; i < 4; ++i) {
         const Wheel& wh = wheels_[i];
         const float spin = wh.mirrored ? -st.wheelRot : st.wheelRot;
         Matrix m = MatrixRotateX(spin);
         if (wh.mirrored) m = MatrixMultiply(m, MatrixRotateY(PI));
-        if (wh.front) m = MatrixMultiply(m, MatrixRotateY(st.steerAngle));
+        if (wh.front) m = MatrixMultiply(m, MatrixRotateY(visualSteer));
         m = MatrixMultiply(m, MatrixTranslate(wh.hub.x, wh.hub.y, wh.hub.z));
         wheel_[i] = MatrixMultiply(m, road);
     }
