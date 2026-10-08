@@ -25,7 +25,7 @@ Matrix basis(Vector3 x, Vector3 y, Vector3 z, Vector3 o) {
 }  // namespace
 
 bool CarRender::loadPart(const std::string& file, const Finish& paint, int liveryMaterial, std::vector<Part>* out, bool wheel,
-                         float wheelRadius, std::string* err) {
+                         float wheelRadius, std::string* err, std::vector<Part>* steerOut, int steerMaterial) {
     Model m = LoadModel(file.c_str());
     if (m.meshCount == 0) {
         if (err) *err = "cannot load " + file;
@@ -86,7 +86,7 @@ bool CarRender::loadPart(const std::string& file, const Finish& paint, int liver
                 p.mat.clearcoat = cc;
                 p.mat.clearcoatRoughness = ccRough;
                 p.mat.normalStrength = 0.0f;
-                out->push_back(p);
+                (steerOut && mi == steerMaterial ? steerOut : out)->push_back(p);
             }
         }
     }
@@ -116,13 +116,17 @@ bool CarRender::load(const std::string& dir, const Finish& paint, std::string* e
     const mjson::Value& mats = j["materials"];
     for (size_t k = 0; k < mats.size(); ++k)
         if (mats[k].str() == j["source_material"].str()) livery = (int)k + 1;
-    return loadPart(dir + "/body.glb", paint, livery, &body_parts_, false, 0, err) &&
+    // the steering wheel is the body's "Wheel1" material (the cockpit's own texture)
+    int steerMat = -1;
+    for (size_t k = 0; k < mats.size(); ++k)
+        if (mats[k].str().rfind("Wheel1Mtl", 0) == 0) steerMat = (int)k + 1;
+    return loadPart(dir + "/body.glb", paint, livery, &body_parts_, false, 0, err, &steer_parts_, steerMat) &&
            loadPart(dir + "/wheel_front.glb", paint, -1, &wheel_parts_[0], true, wheels_[0].radius, err) &&
            loadPart(dir + "/wheel_rear.glb", paint, -1, &wheel_parts_[1], true, wheels_[2].radius, err);
 }
 
 void CarRender::unload() {
-    for (auto* list : {&body_parts_, &wheel_parts_[0], &wheel_parts_[1]}) {
+    for (auto* list : {&body_parts_, &steer_parts_, &wheel_parts_[0], &wheel_parts_[1]}) {
         for (Part& p : *list) UnloadMesh(p.mesh);
         list->clear();
     }
@@ -193,6 +197,14 @@ void CarRender::update(const rr::Car& car, const rr::Track& track, const TrackSc
     // which reads as the car turning more than its wheels do; show it 2.5 times larger, up
     // to about 24 degrees.
     const float visualSteer = std::clamp(st.steerAngle * 2.5f, -0.42f, 0.42f);
+    // the steering wheel turns with the road wheels, about 6 times as far: 17 degrees of lock
+    // is about 100 degrees at the wheel. A left turn is counter-clockwise for the driver.
+    {
+        const float a = -std::clamp(st.steerAngle * 6.0f, -1.9f, 1.9f);
+        const Vector3 hub = steerHub_, ax = Vector3Normalize(steerAxis_);
+        steerM_ = MatrixMultiply(MatrixMultiply(MatrixTranslate(-hub.x, -hub.y, -hub.z), MatrixRotate(ax, a)),
+                                 MatrixTranslate(hub.x, hub.y, hub.z));
+    }
     // wheels: on the road, front ones steered, all spinning with the car's speed
     for (int i = 0; i < 4; ++i) {
         const Wheel& wh = wheels_[i];
@@ -207,12 +219,14 @@ void CarRender::update(const rr::Car& car, const rr::Track& track, const TrackSc
 
 void CarRender::draw(gfx::Renderer& r) const {
     for (const Part& p : body_parts_) r.draw(p.mesh, p.mat, body_);
+    for (const Part& p : steer_parts_) r.draw(p.mesh, p.mat, MatrixMultiply(steerM_, body_));
     for (int i = 0; i < 4; ++i)
         for (const Part& p : wheel_parts_[wheels_[i].front ? 0 : 1]) r.draw(p.mesh, p.mat, wheel_[i]);
 }
 
 void CarRender::drawShadow(gfx::Renderer& r) const {
     for (const Part& p : body_parts_) r.drawShadow(p.mesh, body_);
+    for (const Part& p : steer_parts_) r.drawShadow(p.mesh, MatrixMultiply(steerM_, body_));
     for (int i = 0; i < 4; ++i)
         for (const Part& p : wheel_parts_[wheels_[i].front ? 0 : 1]) r.drawShadow(p.mesh, wheel_[i]);
 }

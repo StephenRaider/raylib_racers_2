@@ -40,6 +40,10 @@ private:
         const gfx::TextureSet* set = nullptr;
     };
     std::vector<Part> body_parts_;
+    std::vector<Part> steer_parts_;     // the steering wheel, turned about its column
+    Vector3 steerHub_{-0.028f, 0.50f, 0.61f};  // body frame
+    Vector3 steerAxis_{0.0f, 0.2f, 1.0f};
+    Matrix steerM_ = MatrixIdentity();
     std::vector<Part> wheel_parts_[2];  // front, rear (left-side wheel)
     std::vector<gfx::TextureSet*> sets_;
     std::vector<Model> models_;         // keep the glTF textures alive
@@ -57,5 +61,5 @@ private:
     int hint_ = 0;
 
     bool loadPart(const std::string& file, const Finish& paint, int liveryMaterial, std::vector<Part>* out, bool wheel,
-                  float wheelRadius, std::string* err);
+                  float wheelRadius, std::string* err, std::vector<Part>* steerOut = nullptr, int steerMaterial = -1);
 };
