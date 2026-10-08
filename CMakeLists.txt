@@ -144,7 +144,10 @@ if(RR_BUILD_VIEWER)
   # viewer v2: races on the new renderer (one car for now)
   add_executable(rr_viewer2
     apps/viewer2/main.cpp
-    apps/viewer2/car_render.cpp)
+    apps/viewer2/car_render.cpp
+    apps/viewer/engine_sound.cpp
+    apps/viewer/race_audio.cpp)
+  target_include_directories(rr_viewer2 PRIVATE apps/viewer)
   target_link_libraries(rr_viewer2 PRIVATE rr_gfx)
   target_compile_options(rr_viewer2 PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)
   rr_output(rr_viewer2 "${RR_OUT}")

@@ -2,7 +2,7 @@
 #include <mutex>
 #include <vector>
 
-// Synthesised engine sound: a mid-2000s F1 V10 for each audible car, built from the
+// Synthesised engine sound: a mid-2000s F1 V10 (or a 2013 V8) for each audible car, built from the
 // engine orders of its rpm (firing pulses, crank and cam irregularity), intake and
 // exhaust noise, overrun crackle, a rev-limiter stutter and some wind and tyre noise.
 // It has no raylib dependency, so it can also render offline to a WAV file.
@@ -10,6 +10,10 @@ class EngineSynth {
 public:
     static constexpr int kMaxCars = 32;
     static constexpr int kRate = 44100;
+    enum Engine : int {
+        V10,  // 2000s 3.0 l V10: ten firings a cycle, to 19000 rpm
+        V8,   // 2013 2.4 l flat-plane V8: eight firings a cycle (a harder, rawer note), to 18000 rpm
+    };
 
     // What one car sounds like right now, as heard from the listener.
     struct Voice {
@@ -18,6 +22,7 @@ public:
         float throttle = 0;    // 0..1
         float speed = 0;       // m/s, for wind and tyre noise
         float maxRpm = 19000;
+        Engine engine = V10;
         float gain = 0;        // distance attenuation, 0..1
         float pan = 0;         // -1 left .. 1 right
         float pitch = 1;       // Doppler factor
@@ -34,9 +39,10 @@ private:
     struct CarState {
         double phase = 0;      // engine cycle (two crank revolutions), 0..1
         float rpm = 0, throttle = 0, gain = 0, pan = 0, pitch = 1, speed = 0, maxRpm = 19000;
+        Engine engine = V10;
         float lp1 = 0, lp2 = 0, noiseLp = 0, noiseHp = 0, windLp = 0;
         float pop = 0, limiter = 1, limiterClock = 0;
-        int firing = 0;                       // index of the last firing pulse (10 per cycle)
+        int firing = 0;                       // index of the last firing pulse (10 or 8 per cycle)
         float pulse = 0, pulseGain = 1, rough = 1;  // firing-pulse excitation and per-pulse jitter
         float fz1[3] = {}, fz2[3] = {};       // exhaust formant filters (state-variable)
         float body = 0, body2 = 0, dcIn = 0, dcOut = 0;

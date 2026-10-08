@@ -13,7 +13,9 @@ void audioCallback(void* buffer, unsigned int frames) {
     if (gSynth) gSynth->render(static_cast<float*>(buffer), (int)frames);
 }
 
-Vector3 carPos(const rr::Car& c) { return {c.state.pos.x, 0.6f, -c.state.pos.y}; }
+Vector3 carPosAt(const rr::Car& c, const std::function<float(const rr::Car&)>* heightOf) {
+    return {c.state.pos.x, heightOf && *heightOf ? (*heightOf)(c) : 0.6f, -c.state.pos.y};
+}
 Vector3 carVel(const rr::Car& c) {
     rr::Vec2 v = c.state.velWorld();
     return {v.x, 0, -v.y};
@@ -47,13 +49,14 @@ void RaceAudio::shutdown() {
 }
 
 std::vector<EngineSynth::Voice> RaceAudio::listen(const rr::Race& race, Vector3 listener, Vector3 listenerVel,
-                                                  Vector3 right, int focus) {
+                                                  Vector3 right, int focus, EngineSynth::Engine engine,
+                                                  const std::function<float(const rr::Car&)>* heightOf) {
     struct Near { int car; float dist; };
     std::vector<Near> near;
     const auto& cars = race.cars();
     for (int i = 0; i < (int)cars.size(); ++i) {
         if (cars[i].dnf) continue;
-        near.push_back({i, Vector3Distance(listener, carPos(cars[i]))});
+        near.push_back({i, Vector3Distance(listener, carPosAt(cars[i], heightOf))});
     }
     // the focused car always gets a voice; then the nearest others
     std::sort(near.begin(), near.end(), [&](const Near& a, const Near& b) {
@@ -68,12 +71,19 @@ std::vector<EngineSynth::Voice> RaceAudio::listen(const rr::Race& race, Vector3 
         EngineSynth::Voice v;
         v.car = n.car;
         v.rpm = c.state.rpm;
+        v.engine = engine;
         v.throttle = c.state.fuel > 0 ? std::clamp(c.control.accel, 0.0f, 1.0f) : 0.0f;
         v.speed = rr::length(c.state.velWorld());
         v.maxRpm = c.phys.maxRpm;
+        if (engine == EngineSynth::V8) {
+            // the sim's 4000..19000 rpm onto a 2013 V8's 4000..18000
+            const float idle = c.phys.idleRpm, top = c.phys.maxRpm;
+            v.rpm = idle + std::max(0.0f, c.state.rpm - idle) * (18000.0f - idle) / (top - idle);
+            v.maxRpm = 18000.0f;
+        }
         v.gain = std::min(1.0f, 10.0f / (n.dist + 2.0f));
         if (n.car != focus) v.gain *= 0.8f;
-        Vector3 to = Vector3Subtract(carPos(c), listener);
+        Vector3 to = Vector3Subtract(carPosAt(c, heightOf), listener);
         Vector3 dir = n.dist > 0.1f ? Vector3Scale(to, 1.0f / n.dist) : Vector3{0, 0, 1};
         v.pan = std::clamp(Vector3DotProduct(dir, right), -1.0f, 1.0f) * 0.8f;
         // Doppler: a source moving away (positive radial speed) sounds lower
@@ -95,6 +105,7 @@ void RaceAudio::update(const rr::Race& race, const Camera3D& camera, int focus, 
     Vector3 fwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     Vector3 right = Vector3Normalize(Vector3CrossProduct(fwd, camera.up));
     if (Vector3Length(right) < 0.5f) right = {1, 0, 0};
-    synth_.setVoices(active ? listen(race, camera.position, vel, right, focus) : std::vector<EngineSynth::Voice>{},
-                     active ? 1.1f : 0.0f);
+    synth_.setVoices(active ? listen(race, camera.position, vel, right, focus, engine, heightOf ? &heightOf : nullptr)
+                            : std::vector<EngineSynth::Voice>{},
+                     active ? 1.1f * master_ : 0.0f);
 }

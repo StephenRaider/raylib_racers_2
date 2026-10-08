@@ -3,14 +3,17 @@
 //
 //   rr_viewer2 [--track highmoor] [--car f1_2013_02] [--robot racingline] [--laps 30]
 //              [--sky NAME] [--cam 1-6] [--msaa 1|2|4] [--vsync] [--shots DIR] [--bench]
+//              [--no-sound] [--wav FILE [--wav-start SECONDS] [--wav-length SECONDS]]
 //
 // Keys: 1 chase, 2 T-cam, 3 nose, 4 TV, 5 helicopter, 6 orbit (drag to turn, wheel to zoom),
-// C next camera; Space pauses; [ ] slower / faster; F2 next sky; F12 screenshot.
+// C next camera; Space pauses; [ ] slower / faster; M mutes, - and = change the volume;
+// F2 next sky; F12 screenshot.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -18,6 +21,7 @@
 #include "config.hpp"
 #include "gfx.hpp"
 #include "race.hpp"
+#include "race_audio.hpp"
 #include "raylib.h"
 #include "raymath.h"
 #include "track_scene.hpp"
@@ -164,7 +168,9 @@ int main(int argc, char** argv) {
     std::string trackName = "highmoor", carId = "f1_2013_02", robot = "racingline", skyName = "kloofendal_partly_cloudy";
     std::string shotsDir;
     int width = 1600, height = 900, laps = 30, msaa = 4, startCam = 1;
-    bool vsync = false, bench = false;
+    bool vsync = false, bench = false, sound = true;
+    std::string wavPath;
+    float wavStart = 0, wavLength = 20;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -180,6 +186,10 @@ int main(int argc, char** argv) {
         else if (a == "--vsync") vsync = true;
         else if (a == "--shots") shotsDir = next();
         else if (a == "--bench") bench = true;
+        else if (a == "--no-sound") sound = false;
+        else if (a == "--wav") wavPath = next();
+        else if (a == "--wav-start") wavStart = (float)std::atof(next().c_str());
+        else if (a == "--wav-length") wavLength = (float)std::atof(next().c_str());
         else {
             std::fprintf(stderr, "unknown option %s\n", a.c_str());
             return 2;
@@ -296,6 +306,9 @@ int main(int argc, char** argv) {
         text(font, "km/h", bx + 132 * scale, by + 40 * scale, 18, LIGHTGRAY);
         text(font, TextFormat("%d", c.state.gear), bx + 222 * scale, by + 10 * scale, 56, Color{255, 200, 40, 255});
         float rpmFrac = std::clamp(c.state.rpm / c.phys.maxRpm, 0.0f, 1.0f);
+        const float v8Rpm = c.phys.idleRpm + std::max(0.0f, c.state.rpm - c.phys.idleRpm) * (18000.0f - c.phys.idleRpm) /
+                                                  (c.phys.maxRpm - c.phys.idleRpm);
+        text(mono, TextFormat("%5.0f rpm", v8Rpm), bx + 16 * scale, by + 56 * scale, 15, LIGHTGRAY);
         DrawRectangle((int)(bx + 16 * scale), (int)(by + 78 * scale), (int)(252 * scale), (int)(8 * scale), Color{60, 60, 66, 255});
         DrawRectangle((int)(bx + 16 * scale), (int)(by + 78 * scale), (int)(252 * scale * rpmFrac), (int)(8 * scale),
                       rpmFrac > 0.95f ? RED : (rpmFrac > 0.85f ? ORANGE : Color{80, 200, 120, 255}));
@@ -310,6 +323,49 @@ int main(int argc, char** argv) {
         text(mono, TextFormat("%.0f fps  %s   1-6 camera  [ ] speed  space pause", fps, gpuName.c_str()), 28 * scale, H - 40 * scale, 14,
              LIGHTGRAY);
     };
+
+    // the sound: a 2013 V8, heard from the camera
+    RaceAudio audio;
+    audio.engine = EngineSynth::V8;
+    audio.heightOf = [&](const rr::Car&) { return car.origin().y + 0.6f; };
+    if (!wavPath.empty()) {
+        // render the sound of a stretch of the race from behind the car to a WAV file, then stop
+        EngineSynth synth;
+        std::vector<float> pcm, buf;
+        const int fps = 60, frames = EngineSynth::kRate / fps;
+        buf.resize(2 * frames);
+        while (race.time() < wavStart) race.advance(1.0 / fps);
+        for (int i = 0; i < (int)(wavLength * fps); ++i) {
+            race.advance(1.0 / fps);
+            car.update(*me, track, scene, 1.0f / fps);
+            const Vector3 f = car.forward();
+            const rr::Vec2 v = me->state.velWorld();
+            Vector3 pos = Vector3Add(car.origin(), {-f.x * 6.0f, 1.8f, -f.z * 6.0f});
+            Vector3 right = {f.z, 0, -f.x};
+            std::function<float(const rr::Car&)> h = [&](const rr::Car&) { return car.origin().y + 0.6f; };
+            synth.setVoices(RaceAudio::listen(race, pos, {v.x, 0, -v.y}, right, 0, EngineSynth::V8, &h), 1.1f);
+            synth.render(buf.data(), frames);
+            pcm.insert(pcm.end(), buf.begin(), buf.end());
+            if (i % 30 == 0) {
+                const float idle = me->phys.idleRpm;
+                std::printf("t=%5.1f s  %5.0f rpm  gear %d  throttle %.2f  %3.0f km/h\n", race.time(),
+                            idle + std::max(0.0f, me->state.rpm - idle) * (18000.0f - idle) / (me->phys.maxRpm - idle), me->state.gear,
+                            me->control.accel, me->state.vx * 3.6f);
+            }
+        }
+        if (!writeWav(wavPath.c_str(), pcm, EngineSynth::kRate)) std::fprintf(stderr, "could not write %s\n", wavPath.c_str());
+        else std::printf("saved %s (%.1f s)\n", wavPath.c_str(), pcm.size() / 2.0 / EngineSynth::kRate);
+        UnloadFont(font);
+        UnloadFont(mono);
+        car.unload();
+        scene.unload();
+        gr.shutdown();
+        CloseWindow();
+        return 0;
+    }
+    if (sound && shotsDir.empty() && !bench && !audio.init()) std::fprintf(stderr, "note: no audio device, running without sound\n");
+    float volume = 1.0f;
+    bool muted = false;
 
     if (!shotsDir.empty()) {
         // drive and photograph: several moments of a lap from several cameras
@@ -368,6 +424,11 @@ int main(int argc, char** argv) {
             if (!paused && !race.isOver()) race.advance(dt * timeScale);
             car.update(*me, track, scene, paused ? 0.0f : dt * timeScale);
             Camera3D cam = rig.update(car, scene, track, me->trackS, dt);
+            if (IsKeyPressed(KEY_M)) muted = !muted;
+            if (IsKeyPressed(KEY_MINUS)) volume = std::max(0.1f, volume - 0.1f);
+            if (IsKeyPressed(KEY_EQUAL)) volume = std::min(2.0f, volume + 0.1f);
+            audio.update(race, cam, 0, !paused && !muted, dt);
+            audio.setMaster(volume);
             render(cam, false);
             BeginDrawing();
             ClearBackground(BLACK);
@@ -395,6 +456,7 @@ int main(int argc, char** argv) {
             }
         }
     }
+    audio.shutdown();
     UnloadFont(font);
     UnloadFont(mono);
     car.unload();

@@ -18,12 +18,35 @@ constexpr int kOrders = 48;
 struct OrderTable {
     float base[kOrders + 1];    // amplitude off throttle
     float bright[kOrders + 1];  // extra amplitude on throttle
-    OrderTable() {
+    explicit OrderTable(bool v8) {
         unsigned h = 0x9e3779b9u;
         for (int j = 1; j <= kOrders; ++j) {
             h = h * 1664525u + 1013904223u;
             const float r = (h >> 8) / 16777216.0f;
             float a;
+            if (v8) {
+                // Flat-plane V8, 2.4 l: eight firings a cycle (order 8) and a second-order crank
+                // imbalance (order 4) that gives the hard rasp; each bank fires four times (order 4).
+                // Heavy low orders for the body, the firing order and its harmonics for the scream.
+                switch (j) {
+                    case 1: a = 0.30f; break;
+                    case 2: a = 0.85f; break;   // crank
+                    case 3: a = 0.50f; break;
+                    case 4: a = 1.25f; break;   // bank firing and second-order: the growl
+                    case 6: a = 0.65f; break;
+                    case 8: a = 1.00f; break;   // firing
+                    case 12: a = 0.35f; break;
+                    case 16: a = 0.27f; break;  // the scream on top
+                    case 24: a = 0.10f; break;
+                    case 32: a = 0.06f; break;
+                    default:
+                        if (j < 8) a = 0.26f + 0.18f * r;
+                        else a = (0.12f + 0.10f * r) * std::pow(8.0f / j, 1.5f);
+                }
+                base[j] = a * (j <= 4 ? 0.34f : j <= 8 ? 0.60f : 0.78f);
+                bright[j] = a * (j <= 8 ? 0.95f : 0.65f);
+                continue;
+            }
             switch (j) {
                 case 1: a = 0.55f; break;    // cycle: cylinder-to-cylinder lumpiness
                 case 2: a = 0.85f; break;    // crank
@@ -46,11 +69,13 @@ struct OrderTable {
         base[0] = bright[0] = 0;
     }
 };
-const OrderTable kTable;
+const OrderTable kTable10(false), kTable8(true);
 
 // Exhaust pipe resonances: fixed formants the harmonics sweep through as it revs.
 struct Formant { float hz, q, gain; };
-constexpr Formant kFormants[3] = {{165, 2.2f, 0.9f}, {420, 2.8f, 1.0f}, {1050, 3.0f, 0.35f}};
+constexpr Formant kFormants10[3] = {{165, 2.2f, 0.9f}, {420, 2.8f, 1.0f}, {1050, 3.0f, 0.35f}};
+// a V8's shorter, fatter pipes: lower and heavier
+constexpr Formant kFormants8[3] = {{210, 2.0f, 1.1f}, {400, 2.4f, 1.2f}, {900, 2.8f, 0.45f}};
 
 // Asymmetric drive: tanh around an offset, so it adds even harmonics (grit) too.
 float drive(float x, float k) {
@@ -64,16 +89,16 @@ float softClip(float x) { return std::tanh(x); }
 struct SvfCoef { float a1, a2, a3; };
 struct SvfTable {
     SvfCoef c[3];
-    SvfTable() {
+    explicit SvfTable(const Formant* f) {
         for (int k = 0; k < 3; ++k) {
-            const float g = std::tan(3.14159265f * kFormants[k].hz / EngineSynth::kRate), r = 1.0f / kFormants[k].q;
+            const float g = std::tan(3.14159265f * f[k].hz / EngineSynth::kRate), r = 1.0f / f[k].q;
             c[k].a1 = 1.0f / (1.0f + g * (g + r));
             c[k].a2 = g * c[k].a1;
             c[k].a3 = g * c[k].a2;
         }
     }
 };
-const SvfTable kSvf;
+const SvfTable kSvf10(kFormants10), kSvf8(kFormants8);
 
 constexpr float kOutGain = 2.4f;
 
@@ -148,7 +173,13 @@ void EngineSynth::render(float* out, int frames) {
                 c.pitch += (v->pitch - c.pitch) * kGain;
                 c.speed += (v->speed - c.speed) * kGain;
                 c.maxRpm = v->maxRpm;
+                c.engine = v->engine;
             }
+            const bool v8 = c.engine == V8;
+            const OrderTable& table = v8 ? kTable8 : kTable10;
+            const Formant* formantDefs = v8 ? kFormants8 : kFormants10;
+            const SvfTable& svf = v8 ? kSvf8 : kSvf10;
+            const int pulses = v8 ? 8 : 10;
             c.gain += (tgtGain - c.gain) * kGain;
             if (!v && c.gain < 1e-4f) { c.live = false; continue; }
 
@@ -162,7 +193,7 @@ void EngineSynth::render(float* out, int frames) {
 
             // Firing pulses: ten per cycle, each a little stronger or weaker than the last,
             // which roughens the tone the way a real engine's combustion does.
-            const int firing = (int)(c.phase * 10.0);
+            const int firing = (int)(c.phase * pulses);
             if (firing != c.firing) {
                 c.firing = firing;
                 c.pulseGain = 1.0f + (0.18f + 0.22f * thr) * (1.0f - 0.5f * revs) * noise();
@@ -177,7 +208,7 @@ void EngineSynth::render(float* out, int frames) {
             const int maxOrder = std::min(kOrders, (int)(12000.0f / cycleHz));
             float eng = 0;
             for (int j = 1; j <= maxOrder; ++j) {
-                eng += s1 * (kTable.base[j] + thr * kTable.bright[j]);
+                eng += s1 * (table.base[j] + thr * table.bright[j]);
                 const float s0 = twoCos * s1 - s2;
                 s2 = s1;
                 s1 = s0;
@@ -195,16 +226,18 @@ void EngineSynth::render(float* out, int frames) {
             c.pop *= 0.9965f;
 
             // exhaust: firing pulses, harmonics and pops ring the pipe resonances
-            const float exc = eng + (c.pulse - 1.6f) * (0.10f + 0.22f * thr) + popSig * 0.8f;
+            // (the pulse train's mean level is the pulse rate times its decay time)
+            const float pulseMean = v8 ? cycleHz * pulses * 0.0012f : 1.6f;
+            const float exc = eng + (c.pulse - pulseMean) * (0.10f + 0.22f * thr) * (v8 ? 1.25f : 1.0f) + popSig * 0.8f;
             float formants = 0;
             for (int k = 0; k < 3; ++k) {
-                const SvfCoef& q = kSvf.c[k];
+                const SvfCoef& q = svf.c[k];
                 const float v3 = exc - c.fz2[k];
                 const float v1 = q.a1 * c.fz1[k] + q.a2 * v3;
                 const float v2 = c.fz2[k] + q.a2 * c.fz1[k] + q.a3 * v3;
                 c.fz1[k] = 2 * v1 - c.fz1[k];
                 c.fz2[k] = 2 * v2 - c.fz2[k];
-                formants += kFormants[k].gain * v1;
+                formants += formantDefs[k].gain * v1;
             }
 
             // tailpipe low-pass: opens up a little with throttle and revs, never to a whine
@@ -216,7 +249,7 @@ void EngineSynth::render(float* out, int frames) {
             // body: the low thump under it all, strongest pulling away on throttle
             c.body += (exc - c.body) * kBody;
             c.body2 += (c.body - c.body2) * kBody;
-            const float bodyAmt = thr * (1.25f - 0.85f * revs);
+            const float bodyAmt = thr * (1.25f - 0.85f * revs) * (v8 ? 1.4f : 1.0f);
 
             float sig = 0.55f * c.lp2 + 0.12f * eng + 0.75f * formants + bodyAmt * c.body2;
             sig += (c.noiseLp - c.noiseHp) * (0.03f + 0.10f * thr) * revs;
