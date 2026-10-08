@@ -10,9 +10,49 @@
 #include "raymath.h"
 #include "rlgl.h"
 
+// A few OpenGL calls rlgl does not wrap (multisampled targets), from the GLFW
+// that raylib links.
+extern "C" void* glfwGetProcAddress(const char* name);
+
 namespace gfx {
 
 namespace {
+
+namespace gl {
+typedef void (*GenFn)(int, unsigned*);
+typedef void (*BindFn)(unsigned, unsigned);
+typedef void (*StorageMsFn)(unsigned, int, unsigned, int, int);
+typedef void (*FbRbFn)(unsigned, unsigned, unsigned, unsigned);
+typedef void (*BlitFn)(int, int, int, int, int, int, int, int, unsigned, unsigned);
+typedef void (*CapFn)(unsigned);
+typedef void (*DelFn)(int, const unsigned*);
+GenFn genRenderbuffers;
+BindFn bindRenderbuffer, bindFramebuffer;
+StorageMsFn renderbufferStorageMultisample;
+FbRbFn framebufferRenderbuffer;
+BlitFn blitFramebuffer;
+CapFn enable, disable;
+typedef void (*TexParamFn)(unsigned, unsigned, int);
+TexParamFn texParameteri;
+DelFn deleteRenderbuffers;
+const unsigned RENDERBUFFER = 0x8D41, FRAMEBUFFER = 0x8D40, READ_FRAMEBUFFER = 0x8CA8, DRAW_FRAMEBUFFER = 0x8CA9;
+const unsigned COLOR_ATTACHMENT0 = 0x8CE0, DEPTH_ATTACHMENT = 0x8D00, RGBA16F = 0x881A, DEPTH_COMPONENT24 = 0x81A6;
+const unsigned COLOR_BUFFER_BIT = 0x4000, NEAREST = 0x2600, SAMPLE_ALPHA_TO_COVERAGE = 0x809E;
+bool load() {
+    genRenderbuffers = (GenFn)glfwGetProcAddress("glGenRenderbuffers");
+    deleteRenderbuffers = (DelFn)glfwGetProcAddress("glDeleteRenderbuffers");
+    bindRenderbuffer = (BindFn)glfwGetProcAddress("glBindRenderbuffer");
+    bindFramebuffer = (BindFn)glfwGetProcAddress("glBindFramebuffer");
+    renderbufferStorageMultisample = (StorageMsFn)glfwGetProcAddress("glRenderbufferStorageMultisample");
+    framebufferRenderbuffer = (FbRbFn)glfwGetProcAddress("glFramebufferRenderbuffer");
+    blitFramebuffer = (BlitFn)glfwGetProcAddress("glBlitFramebuffer");
+    enable = (CapFn)glfwGetProcAddress("glEnable");
+    disable = (CapFn)glfwGetProcAddress("glDisable");
+    texParameteri = (TexParamFn)glfwGetProcAddress("glTexParameteri");
+    return genRenderbuffers && deleteRenderbuffers && bindRenderbuffer && bindFramebuffer && renderbufferStorageMultisample &&
+           framebufferRenderbuffer && blitFramebuffer && enable && disable && texParameteri;
+}
+}  // namespace gl
 
 // ---------------------------------------------------------------- shaders
 
@@ -42,6 +82,49 @@ void main() {
 }
 )";
 
+const char* kPbrInstVS = R"(#version 330
+in vec3 vertexPosition;
+in vec2 vertexTexCoord;
+in vec3 vertexNormal;
+in vec4 vertexColor;
+in vec4 vertexTangent;
+layout(location = 10) in mat4 instanceTransform;  // clear of the mesh attributes (0-7)
+uniform mat4 mvp;  // view * projection: the model matrix comes per instance
+uniform float depthBias;
+out vec3 fragPos;
+out vec3 fragNormal;
+out vec4 fragTangent;
+out vec2 fragUV;
+out vec4 fragColor;
+void main() {
+    mat4 M = instanceTransform;
+    vec3 tint = vec3(M[0][3], M[1][3], M[2][3]);
+    M[0][3] = 0.0; M[1][3] = 0.0; M[2][3] = 0.0;
+    vec4 wp = M * vec4(vertexPosition, 1.0);
+    fragPos = wp.xyz;
+    fragNormal = normalize(mat3(M) * vertexNormal);
+    fragTangent = vec4(normalize(mat3(M) * vertexTangent.xyz), vertexTangent.w);
+    fragUV = vertexTexCoord;
+    fragColor = vertexColor * vec4(tint, 1.0);
+    gl_Position = mvp * wp;
+    gl_Position.z -= depthBias * 1e-6 * gl_Position.w;
+}
+)";
+
+const char* kDepthInstVS = R"(#version 330
+in vec3 vertexPosition;
+in vec2 vertexTexCoord;
+layout(location = 10) in mat4 instanceTransform;
+uniform mat4 mvp;
+out vec2 uv;
+void main() {
+    mat4 M = instanceTransform;
+    M[0][3] = 0.0; M[1][3] = 0.0; M[2][3] = 0.0;
+    uv = vertexTexCoord;
+    gl_Position = mvp * (M * vec4(vertexPosition, 1.0));
+}
+)";
+
 // Shared sky lookups: equirectangular, row 0 at the zenith, u = 0.5 + atan(x, -z) / 2pi.
 const char* kSkyCommon = R"(
 const float PI = 3.14159265;
@@ -63,7 +146,7 @@ in vec4 fragTangent;
 in vec2 fragUV;
 in vec4 fragColor;
 uniform sampler2D albedo0, normal0, orm0, albedo1, normal1, orm1, albedo2, normal2, orm2;
-uniform sampler2D shadowMap0, shadowMap1;
+uniform sampler2DShadow shadowMap0, shadowMap1;
 uniform sampler2D specAtlas;
 uniform int layers;
 uniform vec3 layerScale;
@@ -74,6 +157,8 @@ uniform int macroVariation;
 uniform float alphaCut;
 uniform float translucency;
 uniform int vertexTint;
+uniform int alphaToCoverage;
+uniform int detile;
 uniform vec3 viewPos;
 uniform mat4 lightVP[2];
 uniform vec3 sunDir;      // towards the sun
@@ -81,6 +166,11 @@ uniform vec3 sunColor;    // irradiance
 uniform vec3 sh[9];       // sky irradiance, spherical harmonics (already scaled)
 uniform float specScale;  // sky intensity for reflections
 uniform float fogDensity;
+uniform vec3 fogColor;    // the sky's mean radiance at the horizon
+uniform sampler2D colorMap;
+uniform vec4 colorMapRect;
+uniform vec2 colorMapRange;
+uniform int useColorMap;
 out vec4 finalColor;
 
 vec3 irradianceSH(vec3 n) {
@@ -124,7 +214,9 @@ float V_Smith(float NoV, float NoL, float a) {
 }
 vec3 F_Schlick(vec3 f0, float VoH) { return f0 + (1.0 - f0) * pow(1.0 - VoH, 5.0); }
 
-float shadowIn(sampler2D map, mat4 vp, vec3 n, float offset, float bias, int r, out bool inside) {
+// Each tap is a hardware 2x2 comparison (linear-filtered depth compare), so a 3x3
+// pattern of them is a soft 4x4 filter.
+float shadowIn(sampler2DShadow map, mat4 vp, vec3 n, float offset, float bias, int r, out bool inside) {
     vec4 lp = vp * vec4(fragPos + n * offset, 1.0);
     vec3 p = lp.xyz / lp.w * 0.5 + 0.5;
     inside = p.x > 0.02 && p.x < 0.98 && p.y > 0.02 && p.y < 0.98 && p.z < 1.0;
@@ -133,7 +225,7 @@ float shadowIn(sampler2D map, mat4 vp, vec3 n, float offset, float bias, int r, 
     float lit = 0.0, count = 0.0;
     for (int x = -r; x <= r; ++x)
         for (int y = -r; y <= r; ++y) {
-            lit += (p.z - bias > texture(map, p.xy + vec2(x, y) * texel).r) ? 0.0 : 1.0;
+            lit += texture(map, vec3(p.xy + vec2(x, y) * texel * 1.5, p.z - bias));
             count += 1.0;
         }
     return lit / count;
@@ -142,13 +234,17 @@ float shadowIn(sampler2D map, mat4 vp, vec3 n, float offset, float bias, int r, 
 // Two cascades: the sharp one near the camera, then the coarse one out to ~1 km.
 float shadow(vec3 n) {
     bool inside;
-    float s0 = shadowIn(shadowMap0, lightVP[0], n, 0.08, 0.00008, 2, inside);
+    float s0 = shadowIn(shadowMap0, lightVP[0], n, 0.08, 0.00008, 1, inside);
     if (inside) return s0;
-    float s1 = shadowIn(shadowMap1, lightVP[1], n, 0.5, 0.00006, 1, inside);
-    return s1;
+    return shadowIn(shadowMap1, lightVP[1], n, 0.5, 0.00006, 0, inside);
 }
 
-float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// a cheap arithmetic hash (no sin)
+float hash(vec2 p) {
+    vec3 q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+}
 float vnoise(vec2 p) {
     vec2 i = floor(p), f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
@@ -156,17 +252,48 @@ float vnoise(vec2 p) {
 }
 
 struct Surface { vec3 albedo; vec3 n; vec3 orm; };
+bool farAway = false;
 
-void sampleLayer(sampler2D a, sampler2D nm, sampler2D o, float scale, vec3 lt, float w, inout Surface s) {
+// near: albedo, normal and ORM (twice with macro variation); far (detail false) the
+// normal map is too small to see and is skipped, and only the albedo gets the second sample.
+void sampleLayer(sampler2D a, sampler2D nm, sampler2D o, float scale, vec3 lt, float w, bool detail, inout Surface s) {
     if (w <= 0.001) return;
     vec2 uv = fragUV / scale;
-    vec3 al = texture(a, uv).rgb, nn = texture(nm, uv).rgb, or = texture(o, uv).rgb;
+    if (farAway) {
+        // hundreds of metres off: one blurred albedo fetch, roughness from its mip average
+        s.albedo += pow(textureLod(a, uv * 0.31 + 0.37, 6.0).rgb, vec3(2.2)) * lt * w;
+        s.n += vec3(0.0, 0.0, 1.0) * w;
+        s.orm += textureLod(o, uv, 8.0).rgb * w;
+        return;
+    }
+    vec3 al, or, nn;
+    if (detile != 0) {
+        // No visible tiling (after Inigo Quilez's "texture repetition"): a noise picks one
+        // of eight random offsets per patch, blended across the patch borders.
+        float k = vnoise(uv * 0.45) * 8.0;
+        float ia = floor(k), f = fract(k);
+        vec2 oa = sin(vec2(3.0, 7.0) * ia), ob = sin(vec2(3.0, 7.0) * (ia + 1.0));
+        vec2 dx = dFdx(uv), dy = dFdy(uv);
+        vec3 a0 = textureGrad(a, uv + oa, dx, dy).rgb, a1 = textureGrad(a, uv + ob, dx, dy).rgb;
+        float b = smoothstep(0.2, 0.8, f - 0.1 * dot(a0 - a1, vec3(1.0)));
+        al = mix(a0, a1, b);
+        or = mix(textureGrad(o, uv + oa, dx, dy).rgb, textureGrad(o, uv + ob, dx, dy).rgb, b);
+        nn = detail ? mix(textureGrad(nm, uv + oa, dx, dy).rgb, textureGrad(nm, uv + ob, dx, dy).rgb, b) : vec3(0.5, 0.5, 1.0);
+        // and broad patches of older, paler and fresher, darker tarmac
+        al *= 0.86 + 0.24 * vnoise(fragPos.xz * 0.035) + 0.08 * vnoise(fragPos.xz * 0.3);
+    } else {
+        al = texture(a, uv).rgb;
+        or = texture(o, uv).rgb;
+        nn = detail ? texture(nm, uv).rgb : vec3(0.5, 0.5, 1.0);
+    }
     if (macroVariation != 0) {
         // a second, rotated sample at a larger scale hides the tiling
         vec2 uv2 = mat2(0.8, -0.6, 0.6, 0.8) * uv * 0.31 + 0.37;
         al = mix(al, texture(a, uv2).rgb, 0.45);
-        nn = mix(nn, texture(nm, uv2).rgb, 0.45);
-        or = mix(or, texture(o, uv2).rgb, 0.45);
+        if (detail) {
+            nn = mix(nn, texture(nm, uv2).rgb, 0.45);
+            or = mix(or, texture(o, uv2).rgb, 0.45);
+        }
     }
     s.albedo += pow(al, vec3(2.2)) * lt * w;
     s.n += (nn * 2.0 - 1.0) * w;
@@ -174,19 +301,37 @@ void sampleLayer(sampler2D a, sampler2D nm, sampler2D o, float scale, vec3 lt, f
 }
 
 void main() {
+    float outAlpha = 1.0;
     if (alphaCut > 0.0) {
         // mipmaps average thin leaves and wires away: boost alpha with the mip level
         vec2 uv0 = fragUV / layerScale.x;
         vec2 dx = dFdx(uv0 * vec2(textureSize(albedo0, 0))), dy = dFdy(uv0 * vec2(textureSize(albedo0, 0)));
         float lod = 0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1e-8));
-        if (texture(albedo0, uv0).a * (1.0 + 0.12 * max(lod, 0.0)) < alphaCut) discard;
+        float a = texture(albedo0, uv0).a * (1.0 + 0.12 * max(lod, 0.0));
+        if (alphaToCoverage != 0) {
+            // a sharp edge one pixel wide, which the multisampling turns into coverage
+            outAlpha = clamp((a - alphaCut) / max(fwidth(a), 1e-4) + 0.5, 0.0, 1.0);
+            if (outAlpha <= 0.0) discard;
+        } else if (a < alphaCut) discard;
     }
     vec3 wts = layers > 1 ? fragColor.rgb : vec3(1.0, 0.0, 0.0);
     wts /= max(wts.r + wts.g + wts.b, 1e-4);
     Surface s = Surface(vec3(0.0), vec3(0.0), vec3(0.0));
-    sampleLayer(albedo0, normal0, orm0, layerScale.x, layerTint[0], wts.r, s);
-    if (layers > 1) sampleLayer(albedo1, normal1, orm1, layerScale.y, layerTint[1], wts.g, s);
-    if (layers > 2) sampleLayer(albedo2, normal2, orm2, layerScale.z, layerTint[2], wts.b, s);
+    float camDist = length(viewPos - fragPos);
+    bool detail = camDist < 90.0;
+    // far off, a baked colour map stands in for the texture layers (and their aliasing)
+    float cmix = useColorMap != 0 ? smoothstep(colorMapRange.x, colorMapRange.y, camDist) : 0.0;
+    if (cmix < 1.0) {
+        sampleLayer(albedo0, normal0, orm0, layerScale.x, layerTint[0], wts.r, detail, s);
+        if (layers > 1) sampleLayer(albedo1, normal1, orm1, layerScale.y, layerTint[1], wts.g, detail, s);
+        if (layers > 2) sampleLayer(albedo2, normal2, orm2, layerScale.z, layerTint[2], wts.b, detail, s);
+    }
+    if (cmix > 0.0) {
+        vec3 c = pow(texture(colorMap, (fragPos.xz - colorMapRect.xy) * colorMapRect.zw).rgb, vec3(2.2));
+        s.albedo = mix(s.albedo, c, cmix);
+        s.n = mix(s.n, vec3(0.0, 0.0, 1.0), cmix);
+        s.orm = mix(s.orm, vec3(1.0, 0.95, 0.0), cmix);
+    }
     vec3 albedo = s.albedo * tint;
     if (vertexTint != 0) albedo *= fragColor.rgb;
     if (macroVariation != 0) {
@@ -217,7 +362,8 @@ void main() {
     float NoL = max(dot(n, L), 0.0);
     float NoH = max(dot(n, H), 0.0), VoH = max(dot(V, H), 0.0);
     vec3 col = vec3(0.0);
-    float sh = NoL > 0.0 ? shadow(normalize(fragNormal)) : 0.0;
+    float shRaw = (NoL > 0.0 || translucency > 0.0) ? shadow(normalize(fragNormal)) : 0.0;
+    float sh = NoL > 0.0 ? shRaw : 0.0;
     // the shading normal can face the sun when the surface does not: no light there
     sh *= smoothstep(-0.05, 0.05, dot(normalize(fragNormal), L));
     vec3 F = F_Schlick(f0, VoH);
@@ -230,7 +376,7 @@ void main() {
     if (translucency > 0.0) {
         // light through the leaves: the shady side of a tree glows a little towards the sun
         float back = max(dot(-n, L), 0.0) * (0.5 + 0.5 * pow(max(dot(-V, L), 0.0), 4.0));
-        col += diffuseColor / PI * sunColor * back * translucency * shadow(normalize(fragNormal)) * fragColor.a;
+        col += diffuseColor / PI * sunColor * back * translucency * shRaw * fragColor.a;
     }
 
     // sky: diffuse from the SH, reflections from the prefiltered atlas
@@ -239,7 +385,9 @@ void main() {
     vec3 R = reflect(-V, n);
     // reflections of the ground below the horizon are darker than the sky there
     float horizon = clamp(1.0 + dot(R, normalize(fragNormal)) * 1.5, 0.0, 1.0);
-    vec3 envSpec = prefiltered(R, rough) * (f0 * ab.x + ab.y) * horizon * horizon;
+    // rough surfaces reflect a blur of the whole sky: the SH irradiance is close enough
+    // and saves the reflection lookup
+    vec3 envSpec = (rough > 0.8 ? irradianceSH(R) / PI * specScale : prefiltered(R, rough)) * (f0 * ab.x + ab.y) * horizon * horizon;
     float specAO = clamp(pow(NoV + ao, exp2(-16.0 * a - 1.0)) - 1.0 + ao, 0.0, 1.0);
     vec3 amb = diffuseColor * E / PI * ao + envSpec * specAO;
     if (clearcoat > 0.0) {
@@ -252,9 +400,9 @@ void main() {
     // aerial perspective: fade to the blurred sky along the view ray, warmer towards the sun
     float dist = length(viewPos - fragPos);
     float fog = 1.0 - exp(-dist * fogDensity);
-    vec3 fogCol = prefiltered(-V, 1.0) * 0.9 + sunColor * 0.05 * pow(max(dot(-V, L), 0.0), 8.0);
+    vec3 fogCol = fogColor + sunColor * 0.05 * pow(max(dot(-V, L), 0.0), 8.0);
     col = mix(col, fogCol, fog);
-    finalColor = vec4(col, 1.0);
+    finalColor = vec4(col, outAlpha);
 }
 )";
 
@@ -422,42 +570,60 @@ void unloadTextureSet(TextureSet& t) {
 
 // ---------------------------------------------------------------- renderer
 
-bool Renderer::init(int width, int height, std::string* err) {
+void Renderer::lookUp(Shader& s, Locs& l) {
+    auto U = [&](const char* n) { return GetShaderLocation(s, n); };
+    l.mvp = U("mvp"); l.model = U("matModel"); l.normalMat = U("matNormal"); l.viewPos = U("viewPos");
+    l.lightVP = U("lightVP[0]"); l.sunDir = U("sunDir"); l.sunColor = U("sunColor"); l.sh = U("sh");
+    l.skyYaw = U("skyYaw"); l.fog = U("fogDensity"); l.specMax = U("specScale");
+    l.layerScale = U("layerScale"); l.tint = U("tint"); l.layerTint = U("layerTint"); l.roughMul = U("roughMul"); l.metalMul = U("metalMul");
+    l.normalStrength = U("normalStrength"); l.clearcoat = U("clearcoat"); l.ccRough = U("ccRough");
+    l.macro = U("macroVariation"); l.layers = U("layers"); l.depthBias = U("depthBias");
+    l.alphaCut = U("alphaCut"); l.translucency = U("translucency"); l.vertexTint = U("vertexTint");
+    l.a2c = U("alphaToCoverage");
+    l.fogColor = U("fogColor");
+    l.detile = U("detile");
+    l.colorMap = U("colorMap"); l.colorMapRect = U("colorMapRect"); l.colorMapRange = U("colorMapRange");
+    l.useColorMap = U("useColorMap");
+    const char* texNames[9] = {"albedo0", "normal0", "orm0", "albedo1", "normal1", "orm1", "albedo2", "normal2", "orm2"};
+    for (int i = 0; i < 9; ++i) l.tex[i] = U(texNames[i]);
+    l.shadow[0] = U("shadowMap0");
+    l.shadow[1] = U("shadowMap1");
+    l.spec = U("specAtlas");
+}
+
+bool Renderer::init(int width, int height, std::string* err, int msaa) {
+    msaa_ = gl::load() ? std::max(1, msaa) : 1;
     pbr_ = LoadShaderFromMemory(kPbrVS, withSkyCommon(kPbrFS).c_str());
+    pbrInst_ = LoadShaderFromMemory(kPbrInstVS, withSkyCommon(kPbrFS).c_str());
+    depthInst_ = LoadShaderFromMemory(kDepthInstVS, kDepthCutFS);
     depth_s_ = LoadShaderFromMemory(kDepthVS, kDepthFS);
     depthCut_ = LoadShaderFromMemory(kDepthCutVS, kDepthCutFS);
     sky_ = LoadShaderFromMemory(kSkyVS, withSkyCommon(kSkyFS).c_str());
     tonemap_ = LoadShaderFromMemory(nullptr, kTonemapFS);
-    for (Shader* s : {&pbr_, &depth_s_, &depthCut_, &sky_, &tonemap_})
+    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_})
         if (s->id == 0 || s->id == rlGetShaderIdDefault()) {
             if (err) *err = "shader compilation failed (OpenGL 3.3 required); see the log above";
             return false;
         }
-    auto U = [&](const char* n) { return GetShaderLocation(pbr_, n); };
-    L_.mvp = U("mvp"); L_.model = U("matModel"); L_.normalMat = U("matNormal"); L_.viewPos = U("viewPos");
-    L_.lightVP = U("lightVP[0]"); L_.sunDir = U("sunDir"); L_.sunColor = U("sunColor"); L_.sh = U("sh");
-    L_.skyYaw = U("skyYaw"); L_.fog = U("fogDensity"); L_.specMax = U("specScale");
-    L_.layerScale = U("layerScale"); L_.tint = U("tint"); L_.layerTint = U("layerTint"); L_.roughMul = U("roughMul"); L_.metalMul = U("metalMul");
-    L_.normalStrength = U("normalStrength"); L_.clearcoat = U("clearcoat"); L_.ccRough = U("ccRough");
-    L_.macro = U("macroVariation"); L_.layers = U("layers"); L_.depthBias = U("depthBias");
-    L_.alphaCut = U("alphaCut"); L_.translucency = U("translucency"); L_.vertexTint = U("vertexTint");
-    const char* texNames[9] = {"albedo0", "normal0", "orm0", "albedo1", "normal1", "orm1", "albedo2", "normal2", "orm2"};
-    for (int i = 0; i < 9; ++i) L_.tex[i] = U(texNames[i]);
-    L_.shadow[0] = U("shadowMap0");
-    L_.shadow[1] = U("shadowMap1");
-    L_.spec = U("specAtlas");
+    lookUp(pbr_, L_);
+    lookUp(pbrInst_, Li_);
 
     // Sun shadow map: a depth texture.
     for (int c = 0; c < kCascades; ++c) {
         shadowFbo_[c] = rlLoadFramebuffer();
-        shadowTex_[c] = rlLoadTextureDepth(shadowRes_, shadowRes_, false);
+        shadowTex_[c] = rlLoadTextureDepth(shadowRes_[c], shadowRes_[c], false);
         rlFramebufferAttach(shadowFbo_[c], shadowTex_[c], RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
         if (!rlFramebufferComplete(shadowFbo_[c])) {
             if (err) *err = "could not create the shadow-map framebuffers";
             return false;
         }
-        rlTextureParameters(shadowTex_[c], RL_TEXTURE_MIN_FILTER, RL_TEXTURE_FILTER_NEAREST);
-        rlTextureParameters(shadowTex_[c], RL_TEXTURE_MAG_FILTER, RL_TEXTURE_FILTER_NEAREST);
+        // linear-filtered depth comparisons (sampler2DShadow)
+        rlTextureParameters(shadowTex_[c], RL_TEXTURE_MIN_FILTER, RL_TEXTURE_FILTER_LINEAR);
+        rlTextureParameters(shadowTex_[c], RL_TEXTURE_MAG_FILTER, RL_TEXTURE_FILTER_LINEAR);
+        rlEnableTexture(shadowTex_[c]);
+        gl::texParameteri(0x0DE1 /* TEXTURE_2D */, 0x884C /* COMPARE_MODE */, 0x884E /* COMPARE_REF_TO_TEXTURE */);
+        gl::texParameteri(0x0DE1, 0x884D /* COMPARE_FUNC */, 0x0203 /* LEQUAL */);
+        rlDisableTexture();
     }
 
     cube_ = GenMeshCube(2, 2, 2);
@@ -479,11 +645,40 @@ void Renderer::createTargets() {
     depth_ = rlLoadTextureDepth(w_, h_, true);
     rlFramebufferAttach(fbo_, color_, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
     rlFramebufferAttach(fbo_, depth_, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_RENDERBUFFER, 0);
+    if (msaa_ > 1) {
+        // the scene renders here, multisampled, then resolves into fbo_'s colour texture
+        msFbo_ = rlLoadFramebuffer();
+        gl::genRenderbuffers(1, &msColor_);
+        gl::genRenderbuffers(1, &msDepth_);
+        gl::bindRenderbuffer(gl::RENDERBUFFER, msColor_);
+        gl::renderbufferStorageMultisample(gl::RENDERBUFFER, msaa_, gl::RGBA16F, w_, h_);
+        gl::bindRenderbuffer(gl::RENDERBUFFER, msDepth_);
+        gl::renderbufferStorageMultisample(gl::RENDERBUFFER, msaa_, gl::DEPTH_COMPONENT24, w_, h_);
+        gl::bindRenderbuffer(gl::RENDERBUFFER, 0);
+        gl::bindFramebuffer(gl::FRAMEBUFFER, msFbo_);
+        gl::framebufferRenderbuffer(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, msColor_);
+        gl::framebufferRenderbuffer(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::RENDERBUFFER, msDepth_);
+        bool ok = rlFramebufferComplete(msFbo_);
+        gl::bindFramebuffer(gl::FRAMEBUFFER, 0);
+        if (!ok) {  // no multisampling then
+            gl::deleteRenderbuffers(1, &msColor_);
+            gl::deleteRenderbuffers(1, &msDepth_);
+            rlUnloadFramebuffer(msFbo_);
+            msFbo_ = msColor_ = msDepth_ = 0;
+            msaa_ = 1;
+        }
+    }
 }
 
 void Renderer::freeTargets() {
     if (fbo_) rlUnloadFramebuffer(fbo_);  // also frees the attachments
     fbo_ = color_ = depth_ = 0;
+    if (msFbo_) {
+        gl::deleteRenderbuffers(1, &msColor_);
+        gl::deleteRenderbuffers(1, &msDepth_);
+        rlUnloadFramebuffer(msFbo_);
+        msFbo_ = msColor_ = msDepth_ = 0;
+    }
 }
 
 void Renderer::resize(int width, int height) {
@@ -502,7 +697,7 @@ void Renderer::shutdown() {
     }
     for (Texture2D* t : {&skyTex_, &specTex_})
         if (t->id) UnloadTexture(*t), t->id = 0;
-    for (Shader* s : {&pbr_, &depth_s_, &depthCut_, &sky_, &tonemap_})
+    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_})
         if (s->id) UnloadShader(*s), s->id = 0;
     if (cube_.vertexCount) UnloadMesh(cube_), cube_ = Mesh{};
 }
@@ -522,6 +717,13 @@ bool Renderer::loadSky(const std::string& dir, const std::string& name, std::str
     }
     if (specTex_.id) UnloadTexture(specTex_);
     specTex_ = floatTexture(rgb, w, h, false);
+    {
+        // fog colour: the mean of the blurriest level's horizon row (16 x 8 texels at y 496)
+        Vector3 sum = {0, 0, 0};
+        const int y = 496 + 4;
+        for (int x = 0; x < 16; ++x) sum = Vector3Add(sum, {rgb[(y * 512 + x) * 3], rgb[(y * 512 + x) * 3 + 1], rgb[(y * 512 + x) * 3 + 2]});
+        fogColor_ = Vector3Scale(sum, 0.9f / 16);
+    }
 
     std::ifstream in(dir + "/" + name + ".json");
     std::stringstream ss;
@@ -555,12 +757,23 @@ void Renderer::beginShadows(Vector3 focus, float radius, int cascade) {
     cascade_ = cascade;
     rlDrawRenderBatchActive();
     Sun s = sun();
+    // Snap the focus to whole shadow-map texels across the sun's view, so the shadows
+    // do not crawl and shimmer as the camera moves.
+    {
+        Vector3 f = Vector3Negate(s.dir);
+        Vector3 right = Vector3Normalize(Vector3CrossProduct(f, {0, 1, 0}));
+        Vector3 up = Vector3CrossProduct(right, f);
+        float texel = 2 * radius / shadowRes_[cascade];
+        float fx = Vector3DotProduct(focus, right), fy = Vector3DotProduct(focus, up);
+        focus = Vector3Add(focus, Vector3Add(Vector3Scale(right, std::round(fx / texel) * texel - fx),
+                                             Vector3Scale(up, std::round(fy / texel) * texel - fy)));
+    }
     Vector3 eye = Vector3Add(focus, Vector3Scale(s.dir, radius * 3));
     Matrix view = MatrixLookAt(eye, focus, {0, 1, 0});
     Matrix proj = MatrixOrtho(-radius, radius, -radius, radius, radius * 0.5, radius * 6);
     lightVP_[cascade] = MatrixMultiply(view, proj);
     rlEnableFramebuffer(shadowFbo_[cascade]);
-    rlViewport(0, 0, shadowRes_, shadowRes_);
+    rlViewport(0, 0, shadowRes_[cascade], shadowRes_[cascade]);
     rlClearScreenBuffers();
     rlEnableDepthTest();
 }
@@ -619,7 +832,7 @@ void Renderer::beginScene(const Camera3D& cam) {
     view_ = MatrixLookAt(cam.position, cam.target, cam.up);
     proj_ = MatrixPerspective(cam.fovy * DEG2RAD, (double)w_ / h_, 0.5, 15000.0);
     viewProj_ = MatrixMultiply(view_, proj_);
-    rlEnableFramebuffer(fbo_);
+    rlEnableFramebuffer(msFbo_ ? msFbo_ : fbo_);
     rlViewport(0, 0, w_, h_);
     rlClearColor(0, 0, 0, 255);
     rlClearScreenBuffers();
@@ -627,42 +840,51 @@ void Renderer::beginScene(const Camera3D& cam) {
     rlEnableBackfaceCulling();
 }
 
-void Renderer::draw(const Mesh& m, const Material& mat, Matrix model) {
-    rlEnableShader(pbr_.id);
-    Matrix mvp = MatrixMultiply(model, MatrixMultiply(view_, proj_));
-    rlSetUniformMatrix(L_.mvp, mvp);
-    rlSetUniformMatrix(L_.model, model);
-    rlSetUniformMatrix(L_.normalMat, MatrixTranspose(MatrixInvert(model)));
-    rlSetUniformMatrix(L_.lightVP, lightVP_[0]);
-    rlSetUniformMatrix(L_.lightVP + 1, lightVP_[1]);
-    rlSetUniform(L_.viewPos, &cam_.position, RL_SHADER_UNIFORM_VEC3, 1);
+int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Matrix mvp) {
+    rlSetUniformMatrix(L.mvp, mvp);
+    if (L.model >= 0) rlSetUniformMatrix(L.model, model);
+    if (L.normalMat >= 0) rlSetUniformMatrix(L.normalMat, MatrixTranspose(MatrixInvert(model)));
+    rlSetUniformMatrix(L.lightVP, lightVP_[0]);
+    rlSetUniformMatrix(L.lightVP + 1, lightVP_[1]);
+    rlSetUniform(L.viewPos, &cam_.position, RL_SHADER_UNIFORM_VEC3, 1);
     Sun s = sun();
-    rlSetUniform(L_.sunDir, &s.dir, RL_SHADER_UNIFORM_VEC3, 1);
-    rlSetUniform(L_.sunColor, &s.irradiance, RL_SHADER_UNIFORM_VEC3, 1);
+    rlSetUniform(L.sunDir, &s.dir, RL_SHADER_UNIFORM_VEC3, 1);
+    rlSetUniform(L.sunColor, &s.irradiance, RL_SHADER_UNIFORM_VEC3, 1);
     Vector3 sh[9];
     for (int i = 0; i < 9; ++i) sh[i] = Vector3Scale(sh_[i], skyIntensity);
-    rlSetUniform(L_.sh, sh, RL_SHADER_UNIFORM_VEC3, 9);
-    rlSetUniform(L_.skyYaw, &skyYaw, RL_SHADER_UNIFORM_FLOAT, 1);
-    rlSetUniform(L_.fog, &fogDensity, RL_SHADER_UNIFORM_FLOAT, 1);
-    rlSetUniform(L_.specMax, &skyIntensity, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L.sh, sh, RL_SHADER_UNIFORM_VEC3, 9);
+    rlSetUniform(L.skyYaw, &skyYaw, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L.fog, &fogDensity, RL_SHADER_UNIFORM_FLOAT, 1);
+    Vector3 fc = Vector3Scale(fogColor_, skyIntensity);
+    rlSetUniform(L.fogColor, &fc, RL_SHADER_UNIFORM_VEC3, 1);
+    rlSetUniform(L.specMax, &skyIntensity, RL_SHADER_UNIFORM_FLOAT, 1);
     int layers = 0;
     while (layers < 3 && mat.layer[layers]) ++layers;
-    rlSetUniform(L_.layers, &layers, RL_SHADER_UNIFORM_INT, 1);
-    rlSetUniform(L_.layerScale, mat.scale, RL_SHADER_UNIFORM_VEC3, 1);
-    rlSetUniform(L_.tint, &mat.tint, RL_SHADER_UNIFORM_VEC3, 1);
-    rlSetUniform(L_.layerTint, mat.layerTint, RL_SHADER_UNIFORM_VEC3, 3);
-    rlSetUniform(L_.roughMul, &mat.roughness, RL_SHADER_UNIFORM_FLOAT, 1);
-    rlSetUniform(L_.metalMul, &mat.metalness, RL_SHADER_UNIFORM_FLOAT, 1);
-    rlSetUniform(L_.normalStrength, &mat.normalStrength, RL_SHADER_UNIFORM_FLOAT, 1);
-    rlSetUniform(L_.clearcoat, &mat.clearcoat, RL_SHADER_UNIFORM_FLOAT, 1);
-    rlSetUniform(L_.ccRough, &mat.clearcoatRoughness, RL_SHADER_UNIFORM_FLOAT, 1);
-    rlSetUniform(L_.depthBias, &mat.depthBias, RL_SHADER_UNIFORM_FLOAT, 1);
-    rlSetUniform(L_.alphaCut, &mat.alphaCut, RL_SHADER_UNIFORM_FLOAT, 1);
-    rlSetUniform(L_.translucency, &mat.translucency, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L.layers, &layers, RL_SHADER_UNIFORM_INT, 1);
+    rlSetUniform(L.layerScale, mat.scale, RL_SHADER_UNIFORM_VEC3, 1);
+    rlSetUniform(L.tint, &mat.tint, RL_SHADER_UNIFORM_VEC3, 1);
+    rlSetUniform(L.layerTint, mat.layerTint, RL_SHADER_UNIFORM_VEC3, 3);
+    rlSetUniform(L.roughMul, &mat.roughness, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L.metalMul, &mat.metalness, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L.normalStrength, &mat.normalStrength, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L.clearcoat, &mat.clearcoat, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L.ccRough, &mat.clearcoatRoughness, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L.depthBias, &mat.depthBias, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L.alphaCut, &mat.alphaCut, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L.translucency, &mat.translucency, RL_SHADER_UNIFORM_FLOAT, 1);
     int vtint = mat.vertexTint ? 1 : 0;
-    rlSetUniform(L_.vertexTint, &vtint, RL_SHADER_UNIFORM_INT, 1);
+    rlSetUniform(L.vertexTint, &vtint, RL_SHADER_UNIFORM_INT, 1);
     int macro = mat.macroVariation ? 1 : 0;
-    rlSetUniform(L_.macro, &macro, RL_SHADER_UNIFORM_INT, 1);
+    rlSetUniform(L.macro, &macro, RL_SHADER_UNIFORM_INT, 1);
+    int det = mat.detile ? 1 : 0;
+    rlSetUniform(L.detile, &det, RL_SHADER_UNIFORM_INT, 1);
+    int useCm = mat.colorMap ? 1 : 0;
+    rlSetUniform(L.useColorMap, &useCm, RL_SHADER_UNIFORM_INT, 1);
+    rlSetUniform(L.colorMapRect, &mat.colorMapRect, RL_SHADER_UNIFORM_VEC4, 1);
+    rlSetUniform(L.colorMapRange, &mat.colorMapRange, RL_SHADER_UNIFORM_VEC2, 1);
+    int a2c = (mat.alphaCut > 0 && msFbo_) ? 1 : 0;
+    rlSetUniform(L.a2c, &a2c, RL_SHADER_UNIFORM_INT, 1);
+    if (a2c) gl::enable(gl::SAMPLE_ALPHA_TO_COVERAGE);
 
     int slot = 0;
     auto bind = [&](int loc, unsigned id) {
@@ -673,25 +895,86 @@ void Renderer::draw(const Mesh& m, const Material& mat, Matrix model) {
     };
     for (int l = 0; l < 3; ++l) {
         const TextureSet* t = mat.layer[l] ? mat.layer[l] : mat.layer[0];
-        bind(L_.tex[l * 3 + 0], t->albedo.id);
-        bind(L_.tex[l * 3 + 1], t->normal.id);
-        bind(L_.tex[l * 3 + 2], t->orm.id);
+        bind(L.tex[l * 3 + 0], t->albedo.id);
+        bind(L.tex[l * 3 + 1], t->normal.id);
+        bind(L.tex[l * 3 + 2], t->orm.id);
     }
-    bind(L_.shadow[0], shadowTex_[0]);
-    bind(L_.shadow[1], shadowTex_[1]);
-    bind(L_.spec, specTex_.id);
-
+    bind(L.shadow[0], shadowTex_[0]);
+    bind(L.shadow[1], shadowTex_[1]);
+    bind(L.spec, specTex_.id);
+    bind(L.colorMap, mat.colorMap ? mat.colorMap : specTex_.id);
     if (mat.doubleSided) rlDisableBackfaceCulling();
-    rlEnableVertexArray(m.vaoId);
-    if (m.indices) rlDrawVertexArrayElements(0, m.triangleCount * 3, 0);
-    else rlDrawVertexArray(0, m.vertexCount);
-    rlDisableVertexArray();
+    return slot;
+}
+
+void Renderer::unbindMaterial(int slots, const Material& mat) {
     if (mat.doubleSided) rlEnableBackfaceCulling();
-    for (int i = slot - 1; i >= 0; --i) {
+    if (mat.alphaCut > 0 && msFbo_) gl::disable(gl::SAMPLE_ALPHA_TO_COVERAGE);
+    for (int i = slots - 1; i >= 0; --i) {
         rlActiveTextureSlot(i);
         rlDisableTexture();
     }
     rlActiveTextureSlot(0);
+    rlDisableShader();
+}
+
+void Renderer::draw(const Mesh& m, const Material& mat, Matrix model) {
+    rlEnableShader(pbr_.id);
+    int slots = bindMaterial(mat, L_, model, MatrixMultiply(model, viewProj_));
+    rlEnableVertexArray(m.vaoId);
+    if (m.indices) rlDrawVertexArrayElements(0, m.triangleCount * 3, 0);
+    else rlDrawVertexArray(0, m.vertexCount);
+    rlDisableVertexArray();
+    unbindMaterial(slots, mat);
+}
+
+namespace {
+// Points the instance attribute (a mat4 in locations 10-13) at a vertex buffer.
+void bindInstances(unsigned vbo) {
+    rlEnableVertexBuffer(vbo);
+    for (int i = 0; i < 4; ++i) {
+        rlEnableVertexAttribute(10 + i);
+        rlSetVertexAttribute(10 + i, 4, RL_FLOAT, false, 64, i * 16);
+        rlSetVertexAttributeDivisor(10 + i, 1);
+    }
+}
+void unbindInstances() {
+    for (int i = 0; i < 4; ++i) rlDisableVertexAttribute(10 + i);
+    rlDisableVertexBuffer();
+}
+}  // namespace
+
+void Renderer::drawInstanced(const Mesh& m, const Material& mat, unsigned instances, int count) {
+    if (count <= 0) return;
+    rlEnableShader(pbrInst_.id);
+    int slots = bindMaterial(mat, Li_, MatrixIdentity(), viewProj_);
+    rlEnableVertexArray(m.vaoId);
+    bindInstances(instances);
+    rlDrawVertexArrayElementsInstanced(0, m.triangleCount * 3, 0, count);
+    unbindInstances();
+    rlDisableVertexArray();
+    unbindMaterial(slots, mat);
+}
+
+void Renderer::drawShadowInstanced(const Mesh& m, unsigned instances, int count, unsigned alphaTex, float alphaCut) {
+    if (count <= 0) return;
+    rlEnableShader(depthInst_.id);
+    rlSetUniformMatrix(GetShaderLocation(depthInst_, "mvp"), lightVP_[cascade_]);
+    rlSetUniform(GetShaderLocation(depthInst_, "alphaCut"), &alphaCut, RL_SHADER_UNIFORM_FLOAT, 1);
+    float one = 1.0f;
+    rlSetUniform(GetShaderLocation(depthInst_, "uvScale"), &one, RL_SHADER_UNIFORM_FLOAT, 1);
+    int slot = 0;
+    rlActiveTextureSlot(0);
+    rlEnableTexture(alphaTex);
+    rlSetUniform(GetShaderLocation(depthInst_, "tex"), &slot, RL_SHADER_UNIFORM_INT, 1);
+    rlDisableBackfaceCulling();
+    rlEnableVertexArray(m.vaoId);
+    bindInstances(instances);
+    rlDrawVertexArrayElementsInstanced(0, m.triangleCount * 3, 0, count);
+    unbindInstances();
+    rlDisableVertexArray();
+    rlDisableTexture();
+    rlEnableBackfaceCulling();
     rlDisableShader();
 }
 
@@ -724,6 +1007,11 @@ void Renderer::drawSky() {
 }
 
 void Renderer::endScene() {
+    if (msFbo_) {
+        gl::bindFramebuffer(gl::READ_FRAMEBUFFER, msFbo_);
+        gl::bindFramebuffer(gl::DRAW_FRAMEBUFFER, fbo_);
+        gl::blitFramebuffer(0, 0, w_, h_, 0, 0, w_, h_, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+    }
     rlDisableFramebuffer();
 }
 

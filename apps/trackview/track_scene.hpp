@@ -27,6 +27,8 @@ private:
     struct Part {
         std::vector<Mesh> meshes;
         std::vector<BoundingBox> boxes;  // one per mesh, for culling
+        std::vector<Mesh> lod;           // optional coarser copies of meshes, used past lodDist
+        float lodDist = 0;
         gfx::Material mat;
         bool shadows = true;
         unsigned alphaTex = 0;           // cut-out shadows (leaves)
@@ -35,6 +37,27 @@ private:
     gfx::TextureSet asphalt_, asphaltWorn_, concrete_, grass_, gravel_, dirt_, metal_;
     Texture2D treeAtlas_{};
     gfx::TextureSet foliage_, rubber_, chain_;
+    Texture2D colorNear_{}, colorFar_{};  // baked terrain colour for the distance
+
+    // Trees are instanced: one mesh per kind of tree in two levels of detail (the whole
+    // tree up close, only its big cards further out), placed per 96 m tile so whole
+    // tiles cull together. Instance matrices are gathered and uploaded each pass.
+    struct TreeType {
+        Mesh lod[2]{};
+        bool bush = false;
+        int total = 0;
+        unsigned vbo[3][2] = {};  // per pass (colour, near shadows, far shadows) and level of detail
+    };
+    std::vector<TreeType> treeTypes_;
+    struct TreeTile {
+        BoundingBox box{};
+        std::vector<std::vector<Matrix>> inst;  // per tree type
+    };
+    std::vector<TreeTile> treeTiles_;
+    gfx::Material treeMat_;
+    mutable std::vector<Matrix> gather_[2];
+    void drawTrees(gfx::Renderer& r, int pass) const;
+    const Mesh& pick(const Part& p, size_t i, Vector3 cam, bool coarse) const;
 
     // terrain heights, for groundHeight(): a fine grid near the track and a coarse one beyond
     struct Grid {

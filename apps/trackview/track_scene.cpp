@@ -9,11 +9,14 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <cstdlib>
 #include <map>
 
 #include "mini_json.hpp"
 
 #include "raymath.h"
+#include "rlgl.h"
 
 using gfx::Vertex;
 using rr::Vec2;
@@ -249,15 +252,44 @@ bool TrackScene::build(const rr::Track& track, const std::string& assetsDir, uns
     buildProps(assetsDir);
     for (Part& p : parts_) {
         p.boxes.clear();
-        for (const Mesh& mesh : p.meshes) p.boxes.push_back(GetMeshBoundingBox(mesh));
+        for (Mesh& mesh : p.lod) {
+            for (float** a : {&mesh.vertices, &mesh.normals, &mesh.tangents, &mesh.texcoords, &mesh.texcoords2}) {
+                MemFree(*a);
+                *a = nullptr;
+            }
+            MemFree(mesh.colors);
+            mesh.colors = nullptr;
+        }
+        for (Mesh& mesh : p.meshes) {
+            p.boxes.push_back(GetMeshBoundingBox(mesh));
+            for (float** a : {&mesh.vertices, &mesh.normals, &mesh.tangents, &mesh.texcoords, &mesh.texcoords2}) {
+                MemFree(*a);
+                *a = nullptr;
+            }
+            MemFree(mesh.colors);
+            mesh.colors = nullptr;
+        }
     }
     return true;
 }
 
 void TrackScene::unload() {
-    for (Part& p : parts_)
+    for (Part& p : parts_) {
         for (Mesh& m : p.meshes) UnloadMesh(m);
+        for (Mesh& m : p.lod) UnloadMesh(m);
+    }
     parts_.clear();
+    for (TreeType& tt : treeTypes_) {
+        if (tt.lod[1].vaoId != tt.lod[0].vaoId) UnloadMesh(tt.lod[1]);
+        UnloadMesh(tt.lod[0]);
+        for (auto& pass : tt.vbo)
+            for (unsigned v : pass)
+                if (v) rlUnloadVertexBuffer(v);
+    }
+    treeTypes_.clear();
+    treeTiles_.clear();
+    for (Texture2D* t : {&colorNear_, &colorFar_})
+        if (t->id) UnloadTexture(*t), t->id = 0;
     for (gfx::TextureSet* s : {&asphalt_, &asphaltWorn_, &concrete_, &grass_, &gravel_, &dirt_, &metal_, &rubber_, &foliage_, &chain_})
         gfx::unloadTextureSet(*s);  // foliage_ owns the tree atlas
     treeAtlas_ = Texture2D{};
@@ -491,6 +523,7 @@ void TrackScene::buildRoad(unsigned seed) {
     mRoad.layer[0] = &asphalt_;
     mRoad.scale[0] = 4.0f;
     mRoad.depthBias = 1.0f;
+    mRoad.detile = true;
     mRoad.tint = {0.85f, 0.85f, 0.88f};
     part(road, mRoad, true);
 
@@ -533,6 +566,7 @@ void TrackScene::buildRoad(unsigned seed) {
     mApron.layer[0] = &asphaltWorn_;
     mApron.scale[0] = 4.0f;
     mApron.depthBias = 1.0f;
+    mApron.detile = true;
     part(apron, mApron, true);
 
     gfx::Material mSkirt;
@@ -698,8 +732,12 @@ void TrackScene::buildTerrain(unsigned seed) {
             F.h[(size_t)iz * F.nx + ix] = G.at(x, z) - (border ? 0.0f : 3.0f);
         }
 
+    // Chunks of chunk x chunk cells, each its own mesh; stride > 1 keeps every stride-th
+    // vertex (a coarser level of detail). Skirts hang 3 m down from the chunk edges to
+    // hide the cracks where chunks of different detail meet.
     auto emitGrid = [&](const Grid& g, int chunk, const std::vector<unsigned char>* dirtW,
-                        const std::vector<unsigned char>* gravelW, const std::vector<unsigned char>* aoW, bool skipNear) {
+                        const std::vector<unsigned char>* gravelW, const std::vector<unsigned char>* aoW, bool skipNear,
+                        int stride = 1, bool skirts = false) {
         gfx::MeshBuilder mb;
         for (int cz = 0; cz < g.nz - 1; cz += chunk)
             for (int cx = 0; cx < g.nx - 1; cx += chunk) {
@@ -709,11 +747,18 @@ void TrackScene::buildTerrain(unsigned seed) {
                     float x1 = g.x0 + ex * g.step, z1 = g.z0 + ez * g.step;
                     if (nearGrid_.inside(x0 - g.step, z0 - g.step) && nearGrid_.inside(x1 + g.step, z1 + g.step)) continue;
                 }
-                int w = ex - cx + 1, hgt = ez - cz + 1;
+                std::vector<int> xs, zs;
+                for (int v = cx; v < ex; v += stride) xs.push_back(v);
+                xs.push_back(ex);
+                for (int v = cz; v < ez; v += stride) zs.push_back(v);
+                zs.push_back(ez);
+                int w = (int)xs.size(), hgt = (int)zs.size();
                 mb.reserve(65535);  // one chunk per mesh, so whole meshes cull together later
                 std::vector<int> idx((size_t)w * hgt);
-                for (int iz = cz; iz <= ez; ++iz)
-                    for (int ix = cx; ix <= ex; ++ix) {
+                std::vector<Vertex> verts((size_t)w * hgt);
+                for (int jz = 0; jz < hgt; ++jz)
+                    for (int jx = 0; jx < w; ++jx) {
+                        const int ix = xs[jx], iz = zs[jz];
                         size_t k = (size_t)iz * g.nx + ix;
                         float x = g.x0 + ix * g.step, z = g.z0 + iz * g.step;
                         auto H = [&](int xx, int zz) {
@@ -721,7 +766,8 @@ void TrackScene::buildTerrain(unsigned seed) {
                             zz = std::clamp(zz, 0, g.nz - 1);
                             return g.h[(size_t)zz * g.nx + xx];
                         };
-                        Vector3 nn = Vector3Normalize({H(ix - 1, iz) - H(ix + 1, iz), 2 * g.step, H(ix, iz - 1) - H(ix, iz + 1)});
+                        Vector3 nn = Vector3Normalize({H(ix - stride, iz) - H(ix + stride, iz), 2 * g.step * stride,
+                                                       H(ix, iz - stride) - H(ix, iz + stride)});
                         float dirt = dirtW ? (*dirtW)[k] / 255.0f : smoothstepf(0.55f, 0.75f, fbm(x / 90.0f, z / 90.0f, 3, sd + 5));
                         dirt = std::max(dirt, smoothstepf(0.93f, 0.80f, nn.y));  // steep ground is bare
                         float gravel = gravelW ? (*gravelW)[k] / 255.0f : 0.0f;
@@ -729,7 +775,8 @@ void TrackScene::buildTerrain(unsigned seed) {
                         Vertex v = vert({x, g.h[k], z}, nn, {x, z}, (unsigned char)(grass * 255), (unsigned char)(dirt * 255),
                                         (unsigned char)(gravel * 255));
                         if (aoW) v.c[3] = (*aoW)[k];
-                        idx[(size_t)(iz - cz) * w + (ix - cx)] = mb.add(v);
+                        verts[(size_t)jz * w + jx] = v;
+                        idx[(size_t)jz * w + jx] = mb.add(v);
                     }
                 for (int iz = 0; iz < hgt - 1; ++iz)
                     for (int ix = 0; ix < w - 1; ++ix) {
@@ -738,6 +785,29 @@ void TrackScene::buildTerrain(unsigned seed) {
                         mb.tri(v00, v01, v11);
                         mb.tri(v00, v11, v10);
                     }
+                if (skirts) {
+                    auto edge = [&](int j0, int step, int count) {
+                        int prevTop = -1, prevBot = -1;
+                        for (int q = 0; q < count; ++q) {
+                            int j = j0 + q * step;
+                            Vertex low = verts[j];
+                            low.p.y -= 3.0f;
+                            int top = idx[j], bot = mb.add(low);
+                            if (prevTop >= 0) {  // both windings: the skirt shows from either side
+                                mb.tri(prevTop, prevBot, bot);
+                                mb.tri(prevTop, bot, top);
+                                mb.tri(prevTop, bot, prevBot);
+                                mb.tri(prevTop, top, bot);
+                            }
+                            prevTop = top;
+                            prevBot = bot;
+                        }
+                    };
+                    edge(0, 1, w);                    // z = first row
+                    edge((hgt - 1) * w, 1, w);        // last row
+                    edge(0, w, hgt);                  // x = first column
+                    edge(w - 1, w, hgt);              // last column
+                }
             }
         return mb.build();
     };
@@ -754,14 +824,75 @@ void TrackScene::buildTerrain(unsigned seed) {
     mTerrain.layerTint[1] = {0.62f, 0.56f, 0.55f};  // peat and heather rather than red earth
     mTerrain.roughness = 1.3f;  // no sun glints off the grass
     mTerrain.normalStrength = 0.7f;
+    gfx::Material nearMat, farMat;
+    // Baked colour maps for the distance: each vertex's layer mix of the layers' mean
+    // colours (what the textures average to far away), one texel per grid vertex.
+    {
+        Vector3 mean[3];
+        const gfx::TextureSet* sets[3] = {&grass_, &dirt_, &gravel_};
+        for (int l = 0; l < 3; ++l) {
+            Image img = LoadImageFromTexture(sets[l]->albedo);
+            ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+            double acc[3] = {0, 0, 0};
+            const unsigned char* px = (const unsigned char*)img.data;
+            const int n = img.width * img.height;
+            for (int k = 0; k < n; k += 7)
+                for (int c = 0; c < 3; ++c) acc[c] += std::pow(px[k * 4 + c] / 255.0, 2.2);
+            UnloadImage(img);
+            const int samples = (n + 6) / 7;
+            mean[l] = {(float)(acc[0] / samples), (float)(acc[1] / samples), (float)(acc[2] / samples)};
+            mean[l] = Vector3Multiply(mean[l], mTerrain.layerTint[l]);
+        }
+        auto bake = [&](const Grid& g, const std::vector<unsigned char>* dirtW, const std::vector<unsigned char>* gravelW,
+                        Texture2D* out, gfx::Material* m) {
+            Image img = GenImageColor(g.nx, g.nz, BLACK);
+            Color* px = (Color*)img.data;
+            for (int iz = 0; iz < g.nz; ++iz)
+                for (int ix = 0; ix < g.nx; ++ix) {
+                    size_t k = (size_t)iz * g.nx + ix;
+                    float x = g.x0 + ix * g.step, z = g.z0 + iz * g.step;
+                    auto H = [&](int xx, int zz) {
+                        return g.h[(size_t)std::clamp(zz, 0, g.nz - 1) * g.nx + std::clamp(xx, 0, g.nx - 1)];
+                    };
+                    float ny = 2 * g.step / std::sqrt(std::pow(H(ix - 1, iz) - H(ix + 1, iz), 2.0f) +
+                                                       std::pow(H(ix, iz - 1) - H(ix, iz + 1), 2.0f) + 4 * g.step * g.step);
+                    float dirt = dirtW ? (*dirtW)[k] / 255.0f : smoothstepf(0.55f, 0.75f, fbm(x / 90.0f, z / 90.0f, 3, sd + 5));
+                    dirt = std::max(dirt, smoothstepf(0.93f, 0.80f, ny));
+                    float gravel = gravelW ? (*gravelW)[k] / 255.0f : 0.0f;
+                    float grass = std::max(0.0f, 1.0f - dirt - gravel);
+                    float sum = std::max(grass + dirt + gravel, 1e-4f);
+                    Vector3 c = Vector3Scale(Vector3Add(Vector3Add(Vector3Scale(mean[0], grass), Vector3Scale(mean[1], dirt)),
+                                                        Vector3Scale(mean[2], gravel)), 1.0f / sum);
+                    px[iz * g.nx + ix] = Color{(unsigned char)(std::pow(std::min(c.x, 1.0f), 1 / 2.2f) * 255),
+                                               (unsigned char)(std::pow(std::min(c.y, 1.0f), 1 / 2.2f) * 255),
+                                               (unsigned char)(std::pow(std::min(c.z, 1.0f), 1 / 2.2f) * 255), 255};
+                }
+            *out = LoadTextureFromImage(img);
+            UnloadImage(img);
+            GenTextureMipmaps(out);
+            SetTextureFilter(*out, TEXTURE_FILTER_TRILINEAR);
+            SetTextureWrap(*out, TEXTURE_WRAP_CLAMP);
+            m->colorMap = out->id;
+            // texel centres on the grid vertices
+            m->colorMapRect = {g.x0 - 0.5f * g.step, g.z0 - 0.5f * g.step, 1.0f / (g.nx * g.step), 1.0f / (g.nz * g.step)};
+        };
+        gfx::Material near = mTerrain, far = mTerrain;
+        bake(G, &wDirt, &wGravel, &colorNear_, &near);
+        bake(F, nullptr, nullptr, &colorFar_, &far);
+        far.colorMapRange = {0, 1};  // the far grid is all distance
+        nearMat = near;
+        farMat = far;
+    }
     Part nearP;
-    nearP.meshes = emitGrid(G, 128, &wDirt, &wGravel, &aoNear, false);
-    nearP.mat = mTerrain;
+    nearP.meshes = emitGrid(G, 128, &wDirt, &wGravel, &aoNear, false, 1, true);
+    nearP.lod = emitGrid(G, 128, &wDirt, &wGravel, &aoNear, false, 4, true);
+    nearP.lodDist = 300.0f;
+    nearP.mat = nearMat;
     nearP.shadows = true;
     parts_.push_back(std::move(nearP));
     Part farP;
     farP.meshes = emitGrid(F, 128, nullptr, nullptr, nullptr, true);
-    farP.mat = mTerrain;
+    farP.mat = farMat;
     farP.mat.scale[0] = 9.0f;  // the far grid only ever shows from a distance
     farP.mat.scale[1] = 9.0f;
     farP.shadows = false;
@@ -811,7 +942,8 @@ void TrackScene::buildTrees(const std::string& assetsDir, unsigned seed) {
     if (!text) return;
     const mjson::Value root = mjson::parse(text);
     UnloadFileText(text);
-    std::vector<TreeMesh> conifers, broadleaf, bushes;
+    std::vector<TreeMesh> meshes;
+    std::vector<int> conifers, broadleaf, bushes;  // indices into meshes
     std::string atlas;
     const mjson::Value& vs = root["variants"];
     for (size_t i = 0; i < vs.size(); ++i) {
@@ -821,9 +953,11 @@ void TrackScene::buildTrees(const std::string& assetsDir, unsigned seed) {
         atlas = part["texture"].str();
         const std::string kind = vs[i]["kind"].str();
         // the tall pack trees (over 24 m in the source) are the spruces and pines
-        if (kind == "bush") bushes.push_back(tm);
-        else if (vs[i]["height"].num() > 24.0) conifers.push_back(tm);
-        else broadleaf.push_back(tm);
+        int id = (int)meshes.size();
+        meshes.push_back(tm);
+        if (kind == "bush") bushes.push_back(id);
+        else if (vs[i]["height"].num() > 24.0) conifers.push_back(id);
+        else broadleaf.push_back(id);
     }
     if (conifers.empty() || atlas.empty()) return;
     treeAtlas_ = LoadTexture((dir + atlas).c_str());
@@ -837,7 +971,7 @@ void TrackScene::buildTrees(const std::string& assetsDir, unsigned seed) {
     const Grid& G = nearGrid_;
     const int sd = (int)seed + 77;
     const float cellSize = 5.5f, tile = 96.0f;
-    struct Inst { const TreeMesh* m; Vector3 base; float yaw, scale; Vector3 tint; float aoFloor; };
+    struct Inst { int m; Vector3 base; float yaw, scale; Vector3 tint; };
     std::map<std::pair<int, int>, std::vector<Inst>> tiles;
     int count = 0;
     for (float y = G.z0 + 10; y < G.z0 + (G.nz - 1) * G.step - 10; y += cellSize)
@@ -859,65 +993,97 @@ void TrackScene::buildTrees(const std::string& assetsDir, unsigned seed) {
                 if (tr.hasPit() && tr.inPitArea(loc.s)) forest *= smoothstepf(88.0f, 96.0f, al);  // as the trees
             }
             float r = hashf(cx, cy, sd + 2);
-            const TreeMesh* m = nullptr;
-            float scale = 1, aoFloor = 0.6f;
+            int m = -1;
+            float scale = 1;
             int pick = (int)(hashf(cx, cy, sd + 3) * 1000);
             if (r < forest * 0.92f) {
-                m = &conifers[pick % conifers.size()];
+                m = conifers[pick % conifers.size()];
                 scale = 13.0f + 8.0f * hashf(cx, cy, sd + 4);
-                aoFloor = 0.35f;  // the lower branches of a plantation get little light
             } else if (r < forest * 0.92f + 0.08f * smoothstepf(0.05f, 0.4f, forest) + 0.012f) {
                 bool bush = hashf(cx, cy, sd + 5) < 0.55f;
-                m = bush ? &bushes[pick % bushes.size()] : &broadleaf[pick % broadleaf.size()];
+                m = bush ? bushes[pick % bushes.size()] : broadleaf[pick % broadleaf.size()];
                 scale = bush ? 1.4f + 2.2f * hashf(cx, cy, sd + 4) : 7.0f + 7.0f * hashf(cx, cy, sd + 4);
             }
-            if (!m) continue;
+            if (m < 0) continue;
             // not on steep banks
             float h0 = groundHeight(wx - 2, wz), h1 = groundHeight(wx + 2, wz);
             float h2 = groundHeight(wx, wz - 2), h3 = groundHeight(wx, wz + 2);
             if (std::max(std::fabs(h1 - h0), std::fabs(h3 - h2)) > 2.4f) continue;
             float hue = hashf(cx, cy, sd + 6);
             Vector3 tint = {0.82f + 0.2f * hue, 0.86f + 0.16f * hashf(cx, cy, sd + 7), 0.8f + 0.12f * hue};
-            Inst in{m, {wx, std::min({h0, h1, h2, h3}) - 0.1f, wz}, hashf(cx, cy, sd + 8) * 2 * PI, scale / m->height, tint, aoFloor};
+            Inst in{m, {wx, std::min({h0, h1, h2, h3}) - 0.1f, wz}, hashf(cx, cy, sd + 8) * 2 * PI, scale / meshes[m].height, tint};
             tiles[{(int)std::floor(wx / tile), (int)std::floor(wz / tile)}].push_back(in);
             ++count;
         }
-    gfx::MeshBuilder mb;
-    for (auto& [key, list] : tiles) {
-        mb.reserve(65535);  // each tile starts its own mesh so it culls on its own
-        for (const Inst& in : list) {
-            const TreeMesh& m = *in.m;
-            mb.reserve((int)m.p.size());
-            float c = std::cos(in.yaw), s = std::sin(in.yaw);
-            int first = -1;
-            for (size_t k = 0; k < m.p.size(); ++k) {
-                Vector3 v = m.p[k], nn = m.n[k];
-                Vertex vx{};
-                vx.p = {in.base.x + (c * v.x + s * v.z) * in.scale, in.base.y + v.y * in.scale, in.base.z + (-s * v.x + c * v.z) * in.scale};
-                vx.n = Vector3Normalize({c * nn.x + s * nn.z, nn.y, -s * nn.x + c * nn.z});
-                vx.uv = m.uv[k];
-                float up = std::sqrt(std::clamp(v.y / m.height, 0.0f, 1.0f));
-                vx.c[0] = (unsigned char)(std::min(in.tint.x, 1.0f) * 255);
-                vx.c[1] = (unsigned char)(std::min(in.tint.y, 1.0f) * 255);
-                vx.c[2] = (unsigned char)(std::min(in.tint.z, 1.0f) * 255);
-                vx.c[3] = (unsigned char)((in.aoFloor + (1 - in.aoFloor) * up) * 255);
-                int id = mb.add(vx);
-                if (first < 0) first = id;
+    // one mesh per kind of tree, in two levels of detail
+    treeTypes_.assign(meshes.size(), TreeType{});
+    for (size_t k = 0; k < meshes.size(); ++k) {
+        const TreeMesh& m = meshes[k];
+        TreeType& tt = treeTypes_[k];
+        tt.bush = std::find(bushes.begin(), bushes.end(), (int)k) != bushes.end();
+        // the lower branches inside a plantation get little light
+        const float aoFloor = std::find(conifers.begin(), conifers.end(), (int)k) != conifers.end() ? 0.35f : 0.6f;
+        for (int lod = 0; lod < 2; ++lod) {
+            // far away only the big cards that span the tree's height are kept
+            std::vector<int> tris;
+            for (int q = 0; q + 2 < (int)m.p.size(); q += 3) {
+                float lo = std::min({m.p[q].y, m.p[q + 1].y, m.p[q + 2].y}), hi = std::max({m.p[q].y, m.p[q + 1].y, m.p[q + 2].y});
+                if (lod == 0 || hi - lo > 0.5f * m.height) tris.push_back(q);
             }
-            for (int k = 0; k + 2 < (int)m.p.size(); k += 3) mb.tri(first + k, first + k + 1, first + k + 2);
+            if (lod == 1 && tris.size() < 2) {
+                tt.lod[1] = tt.lod[0];
+                continue;
+            }
+            gfx::MeshBuilder mb;
+            for (int q : tris) {
+                int first = -1;
+                for (int c = 0; c < 3; ++c) {
+                    Vertex vx{};
+                    vx.p = m.p[q + c];
+                    vx.n = m.n[q + c];
+                    vx.uv = m.uv[q + c];
+                    float up = std::sqrt(std::clamp(vx.p.y / m.height, 0.0f, 1.0f));
+                    vx.c[0] = vx.c[1] = vx.c[2] = 255;
+                    vx.c[3] = (unsigned char)((aoFloor + (1 - aoFloor) * up) * 255);
+                    int id = mb.add(vx);
+                    if (first < 0) first = id;
+                }
+                mb.tri(first, first + 1, first + 2);
+            }
+            std::vector<Mesh> built = mb.build();
+            tt.lod[lod] = built.empty() ? Mesh{} : built[0];
         }
     }
-    Part trees;
-    trees.meshes = mb.build();
-    trees.mat.layer[0] = &foliage_;
-    trees.mat.alphaCut = 0.45f;
-    trees.mat.doubleSided = true;
-    trees.mat.translucency = 0.7f;
-    trees.mat.vertexTint = true;
-    trees.mat.roughness = 1.0f;
-    trees.alphaTex = treeAtlas_.id;
-    trees.shadows = true;
-    parts_.push_back(std::move(trees));
+    // tiles: instance matrices (yaw, uniform scale, position; the tint in the bottom row)
+    for (auto& [key, list] : tiles) {
+        TreeTile tile;
+        tile.inst.assign(meshes.size(), {});
+        tile.box = {{1e30f, 1e30f, 1e30f}, {-1e30f, -1e30f, -1e30f}};
+        for (const Inst& in : list) {
+            float c = std::cos(in.yaw) * in.scale, s = std::sin(in.yaw) * in.scale;
+            Matrix M{};
+            M.m0 = c; M.m1 = 0; M.m2 = -s; M.m3 = in.tint.x;
+            M.m4 = 0; M.m5 = in.scale; M.m6 = 0; M.m7 = in.tint.y;
+            M.m8 = s; M.m9 = 0; M.m10 = c; M.m11 = in.tint.z;
+            M.m12 = in.base.x; M.m13 = in.base.y; M.m14 = in.base.z; M.m15 = 1;
+            // raylib's Matrix is stored row by row; the shader reads columns
+            tile.inst[in.m].push_back(MatrixTranspose(M));
+            treeTypes_[in.m].total++;
+            float h = meshes[in.m].height * in.scale, r = 0.5f * h;
+            tile.box.min = Vector3Min(tile.box.min, {in.base.x - r, in.base.y, in.base.z - r});
+            tile.box.max = Vector3Max(tile.box.max, {in.base.x + r, in.base.y + h, in.base.z + r});
+        }
+        treeTiles_.push_back(std::move(tile));
+    }
+    for (TreeType& tt : treeTypes_)
+        for (auto& pass : tt.vbo)
+            for (unsigned& v : pass) v = tt.total ? rlLoadVertexBuffer(nullptr, tt.total * (int)sizeof(Matrix), true) : 0;
+    treeMat_.layer[0] = &foliage_;
+    treeMat_.alphaCut = 0.45f;
+    treeMat_.doubleSided = true;
+    treeMat_.translucency = 0.7f;
+    treeMat_.vertexTint = true;
+    treeMat_.roughness = 1.0f;
     std::printf("trees: %d\n", count);
 }
 
@@ -1167,6 +1333,7 @@ void TrackScene::buildProps(const std::string& assetsDir) {
     mSlab.layer[0] = &asphaltWorn_;
     mSlab.scale[0] = 4.0f;
     mSlab.depthBias = 1.0f;
+    mSlab.detile = true;
     part(slab, mSlab, false);
     gfx::Material mGlass;
     mGlass.layer[0] = &metal_;
@@ -1219,17 +1386,66 @@ void TrackScene::buildProps(const std::string& assetsDir) {
 
 // ---------------------------------------------------------------- draw
 
+namespace {
+float boxDistance(const BoundingBox& b, Vector3 p) {
+    float dx = std::max({b.min.x - p.x, 0.0f, p.x - b.max.x});
+    float dz = std::max({b.min.z - p.z, 0.0f, p.z - b.max.z});
+    return std::sqrt(dx * dx + dz * dz);
+}
+}  // namespace
+
+const Mesh& TrackScene::pick(const Part& p, size_t i, Vector3 cam, bool coarse) const {
+    if (p.lod.empty()) return p.meshes[i];
+    return (coarse || boxDistance(p.boxes[i], cam) > p.lodDist) ? p.lod[i] : p.meshes[i];
+}
+
 void TrackScene::drawShadows(gfx::Renderer& r) const {
+    const Vector3 cam = r.cameraPosition();
     for (const Part& p : parts_) {
         if (!p.shadows) continue;
         for (size_t i = 0; i < p.meshes.size(); ++i)
             if (r.inShadowView(p.boxes[i]))
-                r.drawShadow(p.meshes[i], MatrixIdentity(), p.alphaTex, p.mat.alphaCut, p.mat.scale[0]);
+                r.drawShadow(pick(p, i, cam, r.cascade() == 1), MatrixIdentity(), p.alphaTex, p.mat.alphaCut, p.mat.scale[0]);
     }
+    drawTrees(r, 1 + r.cascade());
 }
 
 void TrackScene::draw(gfx::Renderer& r) const {
+    const Vector3 cam = r.cameraPosition();
     for (const Part& p : parts_)
         for (size_t i = 0; i < p.meshes.size(); ++i)
-            if (r.inView(p.boxes[i])) r.draw(p.meshes[i], p.mat, MatrixIdentity());
+            if (r.inView(p.boxes[i])) r.draw(pick(p, i, cam, false), p.mat, MatrixIdentity());
+    drawTrees(r, 0);
+}
+
+// pass 0: the camera's view; 1: the near shadow cascade; 2: the far one.
+void TrackScene::drawTrees(gfx::Renderer& r, int pass) const {
+    const Vector3 cam = r.cameraPosition();
+    const float kFull = pass == 0 ? 220.0f : 260.0f, kFar = 3200.0f, kBush = 500.0f;
+    for (size_t k = 0; k < treeTypes_.size(); ++k) {
+        const TreeType& tt = treeTypes_[k];
+        if (!tt.total) continue;
+        gather_[0].clear();
+        gather_[1].clear();
+        for (const TreeTile& tile : treeTiles_) {
+            const auto& list = tile.inst[k];
+            if (list.empty()) continue;
+            if (pass == 0 ? !r.inView(tile.box) : !r.inShadowView(tile.box)) continue;
+            // distance from the camera to the tile (0 inside it)
+            float dx = std::max({tile.box.min.x - cam.x, 0.0f, cam.x - tile.box.max.x});
+            float dz = std::max({tile.box.min.z - cam.z, 0.0f, cam.z - tile.box.max.z});
+            float d = std::sqrt(dx * dx + dz * dz);
+            int lod = (pass == 2 || d > kFull) ? 1 : 0;
+            if (tt.bush && (d > kBush || pass == 2)) continue;
+            if (d > kFar) continue;
+            gather_[lod].insert(gather_[lod].end(), list.begin(), list.end());
+        }
+        for (int lod = 0; lod < 2; ++lod) {
+            const int n = (int)gather_[lod].size();
+            if (!n) continue;
+            rlUpdateVertexBuffer(tt.vbo[pass][lod], gather_[lod].data(), n * (int)sizeof(Matrix), 0);
+            if (pass == 0) r.drawInstanced(tt.lod[lod], treeMat_, tt.vbo[pass][lod], n);
+            else r.drawShadowInstanced(tt.lod[lod], tt.vbo[pass][lod], n, treeAtlas_.id, treeMat_.alphaCut);
+        }
+    }
 }

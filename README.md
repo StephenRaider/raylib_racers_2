@@ -353,7 +353,11 @@ track's heights and banking, kerbs, armco and concrete walls, gravel traps, tyre
 walls, marshal posts, pit garages and a grandstand, conifer plantations and the
 moorland around it with baked sky occlusion, lit by an HDRI sky and a sun with two
 shadow cascades, all with PBR materials. No race or cars yet. `--bench` drives a lap
-and prints the frame time.
+and prints the frame time (`--cam 1-4` picks the camera, `--msaa 1/2/4` the
+anti-aliasing). Trees are instanced with a far level of detail, the terrain drops
+to a coarser mesh and a baked colour map in the distance, and the far shadow
+cascade is redrawn every third frame: about 180-250 fps at 1600x900 on an RTX 3060
+laptop GPU.
 
 ```
 ./build/rr_trackview --track highmoor                # 1-4 cameras, F2 sky, [ ] turn the sky, F12 screenshot

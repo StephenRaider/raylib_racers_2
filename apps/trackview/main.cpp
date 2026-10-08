@@ -6,6 +6,7 @@
 //
 // Keys: 1 drive, 2 chase, 3 free fly (WASD, Q/E, right mouse to look), 4 orbit; Space pauses;
 // +/- speed; [ ] turns the sky; , . exposure; F2 next sky; F12 screenshot.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -73,6 +74,7 @@ int main(int argc, char** argv) {
     std::string trackName = "highmoor", skyName = "kloofendal_partly_cloudy", shotsDir;
     int width = 1600, height = 900, ssaa = 1;
     bool bench = false;
+    int startCam = 1, msaa = 4;
     float yawDeg = 0;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -85,6 +87,8 @@ int main(int argc, char** argv) {
         else if (a == "--ssaa") ssaa = std::max(1, std::atoi(next().c_str()));
         else if (a == "--yaw") yawDeg = (float)std::atof(next().c_str());
         else if (a == "--bench") bench = true;
+        else if (a == "--cam") startCam = std::atoi(next().c_str());
+        else if (a == "--msaa") msaa = std::atoi(next().c_str());
         else {
             std::fprintf(stderr, "unknown option %s\n", a.c_str());
             return 2;
@@ -116,7 +120,7 @@ int main(int argc, char** argv) {
     SetTraceLogLevel(LOG_WARNING);
     std::fprintf(stderr, "window up\n");
     gfx::Renderer gr;
-    if (!gr.init(width * ssaa, height * ssaa, &err) || !gr.loadSky(assets + "/sky", skyName, &err)) {
+    if (!gr.init(width * ssaa, height * ssaa, &err, msaa) || !gr.loadSky(assets + "/sky", skyName, &err)) {
         std::fprintf(stderr, "%s\n", err.c_str());
         CloseWindow();
         return 1;
@@ -137,9 +141,13 @@ int main(int argc, char** argv) {
         gr.beginShadows(Vector3Add(cam.position, Vector3Scale(fwd, 90.0f)), 140.0f, 0);
         scene.drawShadows(gr);
         gr.endShadows();
-        gr.beginShadows(Vector3Add(cam.position, Vector3Scale(fwd, 550.0f)), 750.0f, 1);
-        scene.drawShadows(gr);
-        gr.endShadows();
+        // the far cascade changes slowly: redraw it every third frame (always for screenshots)
+        static int frameNo = 0;
+        if (!shotsDir.empty() || frameNo++ % 3 == 0) {
+            gr.beginShadows(Vector3Add(cam.position, Vector3Scale(fwd, 550.0f)), 750.0f, 1);
+            scene.drawShadows(gr);
+            gr.endShadows();
+        }
         gr.beginScene(cam);
         scene.draw(gr);
         gr.drawSky();
@@ -200,7 +208,7 @@ int main(int argc, char** argv) {
     int skyIdx = 0;
     for (int i = 0; i < 3; ++i)
         if (skyName == skies[i]) skyIdx = i;
-    Mode mode = DRIVE;
+    Mode mode = (Mode)std::clamp(startCam - 1, 0, 3);
     float s = 0, speed = 45.0f;
     bool paused = false;
     Camera3D free{};

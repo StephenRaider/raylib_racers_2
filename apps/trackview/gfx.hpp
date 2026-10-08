@@ -37,7 +37,13 @@ struct Material {
     float depthBias = 0.0f;       // pulls the surface towards the camera (decals over the road), ~1e-6 units
     float alphaCut = 0.0f;        // > 0: leaf cut-outs, layer 0's alpha below this is dropped
     float translucency = 0.0f;    // sunlight through leaves seen from the shady side
+    bool detile = false;          // hide the texture's repetition (large flat surfaces: tarmac)
     bool vertexTint = false;      // one-layer materials: the vertex colour's rgb multiplies the albedo
+    // Far-off ground: a baked colour map (sRGB, over world x/z) replaces the texture layers
+    // between colorMapRange.x and .y metres from the camera (terrain).
+    unsigned colorMap = 0;
+    Vector4 colorMapRect = {0, 0, 1, 1};  // x0, z0 of the map, then 1 / width, 1 / depth (m)
+    Vector2 colorMapRange = {110, 200};
 };
 
 struct Sun {
@@ -47,7 +53,8 @@ struct Sun {
 
 class Renderer {
 public:
-    bool init(int width, int height, std::string* err);
+    // msaa: samples per pixel for the scene (1 = off); 4 smooths edges, leaves and fences.
+    bool init(int width, int height, std::string* err, int msaa = 4);
     void shutdown();
     void resize(int width, int height);
 
@@ -66,12 +73,18 @@ public:
     static constexpr int kCascades = 2;
     void beginShadows(Vector3 focus, float radius, int cascade = 0);
     void drawShadow(const Mesh& mesh, Matrix model, unsigned alphaTex = 0, float alphaCut = 0.5f, float uvScale = 1.0f);
+    // Instanced: `count` model matrices (column major, 64 bytes each) in the vertex buffer
+    // `instances`; each matrix's bottom row (m3, m7, m11) carries a colour tint.
+    void drawShadowInstanced(const Mesh& mesh, unsigned instances, int count, unsigned alphaTex, float alphaCut);
+    int cascade() const { return cascade_; }
     // Whether a world box is in the camera's view (after beginScene) or in the sun's (after beginShadows).
     bool inView(const BoundingBox& b) const { return boxInClip(b, viewProj_); }
     bool inShadowView(const BoundingBox& b) const { return boxInClip(b, lightVP_[cascade_]); }
     void endShadows();
     void beginScene(const Camera3D& cam);
     void draw(const Mesh& mesh, const Material& mat, Matrix model);
+    void drawInstanced(const Mesh& mesh, const Material& mat, unsigned instances, int count);
+    Vector3 cameraPosition() const { return cam_.position; }
     void drawSky();
     void endScene();
     // Tone map to the current framebuffer (the screen, or a texture for screenshots).
@@ -84,14 +97,17 @@ private:
     int w_ = 0, h_ = 0;
     unsigned fbo_ = 0, color_ = 0, depth_ = 0;
     unsigned shadowFbo_[kCascades] = {}, shadowTex_[kCascades] = {};
-    int shadowRes_ = 4096;
+    int shadowRes_[kCascades] = {4096, 2048};
+    int msaa_ = 4;
+    unsigned msFbo_ = 0, msColor_ = 0, msDepth_ = 0;  // multisampled scene target, resolved into fbo_
     int cascade_ = 0;
     Matrix lightVP_[kCascades] = {}, viewProj_{};
     static bool boxInClip(const BoundingBox& b, const Matrix& m);
-    Shader pbr_{}, depth_s_{}, depthCut_{}, sky_{}, tonemap_{};
+    Shader pbr_{}, pbrInst_{}, depth_s_{}, depthCut_{}, depthInst_{}, sky_{}, tonemap_{};
     Texture2D skyTex_{}, specTex_{};
     Vector3 sh_[9]{};
     Sun skySun_{};
+    Vector3 fogColor_{0.6f, 0.7f, 0.8f};
     bool hasSun_ = false;
     Mesh cube_{};
     Camera3D cam_{};
@@ -99,8 +115,11 @@ private:
     struct Locs {
         int mvp, model, normalMat, viewPos, lightVP, sunDir, sunColor, sh, skyYaw, fog, exposure, specMax;
         int layerScale, tint, layerTint, depthBias, alphaCut, translucency, vertexTint, roughMul, metalMul, normalStrength, clearcoat, ccRough, macro, layers;
-        int tex[9], shadow[2], spec;
-    } L_{};
+        int tex[9], shadow[2], spec, a2c, fogColor, detile, colorMap, colorMapRect, colorMapRange, useColorMap;
+    } L_{}, Li_{};  // plain and instanced
+    void lookUp(Shader& s, Locs& l);
+    int bindMaterial(const Material& mat, const Locs& l, Matrix model, Matrix mvp);
+    void unbindMaterial(int slots, const Material& mat);
     void createTargets();
     void freeTargets();
 };
