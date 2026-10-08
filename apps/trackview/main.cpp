@@ -4,6 +4,8 @@
 //   rr_trackview [--track highmoor] [--sky kloofendal_partly_cloudy] [--yaw deg]
 //                [--shots DIR] [--width W --height H] [--ssaa N]
 //
+//   [--bench | --bench-lap] [--cam 1-4] [--msaa 1|2|4] [--vsync]
+//
 // Keys: 1 drive, 2 chase, 3 free fly (WASD, Q/E, right mouse to look), 4 orbit; Space pauses;
 // +/- speed; [ ] turns the sky; , . exposure; F2 next sky; F12 screenshot.
 #include <algorithm>
@@ -22,6 +24,15 @@
 #include "track_scene.hpp"
 
 namespace fs = std::filesystem;
+extern "C" void* glfwGetProcAddress(const char* name);
+
+#ifdef _WIN32
+// Ask laptops with two GPUs for the fast one (NVIDIA Optimus, AMD PowerXpress).
+extern "C" {
+__declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
 
 namespace {
 
@@ -73,7 +84,7 @@ int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::string trackName = "highmoor", skyName = "kloofendal_partly_cloudy", shotsDir;
     int width = 1600, height = 900, ssaa = 1;
-    bool bench = false;
+    bool bench = false, benchLap = false, vsync = false;
     int startCam = 1, msaa = 4;
     float yawDeg = 0;
     for (int i = 1; i < argc; ++i) {
@@ -87,6 +98,8 @@ int main(int argc, char** argv) {
         else if (a == "--ssaa") ssaa = std::max(1, std::atoi(next().c_str()));
         else if (a == "--yaw") yawDeg = (float)std::atof(next().c_str());
         else if (a == "--bench") bench = true;
+        else if (a == "--bench-lap") bench = benchLap = true;
+        else if (a == "--vsync") vsync = true;
         else if (a == "--cam") startCam = std::atoi(next().c_str());
         else if (a == "--msaa") msaa = std::atoi(next().c_str());
         else {
@@ -115,10 +128,17 @@ int main(int argc, char** argv) {
                     t.direction > 0 ? "left" : "right", t.apex_s, t.start_s, t.end_s, t.min_radius, t.angle * RAD2DEG,
                     track.heightAt(t.apex_s));
 
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | (bench ? 0 : FLAG_VSYNC_HINT) | (shotsDir.empty() ? 0 : FLAG_WINDOW_HIDDEN));
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | (vsync && !bench ? FLAG_VSYNC_HINT : 0) | (shotsDir.empty() ? 0 : FLAG_WINDOW_HIDDEN));
     InitWindow(shotsDir.empty() ? width : 320, shotsDir.empty() ? height : 180, "Raylib Racers 2 - track view");
     SetTraceLogLevel(LOG_WARNING);
     std::fprintf(stderr, "window up\n");
+    // which GPU we got (laptops can start us on the integrated one)
+    std::string gpuName = "?";
+    {
+        auto getString = (const unsigned char* (*)(unsigned))glfwGetProcAddress("glGetString");
+        if (getString && getString(0x1F01 /* GL_RENDERER */)) gpuName = (const char*)getString(0x1F01);
+        std::printf("GPU: %s\n", gpuName.c_str());
+    }
     gfx::Renderer gr;
     if (!gr.init(width * ssaa, height * ssaa, &err, msaa) || !gr.loadSky(assets + "/sky", skyName, &err)) {
         std::fprintf(stderr, "%s\n", err.c_str());
@@ -219,18 +239,25 @@ int main(int argc, char** argv) {
     float yaw = PI, pitch = -0.3f, orbit = 0;
     int frames = 0;
     double benchTime = 0, worst = 0;
+    std::vector<float> frameTimes;
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         if (bench) {
-            // a lap at 90 m/s in 600 frames; report the frame times and stop
+            // 1200 frames at the normal speed, or with --bench-lap a whole lap in 600 frames;
+            // report the frame times and stop
             if (frames > 10) {
                 benchTime += dt;
                 worst = std::max(worst, (double)dt);
+                frameTimes.push_back(dt);
             }
-            dt = track.length() / 600.0f / speed;
-            if (++frames == 610) {
-                std::printf("bench: %.2f ms a frame on average (%.0f fps), worst %.1f ms, at %dx%d\n",
-                            benchTime / 600 * 1000, 600 / benchTime, worst * 1000, GetScreenWidth(), GetScreenHeight());
+            if (benchLap) dt = track.length() / 600.0f / speed;
+            const int total = benchLap ? 610 : 1210;
+            if (++frames == total) {
+                std::sort(frameTimes.begin(), frameTimes.end());
+                const double low = frameTimes[frameTimes.size() * 99 / 100];  // the slowest 1%
+                std::printf("bench: %.2f ms a frame on average (%.0f fps), 1%% low %.0f fps, worst %.1f ms, at %dx%d on %s\n",
+                            benchTime / frameTimes.size() * 1000, frameTimes.size() / benchTime, 1.0 / low, worst * 1000,
+                            GetScreenWidth(), GetScreenHeight(), gpuName.c_str());
                 break;
             }
         }
@@ -287,8 +314,8 @@ int main(int argc, char** argv) {
         BeginDrawing();
         ClearBackground(BLACK);
         gr.present(0, 0, GetScreenWidth(), GetScreenHeight());
-        DrawText(TextFormat("%s  %.0f m  %.0f km/h  %d fps   [1-4 camera, F2 sky, F12 shot]", track.name().c_str(), s,
-                            speed * 3.6f, GetFPS()),
+        DrawText(TextFormat("%s  %.0f m  %.0f km/h  %d fps (%.1f ms)  %s   [1-4 camera, F2 sky, F12 shot]",
+                            track.name().c_str(), s, speed * 3.6f, GetFPS(), GetFrameTime() * 1000, gpuName.c_str()),
                  12, 10, 18, RAYWHITE);
         EndDrawing();
         if (IsKeyPressed(KEY_F12)) {
