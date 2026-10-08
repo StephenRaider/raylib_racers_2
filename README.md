@@ -364,6 +364,20 @@ laptop GPU.
 ./build/rr_trackview --shots shots/ --ssaa 2          # render the preset views to PNGs and exit
 ```
 
+### Viewer v2
+
+`rr_viewer2` is the race viewer on the new renderer. For now it runs one car on one
+track: John Fone (the `racingline` robot, which plans for hills and banking) in the 2013
+Mercedes on Highmoor Ridge. The front wheels steer, the body rolls, pitches and squats on
+its springs, the paint has a metallic base under a clear coat, and the car casts a contact
+shadow. Cameras: 1 chase, 2 T-cam, 3 nose, 4 TV, 5 helicopter, 6 orbit (drag, wheel);
+`[` `]` slow down or speed up time, Space pauses, F12 saves a screenshot.
+
+```
+./build/rr_viewer2                       # --car f1_2013_02 --robot racingline --laps 30
+./build/rr_viewer2 --shots shots/        # photograph the first minute from every camera
+```
+
 The materials and skies come from `tools/import_assets.py` (CC0, see
 [CREDITS.md](CREDITS.md)).
 

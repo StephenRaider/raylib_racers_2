@@ -124,16 +124,32 @@ if(RR_BUILD_VIEWER)
     target_link_libraries(rr_viewer PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
   endif()
 
-  # RR2's PBR track renderer, on its own for now (no race, no cars)
-  add_executable(rr_trackview
-    apps/trackview/main.cpp
+  # RR2's PBR renderer and 3D track, shared by the track view and viewer v2
+  add_library(rr_gfx STATIC
     apps/trackview/gfx.cpp
     apps/trackview/track_scene.cpp)
-  target_link_libraries(rr_trackview PRIVATE rr_core raylib)
+  target_include_directories(rr_gfx PUBLIC apps/trackview)
+  target_link_libraries(rr_gfx PUBLIC rr_core raylib)
+  target_compile_options(rr_gfx PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)
+
+  # the track on its own (no race, no cars)
+  add_executable(rr_trackview apps/trackview/main.cpp)
+  target_link_libraries(rr_trackview PRIVATE rr_gfx)
   target_compile_options(rr_trackview PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)
   rr_output(rr_trackview "${RR_OUT}")
   if(APPLE)
     target_link_libraries(rr_trackview PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
+  endif()
+
+  # viewer v2: races on the new renderer (one car for now)
+  add_executable(rr_viewer2
+    apps/viewer2/main.cpp
+    apps/viewer2/car_render.cpp)
+  target_link_libraries(rr_viewer2 PRIVATE rr_gfx)
+  target_compile_options(rr_viewer2 PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)
+  rr_output(rr_viewer2 "${RR_OUT}")
+  if(APPLE)
+    target_link_libraries(rr_viewer2 PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
   endif()
 endif()
 

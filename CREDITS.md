@@ -35,6 +35,12 @@ replaced by lit grass, and prefiltered for reflections, by `tools/import_assets.
 | `mud_road` | [Mud Road (Pure Sky)](https://polyhaven.com/a/mud_road_puresky) |
 | `overcast_soil` | [Overcast Soil (Pure Sky)](https://polyhaven.com/a/overcast_soil_puresky) |
 
+## assets/cars/f1_2013_02
+
+The Mercedes from "[FREE!] 2013 F1 Pack" (https://skfb.ly/pCRIA) by Dave Love, licensed
+CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Changes: the pack's single model
+split into one car (body and wheels, metres, RR layout; see its `car.json`).
+
 ## assets/scenery
 
 See [assets/scenery/CREDITS.md](assets/scenery/CREDITS.md) (Low Poly Forest Tree Pack, CC BY 4.0;

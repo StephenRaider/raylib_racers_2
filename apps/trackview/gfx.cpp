@@ -1,5 +1,6 @@
 #include "gfx.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -148,6 +149,7 @@ in vec4 fragColor;
 uniform sampler2D albedo0, normal0, orm0, albedo1, normal1, orm1, albedo2, normal2, orm2;
 uniform sampler2DShadow shadowMap0, shadowMap1;
 uniform sampler2D specAtlas;
+uniform sampler2D skyMap;  // the full-resolution sky, for mirror-like reflections (car paint)
 uniform int layers;
 uniform vec3 layerScale;
 uniform vec3 tint;
@@ -171,6 +173,25 @@ uniform sampler2D colorMap;
 uniform vec4 colorMapRect;
 uniform vec2 colorMapRange;
 uniform int useColorMap;
+uniform vec4 blob[8];   // car footprints: x, z, yaw, ground height
+uniform int blobCount;
+
+// Soft occlusion of the ground under and around the cars (an F1 car sits 3 cm off it).
+float carOcclusion() {
+    float occ = 1.0;
+    for (int i = 0; i < blobCount; ++i) {
+        vec4 b = blob[i];
+        if (fragPos.y > b.w + 0.25) continue;  // the car itself, not the ground
+        vec2 d = fragPos.xz - b.xy;
+        float c = cos(b.z), s = sin(b.z);
+        // into the car's frame: x along the car, y across (world x/z -> sim x/-y)
+        vec2 l = vec2(c * d.x - s * d.y, -s * d.x - c * d.y);
+        vec2 q = abs(l) - vec2(2.3, 0.75);
+        float dist = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
+        occ *= 1.0 - 0.75 * (1.0 - smoothstep(-0.5, 0.9, dist));
+    }
+    return occ;
+}
 out vec4 finalColor;
 
 vec3 irradianceSH(vec3 n) {
@@ -189,6 +210,11 @@ vec3 specLevel(vec2 uv, int k) {
 }
 vec3 prefiltered(vec3 r, float rough) {
     vec2 uv = equirect(r);
+    if (rough < 0.06) {
+        // clear coat and chrome: the sky itself, sharp, blending into the first blurred level
+        vec3 sharp = textureLod(skyMap, uv, 0.0).rgb;
+        return mix(sharp, specLevel(uv, 0), rough / 0.06) * specScale;
+    }
     float l = clamp(rough, 0.0, 1.0) * 5.0;
     int k = int(floor(l));
     return mix(specLevel(uv, k), specLevel(uv, min(k + 1, 5)), l - float(k)) * specScale;
@@ -338,7 +364,8 @@ void main() {
         float m = vnoise(fragPos.xz * 0.025) * 0.6 + vnoise(fragPos.xz * 0.11) * 0.4;
         albedo *= 0.82 + 0.36 * m;
     }
-    float ao = s.orm.r * fragColor.a;
+    float carOcc = blobCount > 0 ? carOcclusion() : 1.0;
+    float ao = s.orm.r * fragColor.a * carOcc;
     float rough = clamp(s.orm.g * roughMul, 0.04, 1.0);
     float metal = clamp(s.orm.b * metalMul, 0.0, 1.0);
 
@@ -363,7 +390,7 @@ void main() {
     float NoH = max(dot(n, H), 0.0), VoH = max(dot(V, H), 0.0);
     vec3 col = vec3(0.0);
     float shRaw = (NoL > 0.0 || translucency > 0.0) ? shadow(normalize(fragNormal)) : 0.0;
-    float sh = NoL > 0.0 ? shRaw : 0.0;
+    float sh = (NoL > 0.0 ? shRaw : 0.0) * mix(1.0, carOcc, 0.6);
     // the shading normal can face the sun when the surface does not: no light there
     sh *= smoothstep(-0.05, 0.05, dot(normalize(fragNormal), L));
     vec3 F = F_Schlick(f0, VoH);
@@ -551,11 +578,11 @@ bool loadTextureSet(const std::string& dir, TextureSet* out, std::string* err) {
     return true;
 }
 
-TextureSet flatTextureSet(Texture2D albedo, float roughness) {
+TextureSet flatTextureSet(Texture2D albedo, float roughness, float metalness) {
     TextureSet t;
     t.albedo = albedo;
     Image n = GenImageColor(1, 1, Color{128, 128, 255, 255});
-    Image o = GenImageColor(1, 1, Color{255, (unsigned char)(roughness * 255), 0, 255});
+    Image o = GenImageColor(1, 1, Color{255, (unsigned char)(roughness * 255), (unsigned char)(metalness * 255), 255});
     t.normal = LoadTextureFromImage(n);
     t.orm = LoadTextureFromImage(o);
     UnloadImage(n);
@@ -589,6 +616,9 @@ void Renderer::lookUp(Shader& s, Locs& l) {
     l.shadow[0] = U("shadowMap0");
     l.shadow[1] = U("shadowMap1");
     l.spec = U("specAtlas");
+    l.skyMap = U("skyMap");
+    l.blob = U("blob[0]");
+    l.blobCount = U("blobCount");
 }
 
 bool Renderer::init(int width, int height, std::string* err, int msaa) {
@@ -876,6 +906,11 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
     rlSetUniform(L.vertexTint, &vtint, RL_SHADER_UNIFORM_INT, 1);
     int macro = mat.macroVariation ? 1 : 0;
     rlSetUniform(L.macro, &macro, RL_SHADER_UNIFORM_INT, 1);
+    {
+        int n = (int)std::min(blobs.size(), (size_t)kBlobs);
+        rlSetUniform(L.blobCount, &n, RL_SHADER_UNIFORM_INT, 1);
+        if (n) rlSetUniform(L.blob, blobs.data(), RL_SHADER_UNIFORM_VEC4, n);
+    }
     int det = mat.detile ? 1 : 0;
     rlSetUniform(L.detile, &det, RL_SHADER_UNIFORM_INT, 1);
     int useCm = mat.colorMap ? 1 : 0;
@@ -902,6 +937,7 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
     bind(L.shadow[0], shadowTex_[0]);
     bind(L.shadow[1], shadowTex_[1]);
     bind(L.spec, specTex_.id);
+    bind(L.skyMap, skyTex_.id);
     bind(L.colorMap, mat.colorMap ? mat.colorMap : specTex_.id);
     if (mat.doubleSided) rlDisableBackfaceCulling();
     return slot;

@@ -16,7 +16,7 @@ struct TextureSet {
 };
 bool loadTextureSet(const std::string& dir, TextureSet* out, std::string* err);
 // A set from one albedo texture (with alpha), with a flat normal map and constant roughness.
-TextureSet flatTextureSet(Texture2D albedo, float roughness);
+TextureSet flatTextureSet(Texture2D albedo, float roughness, float metalness = 0.0f);
 void unloadTextureSet(TextureSet& t);
 
 // How a mesh is shaded. Up to three texture layers, mixed per vertex by the vertex
@@ -65,6 +65,11 @@ public:
     float skyIntensity = 1.0f;  // ambient and reflections
     float sunIntensity = 1.0f;
     float fogDensity = 0.00022f;
+    // Contact shadows under cars: up to kBlobs footprints (centre x, z, yaw, ground height),
+    // darkening the ground under and just around each car. Set each frame.
+    static constexpr int kBlobs = 8;
+    struct Blob { float x, z, yaw, y; };
+    std::vector<Blob> blobs;
     Sun sun() const;            // after skyYaw and sunIntensity
 
     // A frame: shadow passes, then the colour pass into the HDR target, then present().
@@ -115,7 +120,7 @@ private:
     struct Locs {
         int mvp, model, normalMat, viewPos, lightVP, sunDir, sunColor, sh, skyYaw, fog, exposure, specMax;
         int layerScale, tint, layerTint, depthBias, alphaCut, translucency, vertexTint, roughMul, metalMul, normalStrength, clearcoat, ccRough, macro, layers;
-        int tex[9], shadow[2], spec, a2c, fogColor, detile, colorMap, colorMapRect, colorMapRange, useColorMap;
+        int tex[9], shadow[2], spec, skyMap, blob, blobCount, a2c, fogColor, detile, colorMap, colorMapRect, colorMapRange, useColorMap;
     } L_{}, Li_{};  // plain and instanced
     void lookUp(Shader& s, Locs& l);
     int bindMaterial(const Material& mat, const Locs& l, Matrix model, Matrix mvp);
