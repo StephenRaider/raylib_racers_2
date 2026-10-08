@@ -123,6 +123,18 @@ if(RR_BUILD_VIEWER)
   if(APPLE)
     target_link_libraries(rr_viewer PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
   endif()
+
+  # RR2's PBR track renderer, on its own for now (no race, no cars)
+  add_executable(rr_trackview
+    apps/trackview/main.cpp
+    apps/trackview/gfx.cpp
+    apps/trackview/track_scene.cpp)
+  target_link_libraries(rr_trackview PRIVATE rr_core raylib)
+  target_compile_options(rr_trackview PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)
+  rr_output(rr_trackview "${RR_OUT}")
+  if(APPLE)
+    target_link_libraries(rr_trackview PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
+  endif()
 endif()
 
 # ---------------------------------------------------------------- tests

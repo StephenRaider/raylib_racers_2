@@ -338,6 +338,26 @@ from circuit maps (`tools/track_refs/`), then bent, reshaped corner by corner an
 given their own widths and pit lanes. `python3 tools/trackgen.py --plot DIR`
 also draws a 2D map of each.
 
+**Highmoor Ridge** (`highmoor`) is RR2's test track: an original 4.6 km hill circuit
+with 37 m of elevation, a banked summit hairpin and a corkscrew that drops at 14%.
+Its corners carry heights and banks in `tools/trackgen.py`, and `--plot` adds an
+elevation profile.
+
+### RR2 track view
+
+`rr_trackview` draws a track in 3D with RR2's new renderer: the road built from the
+track's heights and banking, kerbs, armco and concrete walls, gravel traps and the
+moorland around it, lit by an HDRI sky and a shadowing sun with PBR materials. No
+race or cars yet.
+
+```
+./build/rr_trackview --track highmoor                # 1-4 cameras, F2 sky, [ ] turn the sky, F12 screenshot
+./build/rr_trackview --shots shots/ --ssaa 2          # render the preset views to PNGs and exit
+```
+
+The materials and skies come from `tools/import_assets.py` (CC0, see
+[CREDITS.md](CREDITS.md)).
+
 ## Layout
 
 ```
@@ -345,10 +365,12 @@ include/rr/robot_api.h   robot ABI (C)
 src/core/                track, car physics, race, robot loader, CLI, car specs
 apps/headless/           rr_race
 apps/viewer/             rr_viewer (renderer, HUD)
+apps/trackview/          rr_trackview: RR2's PBR track renderer
 bots/                    example robots and shared helpers
 tracks/                  circuit, oval and seven real-inspired circuits (.trk)
 specs/                   car specs and development rules (JSON)
 assets/fonts/            DejaVu fonts for the HUD (see DEJAVU_LICENSE.txt)
+assets/materials/        PBR texture sets (albedo, normal, ORM); assets/sky/: HDRI skies
 assets/cars/f1_gearari/  F1 car: body and wheel glTF, car.json, liveries (see its README)
 ```
 
