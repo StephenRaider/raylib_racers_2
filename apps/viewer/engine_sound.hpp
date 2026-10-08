@@ -60,6 +60,7 @@ private:
         float thrSlow = 0, volleyClock = 0, jit = 0;
         // each cylinder's exhaust blowdown pulse reaches the collector after its own pipe length
         float pendT[8] = {}, pendG[8] = {};
+        float irLp[3] = {};
         float pulseSlow = 0;  // the slow, negative scavenging tail of a pulse
         std::shared_ptr<struct IrConvolver> conv;  // this car's running convolution with the exhaust response
         int volley = 0;

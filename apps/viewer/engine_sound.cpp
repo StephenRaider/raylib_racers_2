@@ -30,15 +30,15 @@ struct OrderTable {
                 // imbalance (order 4) that gives the hard rasp; each bank fires four times (order 4).
                 // Heavy low orders for the body, the firing order and its harmonics for the scream.
                 switch (j) {
-                    case 1: a = 0.30f; break;
-                    case 2: a = 0.85f; break;   // crank
-                    case 3: a = 0.50f; break;
-                    case 4: a = 1.25f; break;   // bank firing and second-order: the growl
-                    case 6: a = 0.65f; break;
-                    case 8: a = 1.00f; break;   // firing
-                    case 12: a = 0.35f; break;
-                    case 16: a = 0.27f; break;  // the scream on top
-                    case 24: a = 0.10f; break;
+                    case 1: a = 0.14f; break;
+                    case 2: a = 0.45f; break;   // crank
+                    case 3: a = 0.28f; break;
+                    case 4: a = 0.90f; break;   // bank firing and second-order: the growl
+                    case 6: a = 0.60f; break;
+                    case 8: a = 1.10f; break;   // firing
+                    case 12: a = 0.62f; break;
+                    case 16: a = 0.48f; break;  // the scream on top
+                    case 24: a = 0.20f; break;
                     case 32: a = 0.06f; break;
                     default:
                         if (j < 8) a = 0.26f + 0.18f * r;
@@ -76,7 +76,7 @@ const OrderTable kTable10(false), kTable8(true);
 struct Formant { float hz, q, gain; };
 constexpr Formant kFormants10[3] = {{165, 2.2f, 0.9f}, {420, 2.8f, 1.0f}, {1050, 3.0f, 0.35f}};
 // a V8's shorter, fatter pipes: lower and heavier
-constexpr Formant kFormants8[3] = {{210, 2.0f, 1.1f}, {420, 2.4f, 1.2f}, {2600, 3.2f, 0.8f}};
+constexpr Formant kFormants8[3] = {{300, 2.0f, 0.55f}, {1250, 2.4f, 1.0f}, {2800, 3.2f, 0.8f}};
 
 // Asymmetric drive: tanh around an offset, so it adds even harmonics (grit) too.
 float drive(float x, float k) {
@@ -400,6 +400,14 @@ void EngineSynth::render(float* out, int frames) {
             if (v8 && ir_) {
                 if (!c.conv) c.conv = std::make_shared<IrConvolver>(ir_);
                 convOut = c.conv->process(exc) * irGain_;
+                // the recording is heavy below 100 Hz: take that out, the body comes from elsewhere
+                const float a = 1 - std::exp(-kTwoPi * 230.0f * dt);
+                float hp = convOut;
+                for (int k = 0; k < 3; ++k) {  // three cascaded one-pole high-passes
+                    c.irLp[k] += (hp - c.irLp[k]) * a;
+                    hp -= c.irLp[k];
+                }
+                convOut = hp;  // (the recording is bass-heavy: -30 dB at 60 Hz)
             }
 
             // tailpipe low-pass: opens up a little with throttle and revs, never to a whine
@@ -411,10 +419,10 @@ void EngineSynth::render(float* out, int frames) {
             // body: the low thump under it all, strongest pulling away on throttle
             c.body += (exc - c.body) * kBody;
             c.body2 += (c.body - c.body2) * kBody;
-            const float bodyAmt = thr * (1.25f - 0.85f * revs) * (v8 ? 1.4f : 1.0f);
+            const float bodyAmt = thr * (1.25f - 0.85f * revs) * (v8 ? 0.5f : 1.0f);
 
             float sig = 0.55f * c.lp2 + 0.12f * eng + 0.75f * formants + bodyAmt * c.body2;
-            if (v8 && ir_) sig = 0.30f * c.lp2 + 0.10f * eng + 0.25f * formants + bodyAmt * c.body2 + convOut;
+            if (v8 && ir_) sig = 0.30f * c.lp2 + 0.14f * eng + 0.60f * formants + bodyAmt * c.body2 + convOut;
             sig += (c.noiseLp - c.noiseHp) * (0.03f + 0.10f * thr) * revs;
             sig += popSig * 0.25f;  // a bit of raw crackle on top
 
@@ -428,11 +436,12 @@ void EngineSynth::render(float* out, int frames) {
 
             const float level = (0.3f + 0.7f * thr) * (0.5f + 0.5f * revs) * c.limiter;
             // asymmetric saturation: dirtier the harder it is driven
-            float s = drive(sig * 2.0f * level, 1.5f + 2.5f * thr);
+            // (the V8 is driven much less: hard saturation reads as a blown speaker)
+            float s = v8 ? drive(sig * 0.9f * level, 0.25f + 0.25f * thr) : drive(sig * 2.0f * level, 1.5f + 2.5f * thr);
             // remove the DC the asymmetric drive leaves behind
             c.dcOut = s - c.dcIn + 0.9985f * c.dcOut;
             c.dcIn = s;
-            s = softClip(c.dcOut * kOutGain) * 0.6f;
+            s = v8 ? softClip(c.dcOut * 1.3f) * 0.75f : softClip(c.dcOut * kOutGain) * 0.6f;
 
             // wind and tyres: low-passed noise rising with speed
             c.windLp += (n - c.windLp) * 0.04f;

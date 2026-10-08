@@ -349,7 +349,7 @@ int main(int argc, char** argv) {
             UnloadWave(wv);
         }
     }
-    const float kExhaustGain = 4.2f;
+    const float kExhaustGain = 1.5f;
     audio.setExhaustImpulse(exhaustIr, kExhaustGain);
     audio.heightOf = [&](const rr::Car&) { return car.origin().y + 0.6f; };
     if (!wavPath.empty()) {
