@@ -75,7 +75,7 @@ const OrderTable kTable10(false), kTable8(true);
 struct Formant { float hz, q, gain; };
 constexpr Formant kFormants10[3] = {{165, 2.2f, 0.9f}, {420, 2.8f, 1.0f}, {1050, 3.0f, 0.35f}};
 // a V8's shorter, fatter pipes: lower and heavier
-constexpr Formant kFormants8[3] = {{210, 2.0f, 1.1f}, {400, 2.4f, 1.2f}, {900, 2.8f, 0.45f}};
+constexpr Formant kFormants8[3] = {{210, 2.0f, 1.1f}, {420, 2.4f, 1.2f}, {2600, 3.2f, 0.8f}};
 
 // Asymmetric drive: tanh around an offset, so it adds even harmonics (grit) too.
 float drive(float x, float k) {
@@ -184,7 +184,9 @@ void EngineSynth::render(float* out, int frames) {
             if (!v && c.gain < 1e-4f) { c.live = false; continue; }
 
             // --- engine orders
-            const float cycleHz = std::max(10.0f, c.rpm / 120.0f * c.pitch);
+            // (a V8's revs wander a few tenths of a percent: nothing is perfectly steady)
+            if (v8) c.jit += (noise() - c.jit) * 0.004f;
+            const float cycleHz = std::max(10.0f, c.rpm / 120.0f * c.pitch * (v8 ? 1.0f + 0.12f * c.jit : 1.0f));
             c.phase += cycleHz * dt;
             c.phase -= std::floor(c.phase);
             const float th = kTwoPi * (float)c.phase;
@@ -197,6 +199,22 @@ void EngineSynth::render(float* out, int frames) {
             if (firing != c.firing) {
                 c.firing = firing;
                 c.pulseGain = 1.0f + (0.18f + 0.22f * thr) * (1.0f - 0.5f * revs) * noise();
+                if (v8) {
+                    // each cylinder has its own strength, drifting; off the throttle they fire
+                    // unevenly, some barely and some hard: the burble
+                    float& cy = c.cyl[firing & 7];
+                    cy = std::clamp(cy + 0.06f * noise(), 0.7f, 1.3f);
+                    c.pulseGain *= cy;
+                    if (thr < 0.15f && c.rpm > 0.3f * c.maxRpm) {
+                        const float r = 0.5f + 0.5f * noise();
+                        c.pulseGain *= r < 0.45f ? 0.25f : 1.2f + 2.2f * r;
+                        // a hard, unburnt firing sometimes goes off in the pipe
+                        if (r > 0.9f && c.bang < 0.2f) {
+                            c.bang = 0.5f + 0.5f * (0.5f + 0.5f * noise());
+                            c.bangHz = 80.0f + 50.0f * (0.5f + 0.5f * noise());
+                        }
+                    }
+                }
                 c.pulse += c.pulseGain;
             }
             c.pulse *= kPulseDecay;
@@ -222,7 +240,29 @@ void EngineSynth::render(float* out, int frames) {
 
             // overrun crackle: off throttle at high revs, random pops that bang through the pipes
             if (thr < 0.1f && c.rpm > 0.4f * c.maxRpm && noise() > 0.9992f) c.pop = 1.0f;
-            const float popSig = c.pop * noise();
+            if (v8) {
+                // lifting off at speed starts a volley of backfires over the next half second
+                c.thrSlow += (thr - c.thrSlow) * (dt / 0.25f);
+                if (!c.lifted && c.thrSlow - thr > 0.5f && c.rpm > 0.45f * c.maxRpm) {
+                    c.lifted = true;
+                    c.volley = 3 + (int)(4.0f * (0.5f + 0.5f * noise()));
+                    c.volleyClock = 0.02f;
+                }
+                if (thr > 0.3f) c.lifted = false;
+                if (c.volley > 0) {
+                    c.volleyClock -= dt;
+                    if (c.volleyClock <= 0) {
+                        c.bang = 0.7f + 0.5f * (0.5f + 0.5f * noise());
+                        c.bangHz = 75.0f + 55.0f * (0.5f + 0.5f * noise());
+                        c.volley--;
+                        c.volleyClock = 0.03f + 0.13f * (0.5f + 0.5f * noise());
+                    }
+                }
+                c.bangPh += kTwoPi * c.bangHz * dt;
+                c.bang *= std::exp(-dt / 0.035f);
+                if (c.bang < 1e-3f) c.bang = 0;
+            }
+            const float popSig = c.pop * noise() + (v8 ? c.bang * noise() * 1.8f : 0.0f);
             c.pop *= 0.9965f;
 
             // exhaust: firing pulses, harmonics and pops ring the pipe resonances
@@ -237,7 +277,8 @@ void EngineSynth::render(float* out, int frames) {
                 const float v2 = c.fz2[k] + q.a2 * c.fz1[k] + q.a3 * v3;
                 c.fz1[k] = 2 * v1 - c.fz1[k];
                 c.fz2[k] = 2 * v2 - c.fz2[k];
-                formants += formantDefs[k].gain * v1;
+                // (the V8's top resonance is its scream: it opens up with throttle and revs)
+                formants += formantDefs[k].gain * (v8 && k == 2 ? 0.12f + 1.7f * thr * revs * revs : 1.0f) * v1;
             }
 
             // tailpipe low-pass: opens up a little with throttle and revs, never to a whine
@@ -275,10 +316,28 @@ void EngineSynth::render(float* out, int frames) {
             c.windLp += (n - c.windLp) * 0.04f;
             s += c.windLp * std::min(1.0f, c.speed * c.speed / 9000.0f) * 0.5f;
 
+            // the thump of a backfire, below everything the pipes colour
+            if (v8 && c.bang > 0) s += c.bang * std::sin(c.bangPh) * (0.55f + 0.2f * std::sin(c.bangPh * 0.5f));
             s *= c.gain;
             const float pl = std::sqrt(0.5f * (1 - c.pan)), pr = std::sqrt(0.5f * (1 + c.pan));
             left += s * pl;
             right += s * pr;
+        }
+        if (reverbMix_ > 0) {
+            // four damped combs on the mono mix, tapped with different signs for each ear
+            static const int len[4] = {1327, 1699, 2111, 2543};
+            if (comb_[0].empty())
+                for (int k = 0; k < 4; ++k) comb_[k].assign(len[k], 0.0f);
+            const float in = 0.5f * (left + right);
+            float o[4];
+            for (int k = 0; k < 4; ++k) {
+                o[k] = comb_[k][combIdx_[k]];
+                combLp_[k] += (o[k] - combLp_[k]) * 0.45f;
+                comb_[k][combIdx_[k]] = in + combLp_[k] * 0.66f;
+                if (++combIdx_[k] >= len[k]) combIdx_[k] = 0;
+            }
+            left += reverbMix_ * 0.25f * (o[0] - o[1] + o[2] - o[3]);
+            right += reverbMix_ * 0.25f * (o[0] + o[1] - o[2] - o[3]);
         }
         out[2 * f] = softClip(left * master_);
         out[2 * f + 1] = softClip(right * master_);

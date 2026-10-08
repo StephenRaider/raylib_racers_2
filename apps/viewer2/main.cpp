@@ -327,10 +327,12 @@ int main(int argc, char** argv) {
     // the sound: a 2013 V8, heard from the camera
     RaceAudio audio;
     audio.engine = EngineSynth::V8;
+    audio.setReverb(0.22f);
     audio.heightOf = [&](const rr::Car&) { return car.origin().y + 0.6f; };
     if (!wavPath.empty()) {
         // render the sound of a stretch of the race from behind the car to a WAV file, then stop
         EngineSynth synth;
+        synth.setReverb(0.22f);
         std::vector<float> pcm, buf;
         const int fps = 60, frames = EngineSynth::kRate / fps;
         buf.resize(2 * frames);

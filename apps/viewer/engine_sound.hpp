@@ -34,6 +34,8 @@ public:
     void render(float* out, int frames);
 
     static constexpr int kMaxVoices = 6;
+    // A small room/trackside reverb on the mix (0 = dry, the default).
+    void setReverb(float mix) { reverbMix_ = mix; }
 
 private:
     struct CarState {
@@ -47,6 +49,13 @@ private:
         float fz1[3] = {}, fz2[3] = {};       // exhaust formant filters (state-variable)
         float body = 0, body2 = 0, dcIn = 0, dcOut = 0;
         bool live = false;
+        // V8: per-cylinder strength, backfire (a bang is a low thump plus a crack that decays),
+        // the throttle lifts that start a volley of them, and a slow wobble in the revs
+        float cyl[8] = {1, 1, 1, 1, 1, 1, 1, 1};
+        float bang = 0, bangPh = 0, bangHz = 100, bangLevel = 1;
+        float thrSlow = 0, volleyClock = 0, jit = 0;
+        int volley = 0;
+        bool lifted = false;
     };
 
     std::mutex mutex_;
@@ -61,6 +70,10 @@ private:
     float master_ = 0, masterTarget_ = 0;
     CarState cars_[kMaxCars];
     unsigned rng_ = 0x1234567u;
+    float reverbMix_ = 0;
+    std::vector<float> comb_[4];
+    int combIdx_[4] = {0, 0, 0, 0};
+    float combLp_[4] = {0, 0, 0, 0};
 
     float noise();
 };

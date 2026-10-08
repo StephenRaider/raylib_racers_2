@@ -15,6 +15,7 @@ public:
     // Call once per frame. `active` is false in the menu, while paused or when muted.
     void update(const rr::Race& race, const Camera3D& camera, int focus, bool active, float dt);
     bool ready() const { return ready_; }
+    void setReverb(float mix) { synth_.setReverb(mix); }
     void setMaster(float m) { master_ = m; }  // viewer v2: volume, 1 = normal
 
     // The voices heard from `listener` (moving at `listenerVel`, `right` = its right
