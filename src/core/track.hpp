@@ -19,6 +19,7 @@ struct TrackSample {
     float z = 0;          // centreline height, m
     float bank = 0;       // road bank angle, rad, + = left edge raised
     float grade = 0;      // dz/ds, + = uphill in race direction
+    float vcurv = 0;      // d(grade)/ds, 1/m: + = compression, - = crest (smoothed over ~20 m)
 };
 
 // Where a point is relative to the track.
@@ -74,6 +75,8 @@ public:
     // Road surface height at track distance s and lateral offset (banking
     // included; beyond the tarmac edge the bank plane is simply extended).
     float heightAt(float s, float lateral = 0) const;
+    // The 3D shape at track distance s, interpolated: grade, bank (rad), vertical curvature.
+    void shapeAt(float s, float* grade, float* bank, float* vcurv) const;
     // True when any control point has a height or bank.
     bool is3D() const { return is3D_; }
 
@@ -132,6 +135,7 @@ private:
     bool is3D_ = false;
     std::vector<TrackSample> samples_;
     std::vector<RRTrackPoint> apiPoints_;
+    std::vector<RRTrackPoint3> apiPoints3_;
     RRTrackInfo info_{};
     std::vector<RRTurn> turns_;
     std::vector<int> turnOf_;

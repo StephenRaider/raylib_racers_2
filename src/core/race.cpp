@@ -361,6 +361,13 @@ void Race::computeSensors(Car& c) {
     s.wheel_spin = st.wheelSpin;
     s.damage = st.damage;
     s.dist_from_start = c.trackS;
+    {
+        float grade, bank;
+        track_.shapeAt(c.trackS, &grade, &bank, nullptr);
+        s.z = track_.heightAt(c.trackS, c.lateral);
+        s.grade = grade;
+        s.bank = bank;
+    }
     s.dist_raced = (float)c.distRaced;
     s.lap = c.currentLap(cfg_.laps);
     s.race_laps = cfg_.laps;
@@ -984,6 +991,18 @@ void Race::step() {
         surf.dragScale = 1.0f - c.draft;
         surf.downforceScale = 1.0f - c.dirtyAir;
         surf.frontDownforceScale = 1.0f - 0.5f * c.dirtyAir;  // the front loses more: the car pushes
+        if (track_.is3D()) {
+            // The road's slope in the car's frame: grade along the track, tan(bank) across it.
+            float grade, bank, vcurv;
+            track_.shapeAt(c.trackS, &grade, &bank, &vcurv);
+            Vec2 td = track_.dirAt(c.trackS), tn = perpLeft(td);
+            Vec2 grad = td * grade + tn * std::tan(bank);
+            Vec2 fwd = fromAngle(c.state.yaw), left = perpLeft(fwd);
+            surf.slopeX = dot(grad, fwd);
+            surf.slopeY = dot(grad, left);
+            surf.bankY = bank * dot(tn, left);
+            surf.vcurv = vcurv * dot(td, fwd) * dot(td, fwd);
+        }
         RRControl in = c.control;
         if (!c.dnf && (c.finished || over_)) {
             in = coolDownControl(c);

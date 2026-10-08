@@ -181,6 +181,11 @@ void Track::finalize() {
         samples_[i].n = perpLeft(samples_[i].t);
         samples_[i].grade = (at(i + 1).z - at(i - 1).z) / (2 * ds_);
     }
+    {
+        // vertical curvature over +-10 m: the 1 m samples are too noisy to difference directly
+        const int h = std::max(1, (int)std::lround(10.0f / ds_));
+        for (int i = 0; i < n; ++i) samples_[i].vcurv = (at(i + h).grade - at(i - h).grade) / (2 * h * ds_);
+    }
     std::vector<float> raw(n);
     for (int i = 0; i < n; ++i) {
         float a0 = std::atan2(at(i - 1).t.y, at(i - 1).t.x);
@@ -225,15 +230,18 @@ void Track::finalize() {
     }
 
     apiPoints_.resize(n);
+    apiPoints3_.resize(n);
     for (int i = 0; i < n; ++i) {
         const auto& s = samples_[i];
         apiPoints_[i] = {s.p.x, s.p.y, s.t.x, s.t.y, s.s, s.halfWidth, s.curvature};
+        apiPoints3_[i] = {s.z, s.bank, s.grade, s.vcurv};
     }
     info_.name = name_.c_str();
     info_.length = length_;
     info_.runoff = runoff_;
     info_.num_points = n;
     info_.points = apiPoints_.data();
+    info_.points3 = apiPoints3_.data();
     info_.pit = pitCfg_;
     if (info_.pit.has_pit) {
         auto wrapS = [&](float v) { v = std::fmod(v, length_); return v < 0 ? v + length_ : v; };
@@ -433,6 +441,18 @@ float Track::heightAt(float s, float lateral) const {
     float z = a.z + (b.z - a.z) * f;
     float bank = a.bank + (b.bank - a.bank) * f;
     return z + lateral * std::tan(bank);
+}
+
+void Track::shapeAt(float s, float* grade, float* bank, float* vcurv) const {
+    s = std::fmod(s, length_);
+    if (s < 0) s += length_;
+    int i = wrap((int)(s / ds_));
+    float f = (s - samples_[i].s) / ds_;
+    const auto& a = samples_[i];
+    const auto& b = at(i + 1);
+    if (grade) *grade = a.grade + (b.grade - a.grade) * f;
+    if (bank) *bank = a.bank + (b.bank - a.bank) * f;
+    if (vcurv) *vcurv = a.vcurv + (b.vcurv - a.vcurv) * f;
 }
 
 void Track::buildEdgeGrid() {

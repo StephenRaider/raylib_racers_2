@@ -177,7 +177,8 @@ static inline void rr_grip_guard(const RRSensors* in, RRControl* out, float* tc,
 /* How much of its usual stopping power the car has now (about 0.6 to 1):
  * cold discs bite less and overheated ones fade (brake_temp, ABI 7), and
  * tyres out of their window or cooking grip less (axle_grip against
- * tire_grip). Multiply a planned deceleration by it. 1 on older hosts. */
+ * tire_grip), and the grade underfoot (ABI 9). Multiply a planned deceleration
+ * by it. 1 on older hosts. */
 static inline float rr_stopping_factor(const RRSensors* in) {
     float f = 1.0f;
     if (in->brake_temp_window[1] > 0) {
@@ -203,6 +204,12 @@ static inline float rr_stopping_factor(const RRSensors* in) {
     if (in->tire_temp_window[1] > 0 && in->tire_grip > 0.3f) {
         float g = (in->axle_grip[0] < in->axle_grip[1] ? in->axle_grip[0] : in->axle_grip[1]) / in->tire_grip;
         f *= g < 0.8f ? 0.8f : g > 1.0f ? 1.0f : g;
+    }
+    /* Hills (ABI 9): gravity adds to the brakes uphill and fights them downhill,
+     * about g * grade against the 8 m/s^2 or so these robots plan for. */
+    {
+        float h = 1.0f + 9.81f * in->grade / 8.0f;
+        f *= h < 0.6f ? 0.6f : h > 1.3f ? 1.3f : h;
     }
     return f;
 }

@@ -237,7 +237,13 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     // Static weight and downforce per axle, longitudinal transfer between the
     // axles, lateral transfer between left and right split by roll stiffness.
     // ax/ay lag behind the real accelerations like a sprung car does.
-    const float fzAxle0[2] = {m * g * b / L, m * g * a / L};
+    // The road's shape changes the load: a compression presses the car into the
+    // road (v^2 k), a crest lifts it; on a banked turn the cornering force has a
+    // component into the road too.
+    const float roadLoad = clampf(std::cos(std::atan(std::sqrt(surf.slopeX * surf.slopeX + surf.slopeY * surf.slopeY))) +
+                                      (c.vx * c.vx * surf.vcurv - c.ay * std::sin(surf.bankY)) / g,
+                                  0.0f, 3.0f);
+    const float fzAxle0[2] = {m * g * b / L * roadLoad, m * g * a / L * roadLoad};
     // Tyre load sensitivity is measured against the dry car's static load, so
     // fuel weight costs grip as well as acceleration.
     const float fzRef[2] = {p.mass * g * b / L, p.mass * g * a / L};
@@ -383,7 +389,8 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     fx -= surf.extraDrag * c.vx;
     fy -= surf.extraDrag * c.vy;
 
-    const float axb = fx / m, ayb = fy / m;
+    // gravity along the road: uphill slows the car, a banked road pulls it to the low side
+    const float axb = fx / m - g * surf.slopeX, ayb = fy / m - g * surf.slopeY;
     c.vx += (axb + c.vy * c.yawRate) * dt;
     c.vy += (ayb - c.vx * c.yawRate) * dt;
     c.yawRate += mz / yawInertia * dt;

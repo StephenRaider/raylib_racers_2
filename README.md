@@ -232,7 +232,10 @@ sprung car. Each wheel has its own load-sensitive tyre (a magic-formula curve
 peaking around 6° of slip) and friction circle, so a lightly loaded inside
 rear spins first and the limited-slip diff hands some of its drive to the
 outside wheel. Downforce has a balance that moves forward under braking and
-fades when the car slides sideways. Robots see `grip_use` and `slip_angle`
+fades when the car slides sideways. On tracks with hills (Highmoor Ridge),
+gravity slows the car uphill and speeds it downhill, banking holds it into a
+turn and adds load, and the tyre load follows the road's vertical curvature:
+grip builds in a compression and drops over a crest. Robots see `grip_use` and `slip_angle`
 per axle, so under- and oversteer show up in telemetry
 (`--telemetry DIR` writes them per car).
 
@@ -311,8 +314,8 @@ Tracks are text files (`tracks/*.trk`): a name, a default width, the runoff to
 the barrier, an optional pit lane and a list of control points in race order,
 joined by a Catmull-Rom spline. A control point can carry its own width, a road
 height (`h=12`, metres) and a bank angle (`bank=6`, degrees, + raises the left
-edge), as in `p 120 40 14 h=12 bank=6` (use `-` for the default width). Height
-and bank only shape the 3D road for now; the race sim is still flat. The loader warns
+edge), as in `p 120 40 14 h=12 bank=6` (use `-` for the default width). The sim
+uses them for gravity, banking and crest loads (see Car physics). The loader warns
 when a corner is tighter than the track is wide or when the track overlaps
 itself.
 
@@ -378,7 +381,9 @@ assets/cars/f1_gearari/  F1 car: body and wheel glTF, car.json, liveries (see it
 
 ## Current limits and next steps
 
-- Flat tracks only (no elevation or banking), one car model.
+- Hills and banking are simulated (grade, bank, crests and compressions), but
+  `rr_viewer` still draws every track flat; `rr_trackview` shows the 3D track
+  without cars. One car model.
 - Overtaking between closely matched cars is still rare. `gapfollow` and
   `simple` never pit, so in long races they run out of fuel or tyres.
 - Possible next steps: a track editor, per-team car setups, parameter sweeps

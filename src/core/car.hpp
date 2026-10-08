@@ -135,6 +135,10 @@ struct Surface {
     float extraDrag = 0.0f; // N per m/s (grass)
     float dragScale = 1.0f; // < 1 in another car's slipstream
     float downforceScale = 1.0f, frontDownforceScale = 1.0f;  // < 1 in another car's dirty air
+    // The road's 3D shape under the car (0 on a flat track):
+    float slopeX = 0, slopeY = 0;  // height gained per metre along the car's x (forward) and y (left)
+    float bankY = 0;               // the road's roll about the car's x axis, rad (+ = left side higher)
+    float vcurv = 0;               // vertical curvature along the car's path, 1/m (+ = compression)
 };
 
 // Race-wide multipliers (command line) for consumables.

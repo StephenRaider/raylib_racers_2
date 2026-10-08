@@ -18,9 +18,9 @@
  *
  * Plain C99 so robots can be written in C, C++ or anything with a C FFI.
  *
- * Conventions: SI units (m, s, rad, kg). World frame is a flat x/y plane, yaw is
- * counter-clockwise from +x. Car body frame: x forward, y to the left.
- * Positive steering turns left.
+ * Conventions: SI units (m, s, rad, kg). World frame is an x/y plane seen from
+ * above (heights come separately, see RRTrackPoint3), yaw is counter-clockwise
+ * from +x. Car body frame: x forward, y to the left. Positive steering turns left.
  */
 #ifndef RR_ROBOT_API_H
 #define RR_ROBOT_API_H
@@ -29,9 +29,9 @@
 extern "C" {
 #endif
 
-#define RR_ABI_VERSION 8
-/* Robots built for ABI 2 to 7 still load: later versions only appended
- * fields to RRCarSpec, RRRobotConfig, RRSensors and RRControl. */
+#define RR_ABI_VERSION 9
+/* Robots built for ABI 2 to 8 still load: later versions only appended
+ * fields to RRTrackInfo, RRCarSpec, RRRobotConfig, RRSensors and RRControl. */
 #define RR_ABI_MIN_VERSION 2
 
 #define RR_NUM_TRACK_SENSORS 19
@@ -97,6 +97,22 @@ typedef struct RRTrackPoint {
     float curvature;     /* signed, 1/m, positive = turning left */
 } RRTrackPoint;
 
+/* The track's third dimension (ABI 9), one per RRTrackPoint (same index).
+ * Distances (s, curvature) stay measured in plan view. On a flat track every
+ * field is 0. What the car feels:
+ *   - grade: gravity pulls it back by g * grade uphill (pushes it on downhill);
+ *   - bank: a banked road holds it in a turn towards the low side, and pushes the
+ *     tyres into the road (more grip) in that turn;
+ *   - vert_curvature: v^2 * vert_curvature adds to g in the tyre load, so a
+ *     compression (+) gives more grip and a crest (-) less, none at all once
+ *     v^2 * -vert_curvature reaches g. */
+typedef struct RRTrackPoint3 {
+    float z;               /* road height on the centreline, m */
+    float bank;            /* rad, + = left edge higher; the road surface at lateral y is at z + y * tan(bank) */
+    float grade;           /* dz/ds, + = uphill in the race direction */
+    float vert_curvature;  /* d(grade)/ds, 1/m: + = compression (sag), - = crest */
+} RRTrackPoint3;
+
 /* The pit lane runs alongside the track on one side. Distances are along the
  * track centreline (s, may wrap past the start line); lateral offsets are
  * signed like track_pos (+ = left of the centreline), in metres.
@@ -137,6 +153,9 @@ typedef struct RRTrackInfo {
     /* --- ABI 8 --- */
     int num_turns;
     const RRTurn* turns;
+
+    /* --- ABI 9 --- */
+    const RRTrackPoint3* points3;  /* num_points entries, parallel to points */
 } RRTrackInfo;
 
 typedef struct RRCarSpec {
@@ -338,6 +357,11 @@ typedef struct RRSensors {
     int turn;                  /* id of the turn we are in (RRTurn.id), 0 on a straight */
     int next_turn;             /* id of the next turn ahead (the current one's successor when in a turn) */
     float next_turn_ds;        /* m along the track to next_turn's start */
+
+    /* --- ABI 9 --- the road under the car (see RRTrackPoint3) */
+    float z;                   /* road height, m */
+    float grade;               /* along the track, + = uphill */
+    float bank;                /* rad, + = left edge higher */
 } RRSensors;
 
 #define RR_BLUE_FLAG_RANGE 60.0f   /* m behind us (or 1.2 s, whichever is more) */

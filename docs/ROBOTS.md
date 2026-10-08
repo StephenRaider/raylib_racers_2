@@ -47,7 +47,7 @@ re-scans `bots/` by itself).
 
 | Call | When | Notes |
 |---|---|---|
-| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 8; the host also loads robots built for ABI 2 and later) |
+| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 9; the host also loads robots built for ABI 2 and later) |
 | `create(track, car, index, params, config)` | once per car | return your state, or `NULL` to refuse. Plan here: you get the full track geometry and car spec. |
 | `drive(self, sensors, control)` | every 1/robot-hz s | `control` arrives zeroed except `gear`. Fill it in. |
 | `destroy(self)` | end of race | free your state |
@@ -362,6 +362,19 @@ comparison.
 `RRTrackInfo` holds the centreline sampled about every metre: position,
 direction, distance from the start, half width and signed curvature. That is
 enough to plan a racing line (see `bots/racingline`).
+
+Tracks can have hills and banking (ABI 9). `points3` runs parallel to
+`points` with the road height `z`, the bank angle (`bank`, + = left edge
+higher), the `grade` (dz/ds) and its rate of change `vert_curvature`; all 0 on a
+flat track. Distances and curvature stay measured in plan view. The car feels
+three things: gravity pulls it back by `g * grade` uphill and pushes it on
+downhill (so braking distances change); a banked road holds it into a turn
+towards the low side and presses the tyres into the road; and the tyre load
+is `g + v² * vert_curvature`, so a compression gives grip and a crest takes it
+away, all of it once `v² * -vert_curvature` reaches `g`. `RRSensors` also
+gives `z`, `grade` and `bank` under the car. `racingline` folds all three into
+its speed plan (`cornerSpeed()`); `rr_stopping_factor()` in `bots/common`
+scales braking for the grade underfoot.
 
 `RRCarSpec` gives mass, dimensions, steering lock, tyre friction, aero
 coefficients (`drag = drag_coeff * v²`, `downforce = downforce_coeff * v²`),

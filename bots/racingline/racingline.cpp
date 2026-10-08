@@ -99,6 +99,7 @@ struct RacingLine {
     float ds, L;
     // track copy and plan (indexed like the track samples)
     std::vector<RRTrackPoint> tp;
+    std::vector<RRTrackPoint3> tp3;  // heights, banking, crests (all 0 on a flat track)
     std::vector<float> offset;   // lateral offset of the line, + = left
     std::vector<P2> line;
     std::vector<float> kappa;    // curvature of the line, 1/m
@@ -258,6 +259,34 @@ void planLine(RacingLine& r) {
     }
 }
 
+// The fastest speed through a point of curvature k (signed, + = left) with
+// friction mu and downforce D (per unit v^2) on a car of mass m, on a road
+// that may be banked, cresting or compressing (p3): the tyres must supply
+// v^2 k plus the pull of the bank, from a load of g plus the compression's
+// v^2 kv plus the cornering force pressed into the bank.
+float cornerSpeed(float k, float mu, float D, float m, const RRTrackPoint3& p3, float vCap) {
+    const float g = 9.81f;
+    if (p3.bank == 0 && p3.vert_curvature == 0) {
+        // m v^2 k = mu (m g + D v^2)  ->  v^2 = mu g / (k - mu D / m)
+        float den = std::fabs(k) - mu * D / m;
+        return den > 1e-6f ? std::min(vCap, std::sqrt(mu * g / den)) : vCap;
+    }
+    const float tb = std::tan(p3.bank), sb = std::sin(p3.bank);
+    auto ok = [&](float v) {
+        float v2 = v * v;
+        float need = std::fabs(v2 * k + g * tb);
+        float load = g * std::cos(std::atan(std::hypot(p3.grade, tb))) + v2 * p3.vert_curvature - v2 * k * sb + D * v2 / m;
+        return load > 0 && need <= mu * load;
+    };
+    if (ok(vCap)) return vCap;
+    float lo = 0, hi = vCap;
+    for (int it = 0; it < 24; ++it) {
+        float mid = 0.5f * (lo + hi);
+        (ok(mid) ? lo : hi) = mid;
+    }
+    return lo;
+}
+
 // Grip-limited speed for a given mass and tyre grip: lateral limit from
 // curvature, then a backward pass for braking.
 void planSpeed(RacingLine& r, float mass, float tyreGrip) {
@@ -271,9 +300,7 @@ void planSpeed(RacingLine& r, float mass, float tyreGrip) {
     r.speed.assign(n, vCap);
     for (int i = 0; i < n; ++i) {
         const float mu = mu0 * r.adj[r.binOf(i)];
-        // m v^2 k = mu (m g + D v^2)  ->  v^2 = mu g / (k - mu D / m)
-        float den = kappa[i] - mu * D / m;
-        if (den > 1e-6f) r.speed[i] = std::min(vCap, std::sqrt(mu * g / den));
+        r.speed[i] = cornerSpeed(r.kappaSigned[i], mu, D, m, r.tp3[i], vCap);
     }
     // Backward pass: v_i^2 <= v_{i+1}^2 + 2 a ds, a from the friction left over after cornering.
     for (int pass = 0; pass < 2; ++pass) {
@@ -281,11 +308,17 @@ void planSpeed(RacingLine& r, float mass, float tyreGrip) {
             int j = r.wrap(i + 1);
             const float mu = mu0 * r.adj[r.binOf(j)];
             float v = r.speed[j];
-            float normal = m * g + D * v * v;
-            float lat = m * v * v * kappa[j];
+            const RRTrackPoint3& p3 = r.tp3[j];
+            float normal = m * g + D * v * v, lat = m * v * v * kappa[j];
+            if (p3.bank != 0 || p3.vert_curvature != 0) {
+                // the road's shape moves the load and the pull of the bank (see cornerSpeed)
+                normal = std::max(0.0f, m * (g + v * v * p3.vert_curvature - v * v * r.kappaSigned[j] * std::sin(p3.bank)) + D * v * v);
+                lat = m * std::fabs(v * v * r.kappaSigned[j] + g * std::tan(p3.bank));
+            }
             float fLong = std::sqrt(std::max(0.0f, mu * mu * normal * normal - lat * lat));
             fLong = std::min(fLong, r.car.max_brake_force * r.brakePlanned);  // cold or faded discs give less
-            float a = (fLong * r.brakeScale + drag * v * v) / m;
+            // braking uphill gravity helps, downhill it fights the brakes
+            float a = (fLong * r.brakeScale + drag * v * v) / m + g * p3.grade;
             float vMax = std::sqrt(v * v + 2 * a * r.ds);
             r.speed[i] = std::min(r.speed[i], vMax);
         }
@@ -458,6 +491,8 @@ void* create(const RRTrackInfo* track, const RRCarSpec* car, int index, const ch
     r->car = *car;
     r->pit = track->pit;
     r->tp.assign(track->points, track->points + track->num_points);
+    if (track->points3) r->tp3.assign(track->points3, track->points3 + track->num_points);
+    else r->tp3.assign(track->num_points, RRTrackPoint3{});
     r->L = track->length;
     r->ds = track->length / track->num_points;
     r->adj.assign((size_t)std::ceil(r->L / RacingLine::kBin), 1.0f);
@@ -863,10 +898,11 @@ float offLineSpeed(const RacingLine& r, int idx, float lat, float mass, float ty
     for (int k = 0; k < steps; k += 2) {
         const RRTrackPoint& p = r.tp[r.wrap(idx + k)];
         float c = p.curvature;
-        float k2 = std::fabs(c / std::max(0.2f, 1.0f - c * lat));
-        float den = k2 - mu * D / mass;
-        if (den <= 1e-6f) continue;
-        float vc = std::sqrt(mu * g / den);
+        float k2 = c / std::max(0.2f, 1.0f - c * lat);
+        const RRTrackPoint3& p3 = r.tp3[r.wrap(idx + k)];
+        float vc = cornerSpeed(k2, mu, D, mass, p3, 1e4f);
+        if (vc >= 1e4f) continue;
+        (void)g;
         best = std::min(best, std::sqrt(vc * vc + 2 * decel * k * r.ds));
     }
     return best;
