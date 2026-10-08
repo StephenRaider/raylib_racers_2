@@ -24,6 +24,7 @@ public:
         float speed = 0;       // m/s, for wind and tyre noise
         float maxRpm = 19000;
         Engine engine = V10;
+        int gear = 0;          // current gear, for shift effects (V8)
         float gain = 0;        // distance attenuation, 0..1
         float pan = 0;         // -1 left .. 1 right
         float pitch = 1;       // Doppler factor
@@ -61,6 +62,8 @@ private:
         // each cylinder's exhaust blowdown pulse reaches the collector after its own pipe length
         float pendT[8] = {}, pendG[8] = {};
         float irLp[3] = {};
+        int gearPrev = 0;
+        float cutLeft = 0, blipLeft = 0;  // ignition cut after an upshift, throttle blip on a downshift
         float pulseSlow = 0;  // the slow, negative scavenging tail of a pulse
         std::shared_ptr<struct IrConvolver> conv;  // this car's running convolution with the exhaust response
         int volley = 0;

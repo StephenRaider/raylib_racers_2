@@ -271,6 +271,22 @@ void EngineSynth::render(float* out, int frames) {
                 c.speed += (v->speed - c.speed) * kGain;
                 c.maxRpm = v->maxRpm;
                 c.engine = v->engine;
+                if (v->engine == V8 && v->gear > 0) {
+                    // gear changes: a short ignition cut on the way up (a tiny crack as it comes
+                    // back) and a throttle blip on the way down. Kept subtle.
+                    if (c.gearPrev > 0 && v->gear != c.gearPrev) {
+                        if (v->gear > c.gearPrev) {
+                            c.cutLeft = 0.045f;
+                            if (c.bang < 0.1f && noise() > -0.2f) {
+                                c.bang = 0.12f;
+                                c.bangHz = 95.0f;
+                            }
+                        } else {
+                            c.blipLeft = 0.14f;
+                        }
+                    }
+                    c.gearPrev = v->gear;
+                }
             }
             const bool v8 = c.engine == V8;
             const OrderTable& table = v8 ? kTable8 : kTable10;
@@ -287,7 +303,9 @@ void EngineSynth::render(float* out, int frames) {
             c.phase += cycleHz * dt;
             c.phase -= std::floor(c.phase);
             const float th = kTwoPi * (float)c.phase;
-            const float thr = c.throttle;
+            c.cutLeft = std::max(0.0f, c.cutLeft - dt);
+            c.blipLeft = std::max(0.0f, c.blipLeft - dt);
+            const float thr = c.blipLeft > 0 ? std::max(c.throttle, 0.45f) : c.throttle;
             const float revs = std::min(1.0f, c.rpm / c.maxRpm);
 
             // Firing pulses: ten per cycle, each a little stronger or weaker than the last,
@@ -434,7 +452,7 @@ void EngineSynth::render(float* out, int frames) {
                 c.limiter = 1.0f;
             }
 
-            const float level = (0.3f + 0.7f * thr) * (0.5f + 0.5f * revs) * c.limiter;
+            const float level = (0.3f + 0.7f * thr) * (0.5f + 0.5f * revs) * c.limiter * (c.cutLeft > 0 ? 0.45f : 1.0f);
             // asymmetric saturation: dirtier the harder it is driven
             // (the V8 is driven much less: hard saturation reads as a blown speaker)
             float s = v8 ? drive(sig * 0.9f * level, 0.25f + 0.25f * thr) : drive(sig * 2.0f * level, 1.5f + 2.5f * thr);

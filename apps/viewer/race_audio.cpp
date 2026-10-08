@@ -72,6 +72,7 @@ std::vector<EngineSynth::Voice> RaceAudio::listen(const rr::Race& race, Vector3 
         v.car = n.car;
         v.rpm = c.state.rpm;
         v.engine = engine;
+        v.gear = c.state.gear;
         v.throttle = c.state.fuel > 0 ? std::clamp(c.control.accel, 0.0f, 1.0f) : 0.0f;
         v.speed = rr::length(c.state.velWorld());
         v.maxRpm = c.phys.maxRpm;
