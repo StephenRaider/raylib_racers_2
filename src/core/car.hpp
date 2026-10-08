@@ -91,6 +91,13 @@ struct CarParams {
     // how long this team's pit crew takes.
     float torqueScale = 1.0f;
     float pitServiceScale = 1.0f;
+    // Engine: 0 the 2000s 3.0 l V10 (19,000 rpm), 1 the 2013 2.4 l V8 (18,000 rpm, 560 kW).
+    float engineV8 = 0.0f;
+    // Prepared for 2013's energy recovery and drag reduction; the simulation does not use
+    // them yet. kersPower W and kersEnergy J per lap (a boost of 60 kW for 6.67 s), and what
+    // the open DRS flap does to the drag and downforce coefficients.
+    float kersPower = 0.0f, kersEnergy = 0.0f;
+    float drsDragScale = 1.0f, drsDownforceScale = 1.0f;
 
     float wheelbase() const { return cgToFront + cgToRear; }
     float engineTorque(float rpm) const;  // N m at full throttle

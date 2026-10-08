@@ -1,7 +1,7 @@
 // rr_viewer2: Raylib Racers 2's race viewer on the new renderer. For now one car on one
 // track: John Fone (the racingline robot) driving a 2013 car round Highmoor Ridge.
 //
-//   rr_viewer2 [--track highmoor] [--car f1_2013_02] [--robot racingline] [--laps 30]
+//   rr_viewer2 [--track highmoor] [--car f1_2013_02] [--spec f1_2013] [--robot racingline] [--laps 30]
 //              [--sky NAME] [--cam 1-6] [--msaa 1|2|4] [--vsync] [--shots DIR] [--bench]
 //              [--exhaust-ir FILE.wav] [--no-sound] [--wav FILE [--wav-start SECONDS] [--wav-length SECONDS]]
 //
@@ -165,7 +165,7 @@ void panel(int x, int y, int w, int h) { DrawRectangle(x, y, w, h, Color{10, 12,
 
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    std::string trackName = "highmoor", carId = "f1_2013_02", robot = "racingline", skyName = "kloofendal_partly_cloudy";
+    std::string carSpec = "f1_2013", trackName = "highmoor", carId = "f1_2013_02", robot = "racingline", skyName = "kloofendal_partly_cloudy";
     std::string shotsDir;
     int width = 1600, height = 900, laps = 30, msaa = 4, startCam = 1;
     bool vsync = false, bench = false, sound = true;
@@ -177,6 +177,7 @@ int main(int argc, char** argv) {
         if (a == "--track") trackName = next();
         else if (a == "--car") carId = next();
         else if (a == "--robot") robot = next();
+        else if (a == "--spec") carSpec = next();
         else if (a == "--laps") laps = std::max(1, std::atoi(next().c_str()));
         else if (a == "--sky") skyName = next();
         else if (a == "--cam") startCam = std::atoi(next().c_str());
@@ -214,6 +215,7 @@ int main(int argc, char** argv) {
     rr::EntrySpec e;
     e.robot = robot;
     e.name = "John Fone";
+    e.spec = carSpec;
     cfg.entries.push_back(e);
     rr::Race race;
     std::string err;

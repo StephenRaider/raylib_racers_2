@@ -7,9 +7,16 @@ namespace rr {
 float CarParams::engineTorque(float rpm) const {
     // Piecewise-linear full-throttle torque curve.
     // A 3-litre V10 of the mid-2000s: ~350 N m, ~660 kW at 18,500 rpm.
-    static const float pts[][2] = {{0, 150},     {4000, 220},  {8000, 290},  {12000, 330},
+    static const float v10[][2] = {{0, 150},     {4000, 220},  {8000, 290},  {12000, 330},
                                    {16000, 352}, {18500, 340}, {19000, 300}, {19400, 0}};
-    const int n = sizeof(pts) / sizeof(pts[0]);
+    // A 2013 2.4 l V8 (~750 hp): a wide, flat curve of 270-305 N m, 560 kW at 18,000 rpm, then
+    // the rev limiter at 18,200.
+    static const float v8[][2] = {{0, 140},      {4000, 175},  {6000, 215},  {8000, 255},   {10000, 275},
+                                  {12000, 290},  {14000, 300}, {16000, 305}, {17500, 300},  {18000, 297},
+                                  {18200, 250},  {18400, 0}};
+    const bool eight = engineV8 > 0.5f;
+    const float(*pts)[2] = eight ? v8 : v10;
+    const int n = eight ? (int)(sizeof(v8) / sizeof(v8[0])) : (int)(sizeof(v10) / sizeof(v10[0]));
     if (rpm <= pts[0][0]) return pts[0][1];
     for (int i = 1; i < n; ++i) {
         if (rpm <= pts[i][0]) {
@@ -38,7 +45,7 @@ const CarParams::Field* CarParams::fields(int* count) {
         F(fuelPerJoule), F(wearPerJoule), F(tireHeatCap), F(tireSlideHeat), F(tireLonHeat), F(tireRollHeat),
         F(tireCoolBase), F(tireCoolSpeed), F(blanketTemp), F(brakeHeatCap), F(brakeCoolBase), F(brakeCoolSpeed),
         F(brakeToRim), F(rimHeatCap), F(rimCoolBase), F(rimCoolSpeed), F(rimToTyre), F(brakeTempLo), F(brakeTempHi), F(maxAeroLoss), F(damageForMaxLoss), F(maxDragGain), F(maxPowerLoss), F(maxGripLoss), F(torqueScale),
-        F(pitServiceScale),
+        F(pitServiceScale), F(engineV8), F(kersPower), F(kersEnergy), F(drsDragScale), F(drsDownforceScale),
     };
 #undef F
     *count = (int)(sizeof f / sizeof f[0]);

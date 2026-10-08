@@ -366,7 +366,8 @@ laptop GPU.
 
 ### Viewer v2
 
-`rr_viewer2` is the race viewer on the new renderer. For now it runs one car on one
+`rr_viewer2` is the race viewer on the new renderer. It drives the 2013 car spec (`specs/f1_2013.json`: 642 kg, a 2.4 l V8 with 560 kW at 18,000 rpm,
+about 3 g of downforce at 300 km/h; KERS and DRS values are in the file but not simulated yet), set with `--spec`. For now it runs one car on one
 track: John Fone (the `racingline` robot, which plans for hills and banking) in the 2013
 Mercedes on Highmoor Ridge. The front wheels steer, the body rolls, pitches and squats on
 its springs, the paint has a metallic base under a clear coat, and the car casts a contact
