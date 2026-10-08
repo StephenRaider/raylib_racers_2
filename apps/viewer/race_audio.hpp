@@ -16,6 +16,7 @@ public:
     void update(const rr::Race& race, const Camera3D& camera, int focus, bool active, float dt);
     bool ready() const { return ready_; }
     void setReverb(float mix) { synth_.setReverb(mix); }
+    void setExhaustImpulse(const std::vector<float>& ir, float gain) { synth_.setExhaustImpulse(ir, gain); }
     void setMaster(float m) { master_ = m; }  // viewer v2: volume, 1 = normal
 
     // The voices heard from `listener` (moving at `listenerVel`, `right` = its right

@@ -3,7 +3,7 @@
 //
 //   rr_viewer2 [--track highmoor] [--car f1_2013_02] [--robot racingline] [--laps 30]
 //              [--sky NAME] [--cam 1-6] [--msaa 1|2|4] [--vsync] [--shots DIR] [--bench]
-//              [--no-sound] [--wav FILE [--wav-start SECONDS] [--wav-length SECONDS]]
+//              [--exhaust-ir FILE.wav] [--no-sound] [--wav FILE [--wav-start SECONDS] [--wav-length SECONDS]]
 //
 // Keys: 1 chase, 2 T-cam, 3 nose, 4 TV, 5 helicopter, 6 orbit (drag to turn, wheel to zoom),
 // C next camera; Space pauses; [ ] slower / faster; M mutes, - and = change the volume;
@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
     std::string shotsDir;
     int width = 1600, height = 900, laps = 30, msaa = 4, startCam = 1;
     bool vsync = false, bench = false, sound = true;
-    std::string wavPath;
+    std::string wavPath, irPath;
     float wavStart = 0, wavLength = 20;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -187,6 +187,7 @@ int main(int argc, char** argv) {
         else if (a == "--shots") shotsDir = next();
         else if (a == "--bench") bench = true;
         else if (a == "--no-sound") sound = false;
+        else if (a == "--exhaust-ir") irPath = next();
         else if (a == "--wav") wavPath = next();
         else if (a == "--wav-start") wavStart = (float)std::atof(next().c_str());
         else if (a == "--wav-length") wavLength = (float)std::atof(next().c_str());
@@ -328,11 +329,34 @@ int main(int argc, char** argv) {
     RaceAudio audio;
     audio.engine = EngineSynth::V8;
     audio.setReverb(0.22f);
+    // an exhaust impulse response, if there is one (assets/sound/exhaust_f1v10.wav or --exhaust-ir)
+    std::vector<float> exhaustIr;
+    {
+        std::string p = irPath.empty() ? assets + "/sound/exhaust_f1v10.wav" : irPath;
+        if (fs::exists(p)) {
+            Wave wv = LoadWave(p.c_str());
+            if (wv.frameCount > 0 && wv.sampleRate == 44100) {
+                WaveFormat(&wv, 44100, 32, 1);
+                const float* fp = (const float*)wv.data;
+                const int n = std::min<int>((int)wv.frameCount, 44100 * 5 / 10);  // the first half second
+                exhaustIr.assign(fp, fp + n);
+                float e = 0;
+                for (float v : exhaustIr) e += v * v;
+                const float norm = e > 0 ? 1.0f / std::sqrt(e) : 1.0f;
+                for (float& v : exhaustIr) v *= norm;  // unit energy: the gain below sets the level
+                for (int i = n * 3 / 4; i < n; ++i) exhaustIr[i] *= 1.0f - (float)(i - n * 3 / 4) / (n - n * 3 / 4);
+            }
+            UnloadWave(wv);
+        }
+    }
+    const float kExhaustGain = 4.2f;
+    audio.setExhaustImpulse(exhaustIr, kExhaustGain);
     audio.heightOf = [&](const rr::Car&) { return car.origin().y + 0.6f; };
     if (!wavPath.empty()) {
         // render the sound of a stretch of the race from behind the car to a WAV file, then stop
         EngineSynth synth;
         synth.setReverb(0.22f);
+        synth.setExhaustImpulse(exhaustIr, kExhaustGain);
         std::vector<float> pcm, buf;
         const int fps = 60, frames = EngineSynth::kRate / fps;
         buf.resize(2 * frames);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <complex>
 #include <cstdio>
 
 namespace {
@@ -103,6 +104,102 @@ const SvfTable kSvf10(kFormants10), kSvf8(kFormants8);
 constexpr float kOutGain = 2.4f;
 
 }  // namespace
+
+// ---------------------------------------------------------------- exhaust convolution
+
+namespace {
+
+// In-place radix-2 complex FFT; sign -1 forward, +1 inverse (unscaled).
+void fft(std::vector<std::complex<float>>& a, int sign) {
+    const int n = (int)a.size();
+    for (int i = 1, j = 0; i < n; ++i) {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) std::swap(a[i], a[j]);
+    }
+    for (int len = 2; len <= n; len <<= 1) {
+        const float ang = sign * kTwoPi / len;
+        const std::complex<float> wl(std::cos(ang), std::sin(ang));
+        for (int i = 0; i < n; i += len) {
+            std::complex<float> w(1, 0);
+            for (int k = 0; k < len / 2; ++k) {
+                const std::complex<float> u = a[i + k], v = a[i + k + len / 2] * w;
+                a[i + k] = u + v;
+                a[i + k + len / 2] = u - v;
+                w *= wl;
+            }
+        }
+    }
+}
+
+constexpr int kBlock = 256;  // convolution block: 5.8 ms of latency
+
+}  // namespace
+
+// The impulse response cut into kBlock-sample partitions and transformed once.
+struct ExhaustIr {
+    int parts = 0;
+    std::vector<std::vector<std::complex<float>>> spec;  // [part][2 * kBlock]
+};
+
+// One voice's streaming convolution: uniform-partition overlap-save.
+struct IrConvolver {
+    std::shared_ptr<ExhaustIr> ir;
+    std::vector<std::vector<std::complex<float>>> history;  // input spectra (ring, newest at head)
+    std::vector<std::complex<float>> frame, acc;
+    float prev[kBlock] = {}, cur[kBlock] = {}, out[kBlock] = {};
+    int pos = 0, head = 0;
+
+    explicit IrConvolver(std::shared_ptr<ExhaustIr> r) : ir(std::move(r)) {
+        history.assign(ir->parts, std::vector<std::complex<float>>(2 * kBlock));
+        frame.resize(2 * kBlock);
+        acc.resize(2 * kBlock);
+    }
+    float process(float x) {
+        const float y = out[pos];
+        cur[pos] = x;
+        if (++pos == kBlock) {
+            pos = 0;
+            for (int i = 0; i < kBlock; ++i) frame[i] = prev[i], frame[kBlock + i] = cur[i];
+            fft(frame, -1);
+            head = (head + ir->parts - 1) % ir->parts;
+            history[head] = frame;
+            std::fill(acc.begin(), acc.end(), std::complex<float>(0, 0));
+            for (int p = 0; p < ir->parts; ++p) {
+                const auto& h = history[(head + p) % ir->parts];
+                const auto& s = ir->spec[p];
+                for (int k = 0; k < 2 * kBlock; ++k) acc[k] += h[k] * s[k];
+            }
+            fft(acc, +1);
+            for (int i = 0; i < kBlock; ++i) {
+                out[i] = acc[kBlock + i].real() / (2 * kBlock);
+                prev[i] = cur[i];
+            }
+        }
+        return y;
+    }
+};
+
+void EngineSynth::setExhaustImpulse(const std::vector<float>& ir, float gain) {
+    if (ir.empty()) {
+        ir_.reset();
+        return;
+    }
+    auto r = std::make_shared<ExhaustIr>();
+    r->parts = ((int)ir.size() + kBlock - 1) / kBlock;
+    r->spec.assign(r->parts, std::vector<std::complex<float>>(2 * kBlock));
+    for (int p = 0; p < r->parts; ++p) {
+        std::vector<std::complex<float>>& s = r->spec[p];
+        for (int i = 0; i < kBlock; ++i) {
+            const int idx = p * kBlock + i;
+            s[i] = idx < (int)ir.size() ? ir[idx] : 0.0f;
+        }
+        fft(s, -1);
+    }
+    ir_ = std::move(r);
+    irGain_ = gain;
+}
 
 float EngineSynth::noise() {
     rng_ ^= rng_ << 13;
@@ -298,6 +395,13 @@ void EngineSynth::render(float* out, int frames) {
                 formants += formantDefs[k].gain * (v8 && k == 2 ? 0.12f + 1.7f * thr * revs * revs : 1.0f) * v1;
             }
 
+            // the exhaust's recorded response: the pulses ring through it
+            float convOut = 0;
+            if (v8 && ir_) {
+                if (!c.conv) c.conv = std::make_shared<IrConvolver>(ir_);
+                convOut = c.conv->process(exc) * irGain_;
+            }
+
             // tailpipe low-pass: opens up a little with throttle and revs, never to a whine
             const float fc = 900.0f + 4200.0f * thr * revs;
             const float a = 1 - std::exp(-kTwoPi * fc * dt);
@@ -310,6 +414,7 @@ void EngineSynth::render(float* out, int frames) {
             const float bodyAmt = thr * (1.25f - 0.85f * revs) * (v8 ? 1.4f : 1.0f);
 
             float sig = 0.55f * c.lp2 + 0.12f * eng + 0.75f * formants + bodyAmt * c.body2;
+            if (v8 && ir_) sig = 0.30f * c.lp2 + 0.10f * eng + 0.25f * formants + bodyAmt * c.body2 + convOut;
             sig += (c.noiseLp - c.noiseHp) * (0.03f + 0.10f * thr) * revs;
             sig += popSig * 0.25f;  // a bit of raw crackle on top
 

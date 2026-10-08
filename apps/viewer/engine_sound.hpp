@@ -1,4 +1,5 @@
 #pragma once
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -34,6 +35,9 @@ public:
     void render(float* out, int frames);
 
     static constexpr int kMaxVoices = 6;
+    // An exhaust impulse response (mono, kRate): the V8's firing pulses are convolved with it,
+    // as engine-sim does, in place of the built-in pipe resonances. Call before any voice starts.
+    void setExhaustImpulse(const std::vector<float>& ir, float gain = 1.0f);
     // A small room/trackside reverb on the mix (0 = dry, the default).
     void setReverb(float mix) { reverbMix_ = mix; }
 
@@ -57,6 +61,7 @@ private:
         // each cylinder's exhaust blowdown pulse reaches the collector after its own pipe length
         float pendT[8] = {}, pendG[8] = {};
         float pulseSlow = 0;  // the slow, negative scavenging tail of a pulse
+        std::shared_ptr<struct IrConvolver> conv;  // this car's running convolution with the exhaust response
         int volley = 0;
         bool lifted = false;
     };
@@ -74,6 +79,8 @@ private:
     CarState cars_[kMaxCars];
     unsigned rng_ = 0x1234567u;
     float reverbMix_ = 0;
+    std::shared_ptr<struct ExhaustIr> ir_;  // partitioned spectrum of the exhaust response
+    float irGain_ = 1.0f;
     std::vector<float> comb_[4];
     int combIdx_[4] = {0, 0, 0, 0};
     float combLp_[4] = {0, 0, 0, 0};
