@@ -451,7 +451,15 @@ void TrackScene::buildRoad(unsigned seed) {
         for (int i = 0; i <= n; ++i) {
             const auto& a = tr.at(i);
             if (!tr.inPitArea(sAt(i))) { ap.cut(); continue; }
-            float in = side * (a.halfWidth + 1.25f), out = side * (a.halfWidth + rr::Track::kPitBarrier);
+            // joined to the tarmac edge, widening smoothly from the track at the pit entry to the
+            // full lane, and narrowing back onto the track at the exit
+            const float L = tr.length(), s = sAt(i);
+            auto fwd = [&](float a0, float b0) { float d = std::fmod(b0 - a0 + 2 * L, L); return d; };
+            const RRPitInfo& pi = tr.pit();
+            float grow = std::min(fwd(pi.entry_s, s) / std::max(1.0f, fwd(pi.entry_s, pi.lane_start_s)),
+                                  fwd(s, pi.exit_s) / std::max(1.0f, fwd(pi.lane_end_s, pi.exit_s)));
+            grow = smoothstepf(0.0f, 1.0f, std::min(grow, 1.0f));
+            float in = side * a.halfWidth, out = side * (a.halfWidth + 0.6f + (rr::Track::kPitBarrier - 0.6f) * grow);
             std::vector<Vertex> r = {vert(P(i, in, 0.0f), {0, 1, 0}, {in, sAt(i)}), vert(P(i, out, 0.0f), {0, 1, 0}, {out, sAt(i)})};
             if (side < 0) std::swap(r[0], r[1]);
             ap.ring(r);
@@ -1204,7 +1212,7 @@ void TrackScene::buildProps(const std::string& assetsDir) {
         // The pit straight slopes: each bay sits on its own ground (the lowest corner of
         // its footprint), so the building steps down the hill with deep foundations.
         auto bayGround = [&](float a, float e) {
-            return std::min({ground(a, F), ground(e, F), ground(a, F + D), ground(e, F + D)}) + 0.02f;
+            return std::max({ground(a, F), ground(e, F), ground(a, F + D), ground(e, F + D)}) + 0.04f;
         };
         for (int b = 0; b < bays; ++b) {
             float a = s0 + b * bay, e = a + bay;
