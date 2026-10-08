@@ -207,12 +207,12 @@ void Hud::drawGridCard(const MenuState& m, std::vector<MenuHit>& hits, Rectangle
     const float lw = r.width - 40;
     const float cw = 190;  // control width
     int row = m.rowOf(Row::Teams);
-    field(r.x + 20, y + 4, lw - cw - 10, "Teams", m.teamSlots.empty() ? "" : "each with its own stats", m.row == row);
+    field(r.x + 20, y + 4, lw - cw - 10, "Teams", m.teamSlots.empty() || m.rr2 ? "" : "each with its own stats", m.row == row);
     std::snprintf(buf, sizeof buf, "%d", m.teamSlots.empty() ? m.cars : m.teams);
     stepper({r.x + r.width - 20 - cw, y, cw, 42}, buf, m.row == row, row, hits);
     y += 58;
     row = m.rowOf(Row::Drivers);
-    field(r.x + 20, y + 4, lw - cw - 10, "Drivers per team", m.drivers == 2 ? "teammates share stats" : "one car each",
+    field(r.x + 20, y + 4, lw - cw - 10, "Drivers per team", m.rr2 ? "" : m.drivers == 2 ? "teammates share stats" : "one car each",
           m.row == row);
     segmented({r.x + r.width - 20 - cw, y, cw, 42}, {"1", "2"}, m.drivers - 1, m.row == row, row, hits);
     y += 62;
@@ -243,9 +243,9 @@ void Hud::drawGridCard(const MenuState& m, std::vector<MenuHit>& hits, Rectangle
     // buttons
     const float by = r.y + r.height - 116, bw = (lw - 12) / 2;
     row = m.rowOf(Row::Grid);
-    button({r.x + 20, by, bw, 44}, "Edit grid", 1, m.row == row, row, hits);
+    button({r.x + 20, by, m.rr2 ? lw : bw, 44}, "Edit grid", 1, m.row == row, row, hits);
     row = m.rowOf(Row::Stats);
-    button({r.x + 32 + bw, by, bw, 44}, "Team stats", 1, m.row == row, row, hits);
+    if (row >= 0) button({r.x + 32 + bw, by, bw, 44}, "Team stats", 1, m.row == row, row, hits);
     row = m.rowOf(Row::SaveLineup);
     button({r.x + 20, by + 56, bw, 40}, "Save lineup", 2, m.row == row, row, hits);
     row = m.rowOf(Row::LoadLineup);
@@ -267,23 +267,29 @@ void Hud::drawRaceSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectangl
     const int mins = (int)std::lround(m.laps * ts.lapTime / 60.0f);
     const float tank = m.lapsPerTank();
     const int stops = (int)std::ceil(m.laps / tank - 1e-3f) - 1;
-    std::snprintf(note, sizeof note, "about %d min, %s", std::max(1, mins),
-                  stops <= 0 ? "no fuel stop" : stops == 1 ? "1 fuel stop" : (std::to_string(stops) + " fuel stops").c_str());
+    if (m.rr2)
+        std::snprintf(note, sizeof note, "%s%.0f km, about %d min, no refuelling", row < 0 ? "grand prix: " : "",
+                      m.laps * ts.length / 1000.0f, std::max(1, mins));
+    else
+        std::snprintf(note, sizeof note, "about %d min, %s", std::max(1, mins),
+                      stops <= 0 ? "no fuel stop" : stops == 1 ? "1 fuel stop" : (std::to_string(stops) + " fuel stops").c_str());
     field(r.x + 20, y + 2, lw, "Race length", note, m.row == row);
     std::snprintf(val, sizeof val, "%d lap%s", m.laps, m.laps == 1 ? "" : "s");
-    stepper({r.x + r.width - 20 - ctl, y, ctl, 44}, val, m.row == row, row, hits);
+    if (row >= 0) stepper({r.x + r.width - 20 - ctl, y, ctl, 44}, val, m.row == row, row, hits);
+    else textRight(val, r.x + r.width - 24, y + 10, 22, kText, true);
     y += 70;
     row = m.rowOf(Row::TyreLife);
-    const int life = MenuState::kTyreLives[m.tyreLife];
+    const float life = m.tyreLifeLaps();
     if (life == 0) std::snprintf(note, sizeof note, "tyres never wear out");
     else
         std::snprintf(note, sizeof note, "soft %d, medium %d, hard %d laps",
-                      std::max(1, (int)std::lround(life / rr::compoundWear(RR_TIRE_SOFT))), life,
+                      std::max(1, (int)std::lround(life / rr::compoundWear(RR_TIRE_SOFT))), (int)std::lround(life),
                       (int)std::lround(life / rr::compoundWear(RR_TIRE_HARD)));
-    field(r.x + 20, y + 2, lw, "Tyre life", note, m.row == row);
+    field(r.x + 20, y + 2, lw, row < 0 ? "Tyres" : "Tyre life", note, m.row == row);
     if (life == 0) std::snprintf(val, sizeof val, "no wear");
-    else std::snprintf(val, sizeof val, "%d laps", life);
-    stepper({r.x + r.width - 20 - ctl, y, ctl, 44}, val, m.row == row, row, hits);
+    else std::snprintf(val, sizeof val, "%.0f laps", life);
+    if (row >= 0) stepper({r.x + r.width - 20 - ctl, y, ctl, 44}, val, m.row == row, row, hits);
+    else textRight("2013 Pirelli", r.x + r.width - 24, y + 12, 17, kText, true);
     y += 70;
     row = m.rowOf(Row::TyreRule);
     field(r.x + 20, y, r.width - 40, "Tyre rule",
@@ -431,7 +437,8 @@ void Hud::drawChampSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectang
     else note[0] = 0;
     field(rr2.x + 20, y + 2, lw, "Race distance", note, m.row == row);
     std::snprintf(buf, sizeof buf, "%.0f km", m.champDistance());
-    stepper({rr2.x + rr2.width - 20 - ctl, y, ctl, 42}, buf, m.row == row, row, hits);
+    if (row >= 0) stepper({rr2.x + rr2.width - 20 - ctl, y, ctl, 42}, buf, m.row == row, row, hits);
+    else textRight(buf, rr2.x + rr2.width - 24, y + 10, 20, kText, true);
     y += 56;
     row = m.rowOf(Row::ChampWear);
     float slo = 1e9f, shi = 0;
@@ -445,7 +452,8 @@ void Hud::drawChampSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectang
     field(rr2.x + 20, y + 2, lw, "Tyre wear", note, m.row == row);
     if (m.champWearRate() <= 0) std::snprintf(buf, sizeof buf, "off");
     else std::snprintf(buf, sizeof buf, "%gx", m.champWearRate());
-    stepper({rr2.x + rr2.width - 20 - ctl, y, ctl, 42}, buf, m.row == row, row, hits);
+    if (row >= 0) stepper({rr2.x + rr2.width - 20 - ctl, y, ctl, 42}, buf, m.row == row, row, hits);
+    else textRight("2013 Pirelli", rr2.x + rr2.width - 24, y + 10, 17, kText, true);
     y += 56;
     row = m.rowOf(Row::TyreRule);
     field(rr2.x + 20, y + 10, lw - 60, "Tyre rule", "", m.row == row);
@@ -512,13 +520,15 @@ void Hud::drawTestSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectangl
     dropdown({r.x + r.width - 20 - ctl - 40, y, ctl + 40, 44}, al ? al->label.c_str() : "?", m.row == row, row, hits);
     y += 58;
     row = m.rowOf(Row::TestLivery);
-    const auto& table = liveryTable();
-    const int slot = m.testLivery;
-    if (slot < (int)table.size()) std::snprintf(val, sizeof val, "#%d  %s", table[slot].number, table[slot].team.c_str());
-    else std::snprintf(val, sizeof val, "livery %d", slot + 1);
-    field(r.x + 20, y + 12, lw, "Car", "", m.row == row);
-    dropdown({r.x + r.width - 20 - ctl - 40, y, ctl + 40, 44}, val, m.row == row, row, hits, slotColor(slot));
-    y += 62;
+    if (row >= 0) {
+        const auto& table = liveryTable();
+        const int slot = m.testLivery;
+        if (slot < (int)table.size()) std::snprintf(val, sizeof val, "#%d  %s", table[slot].number, table[slot].team.c_str());
+        else std::snprintf(val, sizeof val, "livery %d", slot + 1);
+        field(r.x + 20, y + 12, lw, "Car", "", m.row == row);
+        dropdown({r.x + r.width - 20 - ctl - 40, y, ctl + 40, 44}, val, m.row == row, row, hits, slotColor(slot));
+        y += 62;
+    }
     row = m.rowOf(Row::TestTyres);
     static const char* names[] = {"Auto", "Soft", "Medium", "Hard"};
     const int used = m.testTiresUsed();
@@ -548,17 +558,20 @@ void Hud::drawTestSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectangl
     stepper({r.x + r.width - 20 - ctl, y, ctl, 44}, val, m.row == row, row, hits);
     y += 70;
     row = m.rowOf(Row::TyreLife);
-    const int life = MenuState::kTyreLives[m.tyreLife];
-    field(r.x + 20, y + 2, lw, "Tyre life", "medium tyre, stock car", m.row == row);
-    if (life == 0) std::snprintf(val, sizeof val, "no wear");
-    else std::snprintf(val, sizeof val, "%d laps", life);
-    stepper({r.x + r.width - 20 - ctl, y, ctl, 44}, val, m.row == row, row, hits);
+    if (row >= 0) {
+        const int life = MenuState::kTyreLives[m.tyreLife];
+        field(r.x + 20, y + 2, lw, "Tyre life", "medium tyre, stock car", m.row == row);
+        if (life == 0) std::snprintf(val, sizeof val, "no wear");
+        else std::snprintf(val, sizeof val, "%d laps", life);
+        stepper({r.x + r.width - 20 - ctl, y, ctl, 44}, val, m.row == row, row, hits);
+    }
     // stats and saved runs
     Rectangle s = {a.x + 2 * (cw + gap), a.y, cw, a.height};
     card(s, "CAR STATS");
     y = s.y + 50;
     const StatRules& rules = m.statRules;
-    for (size_t k = 0; k < rules.keys.size() && k < m.testStats.size(); ++k, y += 34) {
+    if (m.rr2) text("Stock 2013 car: stats come later.", s.x + 22, y, 15, kDim);
+    for (size_t k = 0; !m.rr2 && k < rules.keys.size() && k < m.testStats.size(); ++k, y += 34) {
         text(rules.labels[k].c_str(), s.x + 22, y, 15, kText);
         const int v = m.testStats[k];
         const Color vc = v > rules.neutral ? kGood : v < rules.neutral ? kBad : kText;
@@ -570,7 +583,7 @@ void Hud::drawTestSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectangl
     }
     const float by = s.y + s.height - 116;
     row = m.rowOf(Row::TestStats);
-    button({s.x + 20, by, s.width - 40, 44}, "Edit car stats", 1, m.row == row, row, hits);
+    if (row >= 0) button({s.x + 20, by, s.width - 40, 44}, "Edit car stats", 1, m.row == row, row, hits);
     row = m.rowOf(Row::TestRuns);
     std::snprintf(val, sizeof val, "Saved runs (%d)", m.runsTotal);
     button({s.x + 20, by + 56, s.width - 40, 40}, val, 2, m.row == row, row, hits);
@@ -703,7 +716,9 @@ void Hud::drawGridPage(const MenuState& m, std::vector<MenuHit>& hits) {
     const float mx = std::max(24.0f, sw * 0.03f);
     text("SETUP", mx, 26, 15, kAccent, true);
     text("Grid", mx, 46, 34, kText, true);
-    text("Click a box to pick a livery, a driving algorithm or the starting tyres.", mx + 120, 62, 15, kDim);
+    text(m.rr2 ? "Click a box to pick a driving algorithm or the starting tyres."
+               : "Click a box to pick a livery, a driving algorithm or the starting tyres.",
+         mx + 120, 62, 15, kDim);
     const float gap = 22;
     const float colW = (sw - 2 * mx - (cols - 1) * gap) / cols;
     const float top = 112, rowH = std::min(52.0f, (sh - top - 120) / std::max(1, perCol));
@@ -714,7 +729,7 @@ void Hud::drawGridPage(const MenuState& m, std::vector<MenuHit>& hits) {
         Rectangle cr = {mx + c * (colW + gap), top, colW, perCol * rowH + 50};
         card(cr, nullptr);
         const float x0 = cr.x + 16, liveryW = colW * 0.36f, algoW = colW * 0.33f, tyreW = colW - 60 - liveryW - algoW - 32;
-        text("LIVERY", x0 + 44, cr.y + 16, 11, kDim, true);
+        text(m.rr2 ? "TEAM" : "LIVERY", x0 + 44, cr.y + 16, 11, kDim, true);
         text("ALGORITHM", x0 + 44 + liveryW + 8, cr.y + 16, 11, kDim, true);
         text("START TYRES", x0 + 44 + liveryW + algoW + 16, cr.y + 16, 11, kDim, true);
         for (int car = c * perCol; car < std::min(n, (c + 1) * perCol); ++car) {
@@ -728,7 +743,12 @@ void Hud::drawGridPage(const MenuState& m, std::vector<MenuHit>& hits) {
                 std::snprintf(buf, sizeof buf, "#%d  %s", table[slot].number, table[slot].team.c_str());
             else std::snprintf(buf, sizeof buf, "livery %d", slot + 1);
             const float bh = rowH - 8;
-            dropdown({x0 + 40, y, liveryW, bh}, buf, selRow && m.gridCol == 0, 100 + car * K, hits, slotColor(slot));
+            if (m.rr2) {  // one car model: the team is shown, not chosen
+                DrawRectangleRounded({x0 + 42, y + 8, 4, bh - 16}, 0.5f, 4, slotColor(slot));
+                text(buf, x0 + 54, y + (bh - 15) / 2, 15, kText);
+            } else {
+                dropdown({x0 + 40, y, liveryW, bh}, buf, selRow && m.gridCol == 0, 100 + car * K, hits, slotColor(slot));
+            }
             const int a = car < (int)m.carAlgo.size() ? m.carAlgo[car] : 0;
             dropdown({x0 + 48 + liveryW, y, algoW, bh}, a < (int)m.algos.size() ? m.algos[a].label.c_str() : "?",
                      selRow && m.gridCol == 1, 100 + car * K + 1, hits);
@@ -738,9 +758,9 @@ void Hud::drawGridPage(const MenuState& m, std::vector<MenuHit>& hits) {
         }
     }
     // buttons
-    const int pending = m.stylesPending();
+    const int pending = m.rr2 ? 0 : m.stylesPending();
     Rectangle sb = {mx, sh - 82, 300, 52};
-    button(sb, "Apply style stats (A)", pending ? 1 : 2, false, 94, hits);
+    if (!m.rr2) button(sb, "Apply style stats (A)", pending ? 1 : 2, false, 94, hits);
     if (pending) DrawRectangleRoundedLinesEx(sb, rnd(sb, 10), 8, 2.0f, kAccent);
     char buf[128];
     if (pending) std::snprintf(buf, sizeof buf, "%d team%s changed algorithm: their stats are not applied yet", pending,

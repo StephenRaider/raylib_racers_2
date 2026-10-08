@@ -109,7 +109,11 @@ struct MenuState {
                      TestCar, TestLivery, TestTyres, TestFuel, TestStats, TestRuns,
                      SaveLineup, LoadLineup,
                      ChampName, Round, AddRound, ChampDistance, ChampWear, ChampQuali, Season, Practice };
-    std::vector<Row> rows() const;
+    std::vector<Row> rows() const;     // the rows shown (RR2 leaves out what it does not support yet)
+    std::vector<Row> allRows() const;
+    // Raylib Racers 2: one car model and stock 2013 cars, so no liveries or stats to pick, tyres
+    // that wear like 2013's, and grand prix distance for weekends and championships.
+    bool rr2 = false;
     int rowOf(Row r) const;     // index in rows(), -1 if not shown
     int rowIndex(int row) const;  // which Round / Season a row is (rows of the same kind before it)
 
@@ -124,8 +128,8 @@ struct MenuState {
     static constexpr int kNumDistances = sizeof(kDistances) / sizeof(kDistances[0]);
     static constexpr float kWears[] = {0, 0.5f, 0.75f, 1, 1.5f, 2, 3, 4, 6};          // x the normal wear
     static constexpr int kNumWears = sizeof(kWears) / sizeof(kWears[0]);
-    float champDistance() const { return kDistances[champKm]; }
-    float champWearRate() const { return kWears[champWear]; }
+    float champDistance() const { return rr2 ? 305.0f : kDistances[champKm]; }
+    float champWearRate() const { return rr2 ? 1.0f : kWears[champWear]; }
     const TrackStats* trackStats(const std::string& file) const;
     int roundLaps(const rr::ChampRound& r) const;  // from the distance
     // Laps a compound lasts on a track at the season's wear rate (0 = no wear).
@@ -197,10 +201,14 @@ struct MenuState {
     const TrackStats& stats() const { return tracks[track]; }
     // Laps the medium tyre lasts at wear rate 1 on this track (to the 0.7 wear cliff).
     float baseTyreLife() const { return 0.7f / std::max(1e-4f, stats().wearPerLap); }
+    // Laps the medium tyre lasts in this session (0 = no wear). RR2: the real wear, not a choice.
+    float tyreLifeLaps() const { return rr2 ? baseTyreLife() : (float)kTyreLives[tyreLife]; }
     float wearRate() const {
-        int life = kTyreLives[tyreLife];
+        const float life = tyreLifeLaps();
         return life == 0 ? 0.0f : baseTyreLife() / life;
     }
+    // A grand prix on this track: the fewest whole laps over 305 km.
+    int gpLaps() const { return stats().length > 500 ? std::max(1, (int)std::ceil(305000.0f / stats().length)) : laps; }
     float lapsPerTank() const { return tankLitres / std::max(0.1f, stats().fuelPerLap); }
     // Picks the tyre-life option nearest the given wear rate.
     void setWearRate(float rate);

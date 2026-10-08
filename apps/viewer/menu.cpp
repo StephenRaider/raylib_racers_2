@@ -24,6 +24,20 @@ void MenuState::setWearRate(float rate) {
 }
 
 std::vector<MenuState::Row> MenuState::rows() const {
+    std::vector<Row> all = allRows();
+    if (!rr2) return all;
+    std::vector<Row> out;
+    for (Row x : all) {
+        if (x == Row::TyreLife || x == Row::TestLivery || x == Row::TestStats || x == Row::Stats || x == Row::ChampWear ||
+            x == Row::ChampDistance)
+            continue;
+        if (x == Row::Laps && weekend()) continue;
+        out.push_back(x);
+    }
+    return out;
+}
+
+std::vector<MenuState::Row> MenuState::allRows() const {
     if (testing())
         return {Row::Session, Row::Track, Row::Laps, Row::TyreLife, Row::TestCar, Row::TestLivery, Row::TestTyres,
                 Row::TestFuel, Row::TestStats, Row::TestRuns, Row::Start};
@@ -237,9 +251,10 @@ MenuAction updateGrid(MenuState& m, const std::vector<MenuHit>& hits) {
     if (rep(KEY_UP)) m.gridRow = (m.gridRow + n - 1) % n;
     if (rep(KEY_DOWN)) m.gridRow = (m.gridRow + 1) % n;
     if (IsKeyPressed(KEY_TAB)) m.gridCol = (m.gridCol + 1) % MenuState::kGridCols;
+    if (m.rr2 && m.gridCol == 0) m.gridCol = 1;  // no liveries to pick
     if (rep(KEY_LEFT)) changeGrid(m, m.gridRow, m.gridCol, -1);
     if (rep(KEY_RIGHT)) changeGrid(m, m.gridRow, m.gridCol, 1);
-    if (IsKeyPressed(KEY_A)) m.applyStyles();
+    if (IsKeyPressed(KEY_A) && !m.rr2) m.applyStyles();
     if (IsKeyPressed(KEY_SPACE))  // the selected cell's list
         for (const MenuHit& h : hits)
             if (h.row == 100 + m.gridRow * MenuState::kGridCols + m.gridCol && h.dir == 2) {

@@ -115,6 +115,7 @@ TrackStats calibrate(const std::string& track, const Paths& paths) {
     c.quiet = true;
     c.carSpec = gCarSpec;
     c.entries = {{"racingline", "pit=0", ""}};
+    c.entries[0].tires = RR_TIRE_MEDIUM;  // the wear figures are for the medium tyre
     rr::Race r;
     std::string err;
     if (!r.setup(c, paths.bots, paths.tracks, &err)) return t;
@@ -217,6 +218,9 @@ int main(int argc, char** argv) {
 
     // The grid: one livery slot and algorithm per car. Without --car, a full field over all the teams.
     MenuState menu;
+#ifdef RR2_RENDERER
+    menu.rr2 = true;
+#endif
     menu.algos = listAlgorithms(paths);
     menu.liveryCount = liveryCount;
     if (cliEntries.empty()) {
@@ -790,7 +794,7 @@ int main(int argc, char** argv) {
         const TrackStats& ts = menu.stats();
         const rr::CarParams p0, p1 = carWithStats(devRules, menu.testStats);
         menu.fuelPerLapEst = ts.fuelPerLap * cfg.fuelRate * p1.fuelPerJoule / p0.fuelPerJoule;
-        const int life = MenuState::kTyreLives[menu.tyreLife];
+        const float life = menu.tyreLifeLaps();
         const float medium = life * p0.wearPerJoule / p1.wearPerJoule;
         for (int c = RR_TIRE_SOFT; c <= RR_TIRE_HARD; ++c) menu.compoundLife[c] = life == 0 ? 0 : medium / rr::compoundWear(c);
         menu.autoTires = RR_TIRE_HARD;
@@ -1075,6 +1079,11 @@ int main(int argc, char** argv) {
             if (!wasInMenu) menuQuietUntil = GetTime() + 0.4;
             wasInMenu = true;
             MenuAction act = GetTime() < menuQuietUntil ? MenuAction::None : updateMenu(menu, menuHits);
+            if (menu.rr2) {  // stock cars, and a grand prix distance for weekends
+                for (auto& s : menu.teamStats) s.assign(s.size(), menu.statRules.neutral);
+                menu.testStats.assign(menu.testStats.size(), menu.statRules.neutral);
+                if (menu.weekend()) menu.laps = menu.gpLaps();
+            }
             if (menu.testing()) refreshTesting();
             if (act == MenuAction::Quit) quit = true;
             if (act == MenuAction::LoadRun) loadSetup(menu.runPick);
