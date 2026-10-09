@@ -195,6 +195,10 @@ if(RR_BUILD_BOTS)
            --car racingline --dev "top_speed=8,downforce=2,pit_stop=5")
   add_test(NAME race_dev_budget COMMAND rr_race --laps 1 --quiet --car racingline --dev "top_speed=10,downforce=10,handling=10")
   set_tests_properties(race_dev_budget PROPERTIES WILL_FAIL TRUE)
+  # The 2013 stats (KERS, DRS, gearbox, pit crew), and an old lineup that still names the retired fuel_efficiency stat.
+  add_test(NAME race_dev_2013 COMMAND rr_race --laps 2 --quiet --car racingline --spec f1_2013
+           --dev "kers=7,drs=6,gearbox=6,top_speed=6,pit_stop=2,brakes=3" --car racingline --spec f1_2013
+           --dev "fuel_efficiency=7,tire_management=8,pit_stop=2")
   # A two-round season: a lineup file starts it, each run races a round and saves the
   # standings; the second run picks up where the first stopped.
   add_test(NAME champ_lineup COMMAND rr_race --save-lineup ${CMAKE_BINARY_DIR}/ctest_lineup.json

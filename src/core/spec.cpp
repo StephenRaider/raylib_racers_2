@@ -87,7 +87,15 @@ bool loadDevRules(const std::string& path, DevRules& out, std::string* err) {
                 if (err) *err = path + ": category '" + cat.key + "' changes unknown parameter '" + kv.first + "'";
                 return false;
             }
-            cat.effects.push_back({kv.first, (float)kv.second.num(0)});
+            DevEffect e;
+            e.field = kv.first;
+            if (kv.second.type == mjson::Value::Object) {
+                e.perPoint = (float)kv.second["deficit"].num(0);
+                e.deficit = true;
+            } else {
+                e.perPoint = (float)kv.second.num(0);
+            }
+            cat.effects.push_back(e);
         }
         if (cat.key.empty()) {
             if (err) *err = path + ": a category has no key";
@@ -95,6 +103,7 @@ bool loadDevRules(const std::string& path, DevRules& out, std::string* err) {
         }
         r.categories.push_back(cat);
     }
+    for (const auto& k : v["retired"].arr) r.retired.push_back(k.str());
     out = r;
     return true;
 }
@@ -111,6 +120,8 @@ bool parseDevelopment(const DevRules& rules, const std::string& dev, std::vector
         int n = eq == std::string::npos ? 0 : std::atoi(item.c_str() + eq + 1);
         size_t k = 0;
         while (k < rules.categories.size() && rules.categories[k].key != key) ++k;
+        if (k == rules.categories.size() && std::find(rules.retired.begin(), rules.retired.end(), key) != rules.retired.end())
+            continue;
         if (k == rules.categories.size()) {
             if (err) *err = "unknown development category '" + key + "'";
             return false;
@@ -133,7 +144,13 @@ bool parseDevelopment(const DevRules& rules, const std::string& dev, std::vector
 void applyDevelopment(const DevRules& rules, const std::vector<int>& tokens, CarParams& p) {
     for (size_t k = 0; k < rules.categories.size() && k < tokens.size(); ++k)
         for (const auto& e : rules.categories[k].effects)
-            if (float* f = p.field(e.field)) *f *= std::max(0.05f, 1.0f + e.perPoint * (float)(tokens[k] - rules.neutral));
+            if (float* f = p.field(e.field)) {
+                const float d = (float)(tokens[k] - rules.neutral);
+                if (e.deficit)
+                    *f = std::min(1.0f, 1.0f - (1.0f - *f) * std::max(0.0f, 1.0f + e.perPoint * d));
+                else
+                    *f *= std::max(0.05f, 1.0f + e.perPoint * d);
+            }
 }
 
 }  // namespace rr

@@ -18,6 +18,7 @@ namespace rr {
 struct DevEffect {
     std::string field;   // CarParams field
     float perPoint = 0;  // relative change per point from neutral: value *= 1 + perPoint * (points - neutral)
+    bool deficit = false;  // for scales below 1 (a DRS cut): the deficit 1 - value grows instead: value = 1 - (1 - value) * (1 + perPoint * d)
 };
 
 struct DevCategory {
@@ -32,6 +33,7 @@ struct DevRules {
     int minPoints = 0, maxPoints = 10;  // per stat
     int neutral = 5;     // the stock car
     std::vector<DevCategory> categories;
+    std::vector<std::string> retired;  // stat keys that no longer exist; parseDevelopment ignores them (old lineups)
     bool empty() const { return categories.empty(); }
 };
 

@@ -51,7 +51,8 @@
     "kersHarvest": 4000000,
     "kersStore": 4000000,
     "drsDragScale": 0.78,
-    "drsDownforceScale": 0.9
+    "drsDownforceScale": 0.9,
+    "shiftTime": 0.02
   },
   "gear_ratios": [8.14, 6.04, 4.80, 3.97, 3.35, 2.87, 2.50]
 }

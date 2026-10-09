@@ -46,7 +46,7 @@ const CarParams::Field* CarParams::fields(int* count) {
         F(tireCoolBase), F(tireCoolSpeed), F(blanketTemp), F(brakeHeatCap), F(brakeCoolBase), F(brakeCoolSpeed),
         F(brakeToRim), F(rimHeatCap), F(rimCoolBase), F(rimCoolSpeed), F(rimToTyre), F(brakeTempLo), F(brakeTempHi), F(maxAeroLoss), F(damageForMaxLoss), F(maxDragGain), F(maxPowerLoss), F(maxGripLoss), F(torqueScale),
         F(pitServiceScale), F(engineV8), F(noRefuel), F(kersPower), F(kersEnergy), F(kersHarvest), F(kersStore),
-        F(drsDragScale), F(drsDownforceScale), F(kersMaxTorque), F(kersEfficiency), F(kersDeployEfficiency), F(drsFlapOpenTime), F(drsFlapCloseTime),
+        F(drsDragScale), F(drsDownforceScale), F(kersMaxTorque), F(kersEfficiency), F(kersDeployEfficiency), F(drsFlapOpenTime), F(drsFlapCloseTime), F(shiftTime),
     };
 #undef F
     *count = (int)(sizeof f / sizeof f[0]);
@@ -194,6 +194,7 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     const float brake = clampf(in.brake, 0, 1);
 
     // --- gearbox ---
+    const int gearBefore = c.gear;
     if (autoGear) {
         if (in.gear == -1) {
             if (c.vx < 1.0f) c.gear = -1;
@@ -215,6 +216,8 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     } else {
         c.gear = std::max(-1, std::min(in.gear, p.numGears));
     }
+    if (c.gear != gearBefore && c.gear > 0 && gearBefore > 0) c.shiftLeft = p.shiftTime;
+    c.shiftLeft = std::max(0.0f, c.shiftLeft - dt);
 
     // --- engine ---
     const float ratio = gearRatio(p, c.gear);
@@ -225,7 +228,7 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     // KERS deploy: the motor-generator's power at the crank, as torque, from the store, limited by the
     // lap's energy allowance. It follows the throttle and cuts out with the engine at the rev limiter.
     const bool hasKers = p.kersPower > 0;
-    if (hasKers && c.gear > 0 && c.rpm < p.maxRpm && c.kersCharge > 0 && c.kersDeployed < p.kersEnergy) {
+    if (hasKers && c.gear > 0 && c.shiftLeft <= 0 && c.rpm < p.maxRpm && c.kersCharge > 0 && c.kersDeployed < p.kersEnergy) {
         const float want = clampf(in.kers, 0, 1) * accel;
         const float omega = std::max(c.rpm, p.idleRpm) * (2 * kPi / 60.0f);
         kersTorque = std::min(want * p.kersPower / omega, want * p.kersMaxTorque);
@@ -240,7 +243,7 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
         c.kersPowerNow = 0;
     }
     if (c.gear != 0) {
-        if (c.rpm < p.maxRpm && hasFuel) torque = p.engineTorque(c.rpm) * accel * (1 - p.maxPowerLoss * damageLevel(p, c));
+        if (c.rpm < p.maxRpm && hasFuel && c.shiftLeft <= 0) torque = p.engineTorque(c.rpm) * accel * (1 - p.maxPowerLoss * damageLevel(p, c));
         torque += kersTorque;
         if (engRpm > p.idleRpm) torque -= (1 - accel) * p.engineBrake * (engRpm / p.maxRpm);  // engine braking
     }

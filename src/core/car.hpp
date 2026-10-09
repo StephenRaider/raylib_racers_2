@@ -108,6 +108,7 @@ struct CarParams {
     float kersEfficiency = 0.85f;  // share of the recovered energy that reaches the store
     float kersDeployEfficiency = 0.90f;  // share of the energy drawn from the store that reaches the crank
     float drsFlapOpenTime = 0.25f, drsFlapCloseTime = 0.15f;  // s for the flap to travel
+    float shiftTime = 0.0f;  // s of torque cut at each gear change (0 = instant)
 
     float wheelbase() const { return cgToFront + cgToRear; }
     float engineTorque(float rpm) const;  // N m at full throttle
@@ -147,6 +148,7 @@ struct CarState {
     // DRS: whether the flap is asked open (the race sets it) and how far it has travelled, 0 closed .. 1 open.
     bool drsOpen = false;
     float drsFlap = 0;
+    float shiftLeft = 0;  // s left of the current gear change, torque cut meanwhile
 
     Vec2 velWorld() const { return rotate({vx, vy}, yaw); }
     void setVelWorld(Vec2 v) { Vec2 b = rotate(v, -yaw); vx = b.x; vy = b.y; }
