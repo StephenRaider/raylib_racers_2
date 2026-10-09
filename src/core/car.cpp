@@ -320,7 +320,7 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     for (int w = 0; w < 4; ++w) {
         const int ax = w / 2;
         const float fz0 = 0.5f * fzRef[ax];
-        muW[w] = mu * axleGripK[ax] * tempGrip(c.compound, c.wheelTemp[w]) * std::max(0.6f, 1.0f - p.muLoadDrop * (fz[w] / fz0 - 1.0f));
+        muW[w] = mu * (surf.perWheel ? surf.wheelMu[w] : 1.0f) * axleGripK[ax] * tempGrip(c.compound, c.wheelTemp[w]) * std::max(0.6f, 1.0f - p.muLoadDrop * (fz[w] / fz0 - 1.0f));
         fyW[w] = tyreLateral(p, stiff[ax], alpha[ax], fz[w], fz0, muW[w]);
     }
 
@@ -438,6 +438,17 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
                0.5f * p.trackRear * (fxW[3] - fxW[2]);
     fx -= surf.extraDrag * c.vx;
     fy -= surf.extraDrag * c.vy;
+    if (surf.perWheel) {
+        const float wx[4] = {a, a, -b, -b};
+        const float wy[4] = {0.5f * p.trackFront, -0.5f * p.trackFront, 0.5f * p.trackRear, -0.5f * p.trackRear};
+        for (int w = 0; w < 4; ++w) {
+            const float fxw = -surf.wheelDrag[w] * (c.vx - c.yawRate * wy[w]);
+            const float fyw = -surf.wheelDrag[w] * (c.vy + c.yawRate * wx[w]);
+            fx += fxw;
+            fy += fyw;
+            mz += wx[w] * fyw - wy[w] * fxw;
+        }
+    }
 
     // gravity along the road: uphill slows the car, a banked road pulls it to the low side
     const float axb = fx / m - g * surf.slopeX, ayb = fy / m - g * surf.slopeY;

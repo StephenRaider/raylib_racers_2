@@ -1139,8 +1139,12 @@ void Race::step() {
         Surface surf;
         c.surface = track_.surfaceAt(c.trackS, c.lateral, c.halfWidth);
         surf.type = c.surface;
-        surf.muScale = surfaceProps(c.surface).mu;
-        surf.extraDrag = surfaceProps(c.surface).drag;
+        // each tyre runs on its own surface (as of the last step)
+        surf.perWheel = true;
+        for (int w = 0; w < 4; ++w) {
+            surf.wheelMu[w] = surfaceProps(c.wheelSurf[w]).mu;
+            surf.wheelDrag[w] = 0.25f * surfaceProps(c.wheelSurf[w]).drag;
+        }
         wake(c);
         updateDrs(c);
         surf.dragScale = 1.0f - c.draft;

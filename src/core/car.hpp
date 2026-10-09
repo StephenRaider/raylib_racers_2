@@ -156,6 +156,12 @@ struct Surface {
     int type = 0;           // RR_SURF_*
     float muScale = 1.0f;   // grip multiplier
     float extraDrag = 0.0f; // N per m/s (grass, gravel)
+    // Per wheel (front left, front right, rear left, rear right), when perWheel: each tyre has the grip
+    // of what it runs on (muScale is then 1) and a quarter of the surface's drag acts at that wheel,
+    // so two wheels on grass pull the car round and slow it unevenly.
+    bool perWheel = false;
+    float wheelMu[4] = {1, 1, 1, 1};
+    float wheelDrag[4] = {0, 0, 0, 0};  // N per m/s at each wheel
     float dragScale = 1.0f; // < 1 in another car's slipstream
     float downforceScale = 1.0f, frontDownforceScale = 1.0f;  // < 1 in another car's dirty air
     // The road's 3D shape under the car (0 on a flat track):
