@@ -320,6 +320,16 @@ A car about to be lapped gets a blue flag when the lapping car is within 60 m
 time penalty (once per lapping car), added to the race time. The timing tower shows blue-flagged
 cars in blue and the car panel says who to let by.
 
+## Incidents, yellow flags and the virtual safety car
+
+A car that crashes hard, stops on the track or sits across it is held still by the marshals (the
+timing tower shows it in yellow) and released when the track behind it is clear; if it cannot get
+going again it is taken off the track. While a car is held the sector around it is yellow and the
+whole field runs under the virtual safety car (speed limit, no overtaking, DRS off) for at least
+a lap, then a 5 s "VSC ending" before green. Overtaking under a flag costs 5 s. The viewer shows
+the flag or VSC banner under the camera line. `--vsc off` disables it; the rules are in
+`docs/ROBOTS.md` (ABI 14).
+
 ## Car specs and team stats
 
 Car numbers are data: `specs/f1_2006.json` lists every physics parameter of

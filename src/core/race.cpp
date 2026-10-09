@@ -302,6 +302,11 @@ void Race::computeSensors(Car& c) {
     s.pit_limiter = c.pitLimiter ? 1 : 0;
     s.pit_speeding = c.pitOver;
     s.penalty_owed = c.penaltyOwed;
+    s.flag_state = c.flagState;
+    s.vsc_state = vscState_;
+    s.speed_cap = c.speedCap;
+    s.incident_ds = c.incidentDs;
+    s.held = c.held ? 1 : 0;
     s.service_penalty_left = c.pitState == RR_PIT_SERVICE ? c.penaltyHold : 0.0f;
 
     std::normal_distribution<float> noise(0.0f, cfg_.sensorNoise);
@@ -534,6 +539,7 @@ void Race::retire(Car& c, const std::string& why) {
 
 void Race::callRobots() {
     updateBlueFlags();
+    updateNeutral();
     // Ask every robot first, then collect the answers: sandboxed robots think at the same time.
     for (Car& c : cars_) {
         if (c.dnf) continue;
@@ -652,6 +658,7 @@ void Race::resolveWalls(Car& c) {
         Vec2 impulse = nrm * j + tan * jt;
         st.setVelWorld(st.velWorld() + impulse * (1 / m));
         st.yawRate += cross2(r, impulse) / I;
+        if (-vn > RR_INCIDENT_WALL_SPEED) c.hardHit = time_;
         if (-vn > 1.0f) {
             st.damage += (-vn) * (-vn);
             c.collisions++;
@@ -715,6 +722,7 @@ void Race::resolveCarPair(Car& a, Car& b) {
         const bool aNose = noseA > 1.0f, bNose = noseB > 1.0f;
         if (aNose != bNose) collisionFault(aNose ? a : b, -vrel);
         a.lastContact = b.lastContact = time_;
+        if (-vrel > RR_INCIDENT_CAR_SPEED) a.hardHit = b.hardHit = time_;
         a.state.damage += vrel * vrel;
         b.state.damage += vrel * vrel;
         a.collisions++;
@@ -944,7 +952,8 @@ void Race::updateDrs(Car& c) {
     }
     c.drsNextDs = c.drsNextZone >= 0 ? best : 0.0f;
 
-    const bool allowed = rules && c.pitState == RR_PIT_NONE && !c.finished && !c.dnf && !over_ && c.onTrack;
+    const bool allowed = rules && c.pitState == RR_PIT_NONE && !c.finished && !c.dnf && !over_ && c.onTrack &&
+                         c.flagState == RR_FLAG_GREEN && vscState_ != RR_VSC_ACTIVE;
     if (!allowed) return;
     c.drsState = RR_DRS_OFF;
     for (int z = 0; z < nz; ++z)
@@ -1258,7 +1267,7 @@ void Race::step() {
         c.pitLimiter = false;
         if (!c.dnf && (c.finished || over_)) {
             in = coolDownControl(c);
-        } else if (c.pitState == RR_PIT_SERVICE) {
+        } else if (c.pitState == RR_PIT_SERVICE || c.held) {
             in = RRControl{};
             in.brake = 1;
             in.gear = c.state.gear;
@@ -1272,6 +1281,16 @@ void Race::step() {
                 in.brake = std::max(in.brake, clampf(over * 0.3f, 0.0f, 1.0f));
             }
             c.pitLimiter = true;
+        }
+        if (c.speedCap > 0 && !c.dnf && !c.finished && !over_) {
+            // Yellow flag, VSC or rejoin: the host holds the car to the cap (a little slack for robots that read it).
+            const float over = c.state.vx - (c.speedCap + (c.abi >= 14 ? RR_CAP_GRACE : 0.0f));
+            if (over > 0) {
+                in.accel = 0;
+                in.brake = std::max(in.brake, clampf(over * 0.3f, 0.1f, 1.0f));
+            }
+            in.kers = 0;
+            in.drs = 0;
         }
         stepCar(c.state, c.phys, in, (c.robotCfg.auto_gear != 0) || c.finished || over_, surf, rates, dt);
         if (!c.finished && !c.dnf) {
@@ -1350,6 +1369,12 @@ void Race::printResults(FILE* out) const {
                      c.robotName.c_str(), t.c_str(), fmtTime(c.bestLap).c_str(), c.lapsDone, c.collisions,
                      stops.c_str());
     }
+    for (const VscPeriod& v : vscPeriods_)
+        std::fprintf(out, "VSC from lap %d, %s to %s (%s)\n", v.startLap, fmtTime(v.start).c_str(),
+                     v.end < 0 ? "the flag" : fmtTime(v.end).c_str(), v.reason.c_str());
+    for (const Incident& in : incidents_)
+        std::fprintf(out, "  %s lap %d at %.0f m: %s %s\n", fmtTime(in.time).c_str(), in.lap, in.s,
+                     cars_[in.car].name.c_str(), in.kind.c_str());
 }
 
 bool Race::writeJson(const std::string& path, double wallSeconds) const {
@@ -1407,7 +1432,19 @@ bool Race::writeJson(const std::string& path, double wallSeconds) const {
         }
         std::fprintf(f, "]}%s\n", p + 1 < order_.size() ? "," : "");
     }
-    std::fprintf(f, "  ]\n}\n");
+    std::fprintf(f, "  ],\n  \"vsc\": [");
+    for (size_t k = 0; k < vscPeriods_.size(); ++k) {
+        const VscPeriod& v = vscPeriods_[k];
+        std::fprintf(f, "%s{\"start\": %.2f, \"end\": %.2f, \"lap\": %d, \"reason\": \"%s\"}", k ? ", " : "", v.start,
+                     v.end, v.startLap, jsonEscape(v.reason).c_str());
+    }
+    std::fprintf(f, "],\n  \"incidents\": [");
+    for (size_t k = 0; k < incidents_.size(); ++k) {
+        const Incident& in = incidents_[k];
+        std::fprintf(f, "%s{\"time\": %.2f, \"car\": %d, \"lap\": %d, \"s\": %.1f, \"kind\": \"%s\"}", k ? ", " : "", in.time,
+                     in.car, in.lap, in.s, jsonEscape(in.kind).c_str());
+    }
+    std::fprintf(f, "]\n}\n");
     std::fclose(f);
     return true;
 }

@@ -13,6 +13,7 @@ const Color kText = {238, 240, 245, 255};
 const Color kDim = {160, 166, 180, 255};
 const Color kAccent = {255, 196, 40, 255};
 const Color kBlueFlag = {40, 110, 255, 255};
+const Color kYellowFlag = {250, 215, 30, 255};
 
 }  // namespace
 
@@ -106,6 +107,21 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
         float x = (GetScreenWidth() - w) / 2;
         panel({x, 12, w, 30});
         text(buf, x + 14, 18, 15, st.followLeader ? kAccent : kText, true);
+        // race control: the virtual safety car, or the yellow flag the followed car is under
+        if (!st.qualifying && !results && race.config().session == RR_SESSION_RACE && race.config().neutral) {
+            const rr::Car* fc = st.focus >= 0 && st.focus < (int)race.cars().size() ? &race.cars()[st.focus] : nullptr;
+            const char* msg = nullptr;
+            if (race.vscState() == RR_VSC_ACTIVE) msg = "VIRTUAL SAFETY CAR   NO OVERTAKING";
+            else if (race.vscState() == RR_VSC_ENDING) msg = "VSC ENDING   GREEN FLAG SOON";
+            else if (fc && fc->flagState == RR_FLAG_DOUBLE_YELLOW) msg = "DOUBLE YELLOW";
+            else if (fc && fc->flagState == RR_FLAG_YELLOW) msg = "YELLOW FLAG";
+            if (msg) {
+                const float bw = width(msg, 19, true) + 40;
+                const Rectangle r = {(GetScreenWidth() - bw) / 2, 50, bw, 34};
+                DrawRectangleRounded(r, 0.4f, 8, race.vscState() == RR_VSC_ENDING ? Color{90, 200, 120, 255} : kYellowFlag);
+                text(msg, r.x + 20, r.y + 7, 19, Color{20, 20, 24, 255}, true);
+            }
+        }
     }
     if (st.lights > -1.5f) {
         // Start lights: one red light a second, then all out and GO.
@@ -197,6 +213,7 @@ void Hud::drawTower(const rr::Race& race, const HudState& st) {
         if (idx == st.focus) DrawRectangle((int)x + 6, (int)y - 3, (int)w - 12, (int)rowH - 2, Fade(WHITE, 0.12f));
         else if (idx == hover) DrawRectangle((int)x + 6, (int)y - 3, (int)w - 12, (int)rowH - 2, Fade(WHITE, 0.06f));
         if (c.blueCar >= 0) DrawRectangle((int)x + 6, (int)y - 3, (int)w - 12, (int)rowH - 2, Fade(kBlueFlag, 0.5f));
+        if (c.held) DrawRectangle((int)x + 6, (int)y - 3, (int)w - 12, (int)rowH - 2, Fade(kYellowFlag, 0.45f));
         std::snprintf(buf, sizeof buf, "%zu", p + 1);
         textRight(buf, x + 38, y, 19, kText, true);
         DrawRectangle((int)x + 46, (int)y + 1, 5, 19, teamColor(idx));
@@ -288,6 +305,12 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
         DrawRectangleRounded({x, fy, w, 30}, 0.3f, 6, kBlueFlag);
         std::snprintf(buf, sizeof buf, "BLUE FLAG   let %s by", race.cars()[c.blueCar].name.c_str());
         text(buf, x + 14, fy + 6, 17, WHITE, true);
+        fy -= 36;
+    }
+    if (c.held || c.flagState != RR_FLAG_GREEN) {
+        DrawRectangleRounded({x, fy, w, 30}, 0.3f, 6, kYellowFlag);
+        text(c.held ? "HELD BY THE MARSHALS   wait for a clear track" : c.flagState == RR_FLAG_DOUBLE_YELLOW ? "DOUBLE YELLOW   be ready to stop" : "YELLOW FLAG   no overtaking",
+             x + 14, fy + 6, 17, Color{20, 20, 24, 255}, true);
         fy -= 36;
     }
     if (c.penalties > 0) {

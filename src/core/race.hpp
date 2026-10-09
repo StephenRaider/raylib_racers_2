@@ -145,9 +145,38 @@ struct Car {
     float drsNextDs = 0;
     int drsState = RR_DRS_NONE;
 
+    // incidents, holds and flags (ABI 14, see neutral.cpp)
+    bool held = false;            // the host holds the car after an incident
+    double heldSince = 0;
+    int holdCount = 0;            // times held in this race
+    double releasedAt = -1e9;     // time of the last release
+    double hardHit = -1e9;        // time of the last hard wall or car impact
+    float stoppedT = 0, acrossT = 0;  // s standing still / across the track on the racing area
+    int flagState = RR_FLAG_GREEN;    // the flag the car sees now
+    float speedCap = 0;           // m/s the host holds the car to, 0 = none
+    double capSince = -1;         // time the speed cap has been on continuously, -1 = no cap
+    float incidentDs = -1;        // m ahead to the nearest flagged incident
+    int prevPosition = 0;         // position at the last robot tick, to see overtaking
+    double lastNeutralPen = -1e9; // time of the last pass-under-flag penalty
+
     FILE* telemetry = nullptr;
 
     int currentLap(int raceLaps) const { return std::min(raceLaps, std::max(1, lapsDone + 1)); }
+};
+
+// An incident the marshals acted on: the car was held (or taken off the track).
+struct Incident {
+    double time;
+    int car;
+    int lap;
+    float s;
+    std::string kind;  // "crash", "stopped", "spin", "released", "removed"
+};
+// One run of the virtual safety car.
+struct VscPeriod {
+    double start = 0, end = -1;  // end < 0 while it runs
+    int startLap = 0;
+    std::string reason;
 };
 
 // A car-to-car impact, for analysis (and later, stewarding).
@@ -193,6 +222,11 @@ public:
     bool twoCompoundRule() const { return twoCompoundRuleFor(cfg_); }
     static bool twoCompoundRuleFor(const RaceConfig& c) { return c.twoCompounds > 0 || (c.twoCompounds < 0 && c.laps > 20); }
 
+    // Virtual safety car and flags (neutral.cpp)
+    int vscState() const { return vscState_; }  // RR_VSC_*
+    const std::vector<Incident>& incidents() const { return incidents_; }
+    const std::vector<VscPeriod>& vscPeriods() const { return vscPeriods_; }
+
     void printResults(FILE* out) const;
     bool writeJson(const std::string& path, double wallSeconds) const;
 
@@ -209,6 +243,10 @@ private:
     void givePenalty(Car& c, float seconds, const char* why, bool served);
     void collisionFault(Car& c, float closing);
     void updateBlueFlags();
+    void updateNeutral();       // incidents, holds, yellow flags and the VSC (once per robot tick)
+    void logIncident(const Car& c, const char* kind);
+    bool trackClearBehind(const Car& c) const;
+    float neutralCap(const Car& c) const;
     void updateWheels(Car& c);  // wheel positions, surfaces and track limits
     void updateDrs(Car& c);
     RRControl coolDownControl(Car& c);
@@ -233,6 +271,13 @@ private:
     int parkedSlots_ = 0;
     double maxTime_ = 0;
     std::mt19937_64 rng_;
+    // incidents and the virtual safety car
+    std::vector<Incident> incidents_;
+    std::vector<VscPeriod> vscPeriods_;
+    int vscState_ = RR_VSC_NONE;
+    double vscEndingAt_ = 0;     // time the VSC ending phase is over
+    double vscMinDist_ = 0;      // leader distance before the VSC may end
+    std::vector<std::pair<float, int>> flagged_;  // (s, severity 1 or 2) of the cars causing yellows
 };
 
 // Path of a track by name (tracks/<name>.trk) or path, "" if not found.

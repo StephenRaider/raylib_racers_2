@@ -47,7 +47,7 @@ re-scans `bots/` by itself).
 
 | Call | When | Notes |
 |---|---|---|
-| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 13; the host also loads robots built for ABI 2 and later) |
+| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 14; the host also loads robots built for ABI 2 and later) |
 | `create(track, car, index, params, config)` | once per car | return your state, or `NULL` to refuse. Plan here: you get the full track geometry and car spec. |
 | `drive(self, sensors, control)` | every 1/robot-hz s | `control` arrives zeroed except `gear`. Fill it in. |
 | `destroy(self)` | end of race | free your state |
@@ -345,6 +345,30 @@ Track limit, blue flag and two-compound penalties keep adding to the race time a
 race log lists served penalties with 0 s when given and a line when served (`penalty_served`
 in the JSON, per stop and per car).
 
+**Incidents, yellow flags and the virtual safety car (ABI 14).** In races the host watches for
+incidents: a hard crash (a wall hit over 8 m/s or a car impact over 6 m/s, after which the car is
+nearly stopped), a car standing still on the track for 3 s, or one across the track (angle over
+1.9 rad) for 1 s. Such a car is *held*: the host brakes it and ignores its controls
+(`held` is 1) so it cannot drive back into traffic, and releases it when the track behind it
+is clear (nobody within 40 m, nobody arriving within 7 s). A released car has 6 s to get going
+and is limited to 25 m/s for 10 s; if it is stuck or crashes again in that time, is held for
+over 45 s, or is held a third time, it is taken off the track (retired, "removed after
+incident"). While a car is held:
+- the track from 250 m before it to 30 m after it is **yellow** (double yellow if it is on the
+  racing surface): `flag_state`, and `incident_ds` is the distance to the incident ahead;
+- the whole field runs under the **virtual safety car** (`vsc_state`): at least one lap (at most
+  3 km) and until nobody is held, then 5 s of "VSC ending" before green.
+`speed_cap` is the speed the host holds the car to (55 m/s in yellow, 35 m/s in double yellow,
+40 m/s under the VSC, 25 m/s after a release), 0 if there is none. A car just behind another may
+not run faster than it, so the field closes up without passing. The host enforces the cap for
+every robot, ABI 13 and older included; ABI 14 robots get 1 m/s of slack so they can slow down
+by themselves. DRS and KERS are off under a flag or the VSC. Overtaking (a car length clear)
+after 3 s under a cap costs ABI 14 robots a 5 s penalty served in the pits. `--vsc off` turns
+all of it off. The constants are `RR_FLAG_*`, `RR_VSC_*`, `RR_YELLOW_*`, `RR_VSC_SPEED` and so
+on in `robot_api.h`. The race log lists incidents and VSC periods (`incidents` and `vsc` in the
+JSON). Robots that do nothing about it keep working: the example robots aim at `speed_cap`
+and stay put while held (`rr_safety.h`).
+
 **The timing screen and race rules (ABI 5).** Every team sees the same
 timing screen: `timing[num_timing]`, in race order, one `RRTimingEntry` per
 car with its position, laps, `gap` to you in seconds (+ ahead, laps
@@ -485,6 +509,8 @@ used) gives the same result, so differences come from your change, not chance.
 - `rr_params.h`: read numbers out of the params string.
 - `rr_recovery.h`: drop-in "get unstuck" behaviour (U-turn when facing the
   wrong way, reverse out of a barrier). Call `rr_recover()` first in `drive()`.
+- `rr_safety.h`: `rr_flag_speed()` is the speed to aim at under a yellow flag or the VSC, and
+  `rr_held()` fills the controls for a car the marshals hold (ABI 14).
 - `rr_awareness.h`: racecraft and grip helpers all three examples use.
   `rr_side_limits()` narrows the lateral range you may move into around cars
   alongside or closing from behind; `rr_follow_speed()` is a speed cap for not
