@@ -288,6 +288,14 @@ void Race::computeSensors(Car& c) {
     s.track_pos = c.lateral / c.halfWidth;
     s.on_track = c.onTrack ? 1 : 0;
     s.surface = c.surface;
+    for (int w = 0; w < 4; ++w) {
+        s.wheel_track_pos[w] = c.wheelLat[w];
+        s.wheel_surface[w] = c.wheelSurf[w];
+    }
+    s.wheels_outside = c.wheelsOutside;
+    s.track_limit_strikes = c.limitStrikes;
+    s.track_limit_exempt = c.limitExempt ? 1 : 0;
+    s.track_limit_dwell = c.outsideT;
 
     std::normal_distribution<float> noise(0.0f, cfg_.sensorNoise);
     for (int k = 0; k < RR_NUM_TRACK_SENSORS; ++k) {
@@ -640,6 +648,7 @@ void Race::resolveWalls(Car& c) {
         if (-vn > 1.0f) {
             st.damage += (-vn) * (-vn);
             c.collisions++;
+            c.lastUncontrolled = time_;
         }
     }
 }
@@ -696,6 +705,60 @@ void Race::resolveCarPair(Car& a, Car& b) {
         b.state.damage += vrel * vrel;
         a.collisions++;
         b.collisions++;
+        a.lastUncontrolled = b.lastUncontrolled = time_;
+    }
+}
+
+// Where each wheel is and what it runs on, and the track-limits rule: all four wheels beyond
+// the white line is a strike unless the car is out of control (see RRSensors, ABI 12).
+void Race::updateWheels(Car& c) {
+    const CarState& st = c.state;
+    const float lx[4] = {c.phys.cgToFront, c.phys.cgToFront, -c.phys.cgToRear, -c.phys.cgToRear};
+    const float ly[4] = {c.phys.trackFront * 0.5f, -c.phys.trackFront * 0.5f, c.phys.trackRear * 0.5f, -c.phys.trackRear * 0.5f};
+    const Vec2 fw = fromAngle(st.yaw), lf = perpLeft(fw);
+    int outside = 0;
+    bool pitSurface = false;
+    for (int w = 0; w < 4; ++w) {
+        const TrackLoc loc = track_.locate(st.pos + fw * lx[w] + lf * ly[w], c.trackIdx, 10);
+        c.wheelLat[w] = loc.lateral;
+        c.wheelSurf[w] = track_.surfaceAt(loc.s, loc.lateral, loc.halfWidth);
+        if (std::fabs(loc.lateral) > loc.halfWidth) ++outside;
+        if (c.wheelSurf[w] == RR_SURF_PIT) pitSurface = true;
+    }
+    c.wheelsOutside = outside;
+
+    const Vec2 td = track_.dirAt(c.trackS);
+    const bool spun = std::fabs(wrapAngle(st.yaw - std::atan2(td.y, td.x))) > 0.6f;
+    // Out of control: the front tyres past their limit (understeer) or the car going sideways (a rear
+    // slide). Wheelspin under power alone is the driver's business, so it does not count.
+    const bool sliding = st.gripUse[0] > 1.15f || std::fabs(std::atan2(st.vy, std::max(std::fabs(st.vx), 1.0f))) > 0.12f;
+    if (spun || sliding) c.lastUncontrolled = time_;
+    c.limitExempt = time_ - c.lastUncontrolled < RR_TRACK_LIMIT_GRACE || pitSurface || c.pitState != RR_PIT_NONE ||
+                    c.finished || c.dnf || over_ || c.distRaced < 0;
+
+    if (outside < 4) {
+        c.outsideT = 0;
+        c.limitCounted = false;
+        c.limitHits = 0;
+        return;
+    }
+    c.outsideT += cfg_.dt;
+    if (c.limitExempt) c.limitCounted = true;  // this excursion was not the driver's doing
+    // one strike once the dwell is up, and another for every further RR_TRACK_LIMIT_REPEAT s outside
+    if (c.limitCounted || c.outsideT < RR_TRACK_LIMIT_DWELL + c.limitHits * RR_TRACK_LIMIT_REPEAT) return;
+    c.limitHits++;
+    c.limitStrikes++;
+    if (cfg_.session != RR_SESSION_RACE) return;
+    char why[120];
+    if (c.limitStrikes <= RR_TRACK_LIMIT_WARNINGS) {
+        std::snprintf(why, sizeof why, "track limits: warning %d of %d (all four wheels beyond the white line)",
+                      c.limitStrikes, RR_TRACK_LIMIT_WARNINGS);
+        c.penaltyLog.push_back({time_, c.currentLap(cfg_.laps), 0.0f, why});
+    } else {
+        c.penalties++;
+        c.penaltyTime += RR_TRACK_LIMIT_PENALTY;
+        std::snprintf(why, sizeof why, "track limits: all four wheels beyond the white line (strike %d)", c.limitStrikes);
+        c.penaltyLog.push_back({time_, c.currentLap(cfg_.laps), RR_TRACK_LIMIT_PENALTY, why});
     }
 }
 
@@ -1133,6 +1196,7 @@ void Race::step() {
     steps_++;
     for (Car& c : cars_) {
         updateProgress(c);
+        updateWheels(c);
         updatePit(c);
     }
     if (over_) return;  // cool-down: the classification is final

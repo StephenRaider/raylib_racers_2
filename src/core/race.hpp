@@ -40,6 +40,16 @@ struct Car {
     float halfWidth = 7;
     bool onTrack = true;
     int surface = 0;  // RR_SURF_* under the centre
+    // wheels (front left, front right, rear left, rear right) and track limits
+    float wheelLat[4] = {0, 0, 0, 0};
+    int wheelSurf[4] = {0, 0, 0, 0};
+    int wheelsOutside = 0;
+    int limitStrikes = 0;
+    float outsideT = 0;          // s with all four wheels beyond the white line in this excursion
+    bool limitCounted = false;   // this excursion was not the driver's doing: no strikes
+    int limitHits = 0;           // strikes given in this excursion
+    bool limitExempt = false;
+    double lastUncontrolled = -1e9;  // time of the last contact, spin or slide
 
     // race progress
     double distRaced = 0;
@@ -184,6 +194,7 @@ private:
     void writeTelemetry(const Car& c);
     void updatePit(Car& c);
     void updateBlueFlags();
+    void updateWheels(Car& c);  // wheel positions, surfaces and track limits
     void updateDrs(Car& c);
     RRControl coolDownControl(Car& c);
     void endSession(Car& c);

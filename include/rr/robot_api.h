@@ -29,8 +29,8 @@
 extern "C" {
 #endif
 
-#define RR_ABI_VERSION 11
-/* Robots built for ABI 2 to 10 still load: later versions only appended
+#define RR_ABI_VERSION 12
+/* Robots built for ABI 2 to 11 still load: later versions only appended
  * fields to RRTrackInfo, RRCarSpec, RRRobotConfig, RRSensors and RRControl. */
 #define RR_ABI_MIN_VERSION 2
 
@@ -412,7 +412,30 @@ typedef struct RRSensors {
     /* --- ABI 11 --- the surface under the car's centre: RR_SURF_*. Grip and drag
      * differ per surface (grass and gravel are slow, kerbs grip almost like tarmac). */
     int surface;
+
+    /* --- ABI 12 --- wheels and track limits. Wheel order: front left, front right,
+     * rear left, rear right. The white line is at +-half_width of the track point
+     * (RRTrackPoint) at the wheel's own track distance, so |wheel_track_pos| > that
+     * means the wheel is beyond the line.
+     * Track limits (races only): when all four wheels have been beyond the white line
+     * for RR_TRACK_LIMIT_DWELL seconds, that is a strike (and another every RR_TRACK_LIMIT_REPEAT s it stays out). The first RR_TRACK_LIMIT_WARNINGS
+     * strikes are warnings, every later one costs RR_TRACK_LIMIT_PENALTY s. No strike
+     * is given while the car is not in control: spun, sliding past the tyres' limit, or
+     * within RR_TRACK_LIMIT_GRACE s of contact with a car or a barrier, nor in the pit area.
+     * Kerbs and run-off count as beyond the line, as in real racing. */
+    float wheel_track_pos[4];  /* m from the centreline at each wheel, + = left */
+    int wheel_surface[4];      /* RR_SURF_* under each wheel */
+    int wheels_outside;        /* wheels beyond the white line, 0..4 */
+    int track_limit_strikes;   /* strikes so far this race */
+    int track_limit_exempt;    /* 1 while no strike can be given (see above) */
+    float track_limit_dwell;   /* s with all four wheels outside so far in this excursion */
 } RRSensors;
+
+#define RR_TRACK_LIMIT_WARNINGS 2
+#define RR_TRACK_LIMIT_PENALTY 5.0f  /* s */
+#define RR_TRACK_LIMIT_DWELL 0.25f   /* s */
+#define RR_TRACK_LIMIT_REPEAT 4.0f   /* s: staying outside earns another strike this often */
+#define RR_TRACK_LIMIT_GRACE 2.0f    /* s after contact, a spin or a slide */
 
 #define RR_SURF_TARMAC 0
 #define RR_SURF_KERB 1

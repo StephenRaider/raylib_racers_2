@@ -212,6 +212,13 @@ if(RR_BUILD_BOTS)
   # earlier sessions (practice, then qualifying) into the race.
   rr_add_robot(memcheck tests/memcheck/memcheck.c)
   rr_output(memcheck "${RR_OUT}/test_bots")  # not offered in the viewer's menus
+  # Track limits: all four wheels beyond the white line earns penalties; two wheels beyond it does not
+  rr_add_robot(limits tests/limits/limits.c)
+  rr_output(limits "${RR_OUT}/test_bots")
+  add_test(NAME limits_inside COMMAND rr_race --track oval --laps 2 --quiet --car $<TARGET_FILE:limits> --params pos=-0.9)
+  set_tests_properties(limits_inside PROPERTIES FAIL_REGULAR_EXPRESSION "pen \+")
+  add_test(NAME limits_outside COMMAND rr_race --track oval --laps 2 --quiet --car $<TARGET_FILE:limits> --params pos=-1.3)
+  set_tests_properties(limits_outside PROPERTIES PASS_REGULAR_EXPRESSION "pen \+")
   add_test(NAME weekend_memory COMMAND rr_race --track oval --laps 1 --quiet --practice 1 --qualifying
            --car $<TARGET_FILE:memcheck> --params expect=2 --car $<TARGET_FILE:memcheck> --params expect=2)
   add_test(NAME weekend_memory_fresh COMMAND rr_race --track oval --laps 1 --quiet --car $<TARGET_FILE:memcheck> --params expect=0)

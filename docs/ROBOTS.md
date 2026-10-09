@@ -127,6 +127,17 @@ centreline sample `track_index`, and `on_track`. `surface` (ABI 11) is what is u
 car's centre: `RR_SURF_TARMAC`, `_KERB`, `_GRASS`, `_GRAVEL`, `_DIRT`, `_PIT` or `_RUNOFF`. Kerbs and run-off
 grip almost like tarmac (97% and 95%), grass 70% with extra drag, gravel 55% with more, dirt 65%.
 
+Wheels and track limits (ABI 12): `wheel_track_pos[4]` and `wheel_surface[4]` (front left, front right,
+rear left, rear right) give each wheel's lateral position (m from the centreline, + = left; the white line is
+at +-`half_width` of the track point there) and surface; `wheels_outside` counts the wheels beyond the line.
+In a race, all four wheels beyond the white line for `RR_TRACK_LIMIT_DWELL` (0.25 s) is a strike, and another
+for every 4 s it stays out. The first two strikes are warnings, each later one adds 5 s to the race time (it
+shows in `penalties` / `penalty_time` and the race log). Putting two wheels over the line, on a kerb or run-off,
+is free. No strike while the car is not in control: spun (more than 0.6 rad off the track direction), the front
+tyres past their limit or the car sliding sideways (over about 7 degrees), or within 2 s of contact with a car or a
+barrier, nor in the pit area. `track_limit_strikes`, `track_limit_exempt` and `track_limit_dwell` show the state.
+The range finders (`track[]`) still read -1 once the car's centre is off the tarmac.
+
 Consumables and pit:
 
 | Field | Meaning |
