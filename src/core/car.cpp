@@ -46,7 +46,7 @@ const CarParams::Field* CarParams::fields(int* count) {
         F(tireCoolBase), F(tireCoolSpeed), F(blanketTemp), F(brakeHeatCap), F(brakeCoolBase), F(brakeCoolSpeed),
         F(brakeToRim), F(rimHeatCap), F(rimCoolBase), F(rimCoolSpeed), F(rimToTyre), F(brakeTempLo), F(brakeTempHi), F(maxAeroLoss), F(damageForMaxLoss), F(maxDragGain), F(maxPowerLoss), F(maxGripLoss), F(torqueScale),
         F(pitServiceScale), F(engineV8), F(noRefuel), F(kersPower), F(kersEnergy), F(kersHarvest), F(kersStore),
-        F(drsDragScale), F(drsDownforceScale), F(kersMaxTorque), F(kersEfficiency), F(drsFlapOpenTime), F(drsFlapCloseTime),
+        F(drsDragScale), F(drsDownforceScale), F(kersMaxTorque), F(kersEfficiency), F(kersDeployEfficiency), F(drsFlapOpenTime), F(drsFlapCloseTime),
     };
 #undef F
     *count = (int)(sizeof f / sizeof f[0]);
@@ -229,12 +229,12 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
         const float want = clampf(in.kers, 0, 1) * accel;
         const float omega = std::max(c.rpm, p.idleRpm) * (2 * kPi / 60.0f);
         kersTorque = std::min(want * p.kersPower / omega, want * p.kersMaxTorque);
-        const float room = std::min(c.kersCharge, p.kersEnergy - c.kersDeployed);  // J left this step may use
+        const float room = std::min(c.kersCharge * p.kersDeployEfficiency, p.kersEnergy - c.kersDeployed);  // mechanical J left
         const float power = kersTorque * omega;
         if (power * dt > room) kersTorque = room / (dt * omega);
         c.kersPowerNow = kersTorque * omega;
         const float used = c.kersPowerNow * dt;
-        c.kersCharge -= used;
+        c.kersCharge = std::max(0.0f, c.kersCharge - used / p.kersDeployEfficiency);  // the store gives up more than the crank gets
         c.kersDeployed += used;
     } else {
         c.kersPowerNow = 0;

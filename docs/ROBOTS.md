@@ -190,7 +190,7 @@ more (at most three) get one, starting 40 m after the corner and ending 130 m be
   (33 s at full power) and when the store is empty. Braking recovers energy
   automatically: the motor-generator takes up to 120 kW of the rear braking force (the
   total braking is what the pedal asks for), 4 MJ a lap at most, and 85% of that reaches the
-  4 MJ store. Its weight is in the car's 642 kg. Fuel use is the engine's alone.
+  4 MJ store. Deploying loses 10% on the way out (4 MJ a lap at the crank costs 4.44 MJ from the store), so a braking-and-deploy round trip returns about 77%. The lap limits count energy at the motor-generator's shaft. Its weight is in the car's 642 kg. Fuel use is the engine's alone.
 - **DRS** opens the rear-wing flap: drag x0.78 and downforce x0.90 (all lost at the rear axle,
   so the balance moves forward), over about 0.25 s (closing takes 0.15 s). In a race, a car
   earns it for a zone when it is within `RR_DRS_GAP` (1 s) of the car ahead when it crosses

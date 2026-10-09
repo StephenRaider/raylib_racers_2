@@ -98,7 +98,7 @@ struct CarParams {
     // 2013's energy recovery and drag reduction (all zero/1 = the car has neither).
     // KERS: a motor-generator of kersPower W on the crankshaft. Under braking it takes
     // part of the rear braking force and charges the store (kersHarvest J a lap at most,
-    // 85% ends up in the store); on request it adds up to kersPower W to the engine, at
+    // 85% ends up in the store; 90% of what leaves it reaches the crank); on request it adds up to kersPower W to the engine, at
     // most kersEnergy J a lap, from a store of kersStore J. Its weight is in the car's
     // minimum mass already. DRS: the open flap scales the drag coefficient by drsDragScale
     // and the downforce by drsDownforceScale, the loss all at the rear axle.
@@ -106,6 +106,7 @@ struct CarParams {
     float drsDragScale = 1.0f, drsDownforceScale = 1.0f;
     float kersMaxTorque = 200.0f;  // N m the motor-generator adds at the crank, whatever the revs
     float kersEfficiency = 0.85f;  // share of the recovered energy that reaches the store
+    float kersDeployEfficiency = 0.90f;  // share of the energy drawn from the store that reaches the crank
     float drsFlapOpenTime = 0.25f, drsFlapCloseTime = 0.15f;  // s for the flap to travel
 
     float wheelbase() const { return cgToFront + cgToRear; }
