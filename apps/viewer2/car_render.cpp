@@ -120,14 +120,32 @@ bool CarRender::load(const std::string& dir, const Finish& paint, std::string* e
     int steerMat = -1;
     for (size_t k = 0; k < mats.size(); ++k)
         if (mats[k].str().rfind("Wheel1Mtl", 0) == 0) steerMat = (int)k + 1;
-    return loadPart(dir + "/body.glb", paint, livery, &body_parts_, false, 0, err, &steer_parts_, steerMat) &&
-           loadPart(dir + "/wheel_front.glb", paint, -1, &wheel_parts_[0], true, wheels_[0].radius, err) &&
-           loadPart(dir + "/wheel_rear.glb", paint, -1, &wheel_parts_[1], true, wheels_[2].radius, err);
+    if (!loadPart(dir + "/body.glb", paint, livery, &body_parts_, false, 0, err, &steer_parts_, steerMat) ||
+        !loadPart(dir + "/wheel_front.glb", paint, -1, &wheel_parts_[0], true, wheels_[0].radius, err) ||
+        !loadPart(dir + "/wheel_rear.glb", paint, -1, &wheel_parts_[1], true, wheels_[2].radius, err))
+        return false;
+    // the DRS flap: its own file, whose node sits at the hinge (raylib bakes that into the
+    // vertices, so the flap loads closed, in the body's frame)
+    const mjson::Value& drs = j["drs"];
+    if (drs.type == mjson::Value::Object) {
+        drsPivot_ = {(float)drs["pivot"][0].num(), (float)drs["pivot"][1].num(), (float)drs["pivot"][2].num()};
+        drsAxis_ = {(float)drs["axis"][0].num(1), (float)drs["axis"][1].num(), (float)drs["axis"][2].num()};
+        drsMax_ = (float)drs["max_angle_deg"].num() * DEG2RAD;
+        int drsLivery = -1;
+        for (size_t k = 0; k < drs["materials"].size(); ++k)
+            if (drs["materials"][k].str() == j["source_material"].str()) drsLivery = (int)k + 1;
+        if (!loadPart(dir + "/" + drs["file"].str(), paint, drsLivery, &drs_parts_, false, 0, err)) return false;
+    }
+    return true;
 }
 
 void CarRender::shareFrom(const CarRender& src) {
     body_parts_ = src.body_parts_;
     steer_parts_ = src.steer_parts_;
+    drs_parts_ = src.drs_parts_;
+    drsPivot_ = src.drsPivot_;
+    drsAxis_ = src.drsAxis_;
+    drsMax_ = src.drsMax_;
     wheel_parts_[0] = src.wheel_parts_[0];
     wheel_parts_[1] = src.wheel_parts_[1];
     for (int i = 0; i < 4; ++i) wheels_[i] = src.wheels_[i];
@@ -142,11 +160,12 @@ void CarRender::unload() {
     if (!owner_) {
         body_parts_.clear();
         steer_parts_.clear();
+        drs_parts_.clear();
         wheel_parts_[0].clear();
         wheel_parts_[1].clear();
         return;
     }
-    for (auto* list : {&body_parts_, &steer_parts_, &wheel_parts_[0], &wheel_parts_[1]}) {
+    for (auto* list : {&body_parts_, &steer_parts_, &drs_parts_, &wheel_parts_[0], &wheel_parts_[1]}) {
         for (Part& p : *list) UnloadMesh(p.mesh);
         list->clear();
     }
@@ -225,6 +244,12 @@ void CarRender::update(const rr::Car& car, const rr::Track& track, const TrackSc
         steerM_ = MatrixMultiply(MatrixMultiply(MatrixTranslate(-hub.x, -hub.y, -hub.z), MatrixRotate(ax, a)),
                                  MatrixTranslate(hub.x, hub.y, hub.z));
     }
+    // the DRS flap: about its hinge, the open amount set by setDrsOpen
+    {
+        const Vector3 p = drsPivot_;
+        drsM_ = MatrixMultiply(MatrixMultiply(MatrixTranslate(-p.x, -p.y, -p.z), MatrixRotate(Vector3Normalize(drsAxis_), drsOpen_ * drsMax_)),
+                               MatrixTranslate(p.x, p.y, p.z));
+    }
     // wheels: on the road, front ones steered, all spinning with the car's speed
     for (int i = 0; i < 4; ++i) {
         const Wheel& wh = wheels_[i];
@@ -240,6 +265,7 @@ void CarRender::update(const rr::Car& car, const rr::Track& track, const TrackSc
 void CarRender::draw(gfx::Renderer& r) const {
     for (const Part& p : body_parts_) r.draw(p.mesh, p.mat, body_);
     for (const Part& p : steer_parts_) r.draw(p.mesh, p.mat, MatrixMultiply(steerM_, body_));
+    for (const Part& p : drs_parts_) r.draw(p.mesh, p.mat, MatrixMultiply(drsM_, body_));
     for (int i = 0; i < 4; ++i)
         for (const Part& p : wheel_parts_[wheels_[i].front ? 0 : 1]) r.draw(p.mesh, p.mat, wheel_[i]);
 }
@@ -247,6 +273,7 @@ void CarRender::draw(gfx::Renderer& r) const {
 void CarRender::drawShadow(gfx::Renderer& r) const {
     for (const Part& p : body_parts_) r.drawShadow(p.mesh, body_);
     for (const Part& p : steer_parts_) r.drawShadow(p.mesh, MatrixMultiply(steerM_, body_));
+    for (const Part& p : drs_parts_) r.drawShadow(p.mesh, MatrixMultiply(drsM_, body_));
     for (int i = 0; i < 4; ++i)
         for (const Part& p : wheel_parts_[wheels_[i].front ? 0 : 1]) r.drawShadow(p.mesh, wheel_[i]);
 }

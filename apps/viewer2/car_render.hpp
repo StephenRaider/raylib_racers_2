@@ -24,6 +24,10 @@ public:
 
     // Follows the car: wheels on the road, the body on its suspension. dt in seconds.
     void update(const rr::Car& car, const rr::Track& track, const TrackScene& scene, float dt);
+    // The DRS flap (car.json "drs"): 0 closed, 1 fully open; it turns about its hinge by
+    // up to drs.max_angle_deg. Applied by the next update().
+    void setDrsOpen(float open) { drsOpen_ = open < 0 ? 0 : open > 1 ? 1 : open; }
+    bool hasDrs() const { return !drs_parts_.empty(); }
     void draw(gfx::Renderer& r) const;
     void drawShadow(gfx::Renderer& r) const;
 
@@ -47,6 +51,11 @@ private:
     Vector3 steerHub_{-0.028f, 0.50f, 0.61f};  // body frame
     Vector3 steerAxis_{0.0f, 0.2f, 1.0f};
     Matrix steerM_ = MatrixIdentity();
+    std::vector<Part> drs_parts_;       // the rear wing's flap, turned about its hinge
+    Vector3 drsPivot_{0, 0, 0};         // body frame
+    Vector3 drsAxis_{1, 0, 0};
+    float drsMax_ = 0, drsOpen_ = 0;
+    Matrix drsM_ = MatrixIdentity();
     std::vector<Part> wheel_parts_[2];  // front, rear (left-side wheel)
     std::vector<gfx::TextureSet*> sets_;
     std::vector<Model> models_;         // keep the glTF textures alive
