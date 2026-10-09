@@ -244,7 +244,9 @@ void CarRender::update(const rr::Car& car, const rr::Track& track, const TrackSc
         steerM_ = MatrixMultiply(MatrixMultiply(MatrixTranslate(-hub.x, -hub.y, -hub.z), MatrixRotate(ax, a)),
                                  MatrixTranslate(hub.x, hub.y, hub.z));
     }
-    // the DRS flap: about its hinge, the open amount set by setDrsOpen
+    // the DRS flap: about its hinge, as far open as the simulated flap is (car.state.drsFlap, 0..1;
+    // the race opens it in a zone on request and it closes on the brakes)
+    drsOpen_ = std::clamp(car.state.drsFlap, 0.0f, 1.0f);
     {
         const Vector3 p = drsPivot_;
         drsM_ = MatrixMultiply(MatrixMultiply(MatrixTranslate(-p.x, -p.y, -p.z), MatrixRotate(Vector3Normalize(drsAxis_), drsOpen_ * drsMax_)),

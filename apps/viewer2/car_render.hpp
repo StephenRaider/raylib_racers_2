@@ -25,7 +25,8 @@ public:
     // Follows the car: wheels on the road, the body on its suspension. dt in seconds.
     void update(const rr::Car& car, const rr::Track& track, const TrackScene& scene, float dt);
     // The DRS flap (car.json "drs"): 0 closed, 1 fully open; it turns about its hinge by
-    // up to drs.max_angle_deg. Applied by the next update().
+    // up to drs.max_angle_deg. update() sets it from the simulated flap (CarState::drsFlap), so this is
+    // only for a viewer without a race.
     void setDrsOpen(float open) { drsOpen_ = open < 0 ? 0 : open > 1 ? 1 : open; }
     bool hasDrs() const { return !drs_parts_.empty(); }
     void draw(gfx::Renderer& r) const;
