@@ -36,7 +36,20 @@ bool CarRender::loadPart(const std::string& file, const Finish& paint, int liver
         const Mesh& src = m.meshes[i];
         const int mi = m.meshMaterial[i];
         Texture2D tex = m.materials[mi].maps[MATERIAL_MAP_ALBEDO].texture;
-        if (tex.id) {
+        if (mi == liveryMaterial && !liveryFile_.empty()) {
+            // a repaint (livery.png next to car.json) in place of the embedded paint, shared by the body and the flap
+            if (!liveryTex_.id) {
+                Image img = LoadImage(liveryFile_.c_str());
+                if (img.data) {
+                    ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8);  // paint is opaque
+                    liveryTex_ = LoadTextureFromImage(img);
+                    GenTextureMipmaps(&liveryTex_);
+                    SetTextureFilter(liveryTex_, TEXTURE_FILTER_ANISOTROPIC_16X);
+                }
+                UnloadImage(img);
+            }
+            if (liveryTex_.id) tex = liveryTex_;
+        } else if (tex.id) {
             GenTextureMipmaps(&tex);
             SetTextureFilter(tex, TEXTURE_FILTER_ANISOTROPIC_16X);
         }
@@ -120,6 +133,7 @@ bool CarRender::load(const std::string& dir, const Finish& paint, std::string* e
     int steerMat = -1;
     for (size_t k = 0; k < mats.size(); ++k)
         if (mats[k].str().rfind("Wheel1Mtl", 0) == 0) steerMat = (int)k + 1;
+    liveryFile_ = FileExists((dir + "/livery.png").c_str()) ? dir + "/livery.png" : std::string();
     if (!loadPart(dir + "/body.glb", paint, livery, &body_parts_, false, 0, err, &steer_parts_, steerMat) ||
         !loadPart(dir + "/wheel_front.glb", paint, -1, &wheel_parts_[0], true, wheels_[0].radius, err) ||
         !loadPart(dir + "/wheel_rear.glb", paint, -1, &wheel_parts_[1], true, wheels_[2].radius, err))
@@ -169,6 +183,8 @@ void CarRender::unload() {
         for (Part& p : *list) UnloadMesh(p.mesh);
         list->clear();
     }
+    if (liveryTex_.id) UnloadTexture(liveryTex_);
+    liveryTex_ = {};
     for (gfx::TextureSet* s : sets_) {
         UnloadTexture(s->normal);
         UnloadTexture(s->orm);

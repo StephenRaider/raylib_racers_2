@@ -60,6 +60,8 @@ private:
     std::vector<Part> wheel_parts_[2];  // front, rear (left-side wheel)
     std::vector<gfx::TextureSet*> sets_;
     std::vector<Model> models_;         // keep the glTF textures alive
+    std::string liveryFile_;            // dir/livery.png, if there is one
+    Texture2D liveryTex_{};
 
     struct Wheel { Vector3 hub; float radius; bool front, mirrored; };
     Wheel wheels_[4]{};                 // FL, FR, RL, RR

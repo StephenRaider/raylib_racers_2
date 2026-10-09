@@ -100,9 +100,10 @@ def subset(prim, mask, offset=None):
     return dict(mat=prim["mat"], pos=pos, nrm=prim["nrm"][used], uv=prim["uv"][used], idx=inv.reshape(-1, 3))
 
 
-def write_glb(path, src, src_bin, parts, node_name, translation=None, animation=None):
+def write_glb(path, src, src_bin, parts, node_name, translation=None, animation=None, textures=None):
     """One node (at `translation`) with one mesh of `parts`; materials and their textures are
-    copied from `src`, in the source's order. animation: (axis, max angle in rad) -> "drs_open"."""
+    copied from `src`, in the source's order. animation: (axis, max angle in rad) -> "drs_open".
+    textures: {source material name: PNG bytes, or a file name to reference} replaces that material's base colour image."""
     used = sorted({p["mat"] for p in parts})
     out = {"asset": {"version": "2.0", "generator": "RR2 rig_drs"},
            "scene": 0, "scenes": [{"nodes": [0]}],
@@ -148,9 +149,14 @@ def write_glb(path, src, src_bin, parts, node_name, translation=None, animation=
                 si = t["source"]
                 if si not in img_map:
                     im = src["images"][si]
-                    bv = src["bufferViews"][im["bufferView"]]
-                    data = src_bin[bv.get("byteOffset", 0): bv.get("byteOffset", 0) + bv["byteLength"]]
-                    out["images"].append({"bufferView": add_view(bytes(data)), "mimeType": im["mimeType"], "name": im.get("name", "")})
+                    repl = textures.get(md["name"]) if textures and key == "baseColorTexture" else None
+                    if isinstance(repl, str):      # a file next to the glb, not embedded
+                        out["images"].append({"uri": repl, "name": im.get("name", "")})
+                    else:
+                        if repl is None:
+                            bv = src["bufferViews"][im["bufferView"]]
+                            repl = src_bin[bv.get("byteOffset", 0): bv.get("byteOffset", 0) + bv["byteLength"]]
+                        out["images"].append({"bufferView": add_view(bytes(repl)), "mimeType": im.get("mimeType", "image/png"), "name": im.get("name", "")})
                     img_map[si] = len(out["images"]) - 1
                 t["source"] = img_map[si]
                 out["textures"].append(t)
