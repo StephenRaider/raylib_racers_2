@@ -47,7 +47,7 @@ re-scans `bots/` by itself).
 
 | Call | When | Notes |
 |---|---|---|
-| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 11; the host also loads robots built for ABI 2 and later) |
+| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 13; the host also loads robots built for ABI 2 and later) |
 | `create(track, car, index, params, config)` | once per car | return your state, or `NULL` to refuse. Plan here: you get the full track geometry and car spec. |
 | `drive(self, sensors, control)` | every 1/robot-hz s | `control` arrives zeroed except `gear`. Fill it in. |
 | `destroy(self)` | end of race | free your state |
@@ -218,7 +218,7 @@ Flags (ABI 3):
 | Field | Meaning |
 |---|---|
 | `blue_flag`, `blue_flag_car`, `blue_flag_ds` | a car that is lapping you is within `RR_BLUE_FLAG_RANGE` (60 m or 1.2 s) behind: let it by. Holding it up within 30 m for more than `RR_BLUE_FLAG_LIMIT` (8 s) costs a `RR_BLUE_FLAG_PENALTY` (5 s) time penalty, added to your race time (once per lapping car) |
-| `penalties`, `penalty_time` | time penalties so far and the seconds they add |
+| `penalties`, `penalty_time` | time penalties so far and the seconds they add (not counting `penalty_owed`, penalties still to serve in a stop, ABI 13) |
 
 Other cars, for racecraft: `nearby[num_nearby]` lists up to 8 cars, nearest
 first by track distance. Each `RROpponent` has `ds` (track distance, + ahead),
@@ -301,7 +301,8 @@ the lane from the track, so you must have moved across before `lane_start_s`.
 A stop, step by step:
 
 1. Before `entry_s`, decide to stop and steer off the racing line towards
-   `lane_offset`, braking to the limit by `lane_start_s`.
+   `lane_offset`, braking to the limit by the entry line (`entry_s`; ABI 13, see
+   below. Older robots only have to be at the limit by `lane_start_s`).
 2. In the lane (`pit_state == RR_PIT_LANE`) the host's limiter cuts throttle
    above `speed_limit`. Set `pit_request` and the order fields.
 3. Move to `box_offset` and stop within about 2.5 m of `pit_box_s`. The crew
@@ -312,6 +313,37 @@ A stop, step by step:
    `pit_service_scale`.
 4. When `pit_state` turns to `RR_PIT_DONE`, drive back to `lane_offset`, then
    rejoin the track after `lane_end_s`.
+
+**Pit road rules and penalties to serve (ABI 13).** The *pit road* is the part of
+the track from the entry line (`entry_s`) to the exit line (`exit_s`) that is on the pit
+side of the white line (`pit_zone` is 1 there; `pit_speed_limit` is the limit). For a robot
+built for ABI 13 or later:
+
+| Rule | Penalty |
+|---|---|
+| Speed: more than `RR_PIT_SPEED_TOLERANCE` (0.5 m/s) over the limit on the pit road. Be at the limit *at* the entry line | `RR_PEN_PIT_SPEEDING` (5 s), `RR_PEN_PIT_SPEEDING_HIGH` (10 s) if more than `RR_PIT_SPEED_HIGH` (1.4 m/s, about 5 km/h) over; once per visit, the worse one counts |
+| Exit line: after the lane, keep the car's centre on the pit side of the white line until `RR_PIT_EXIT_MARGIN` (15 m) before `exit_s` | `RR_PEN_PIT_EXIT` (5 s) |
+
+`pit_limiter` (`RRControl`) engages the host's limiter, which cuts the throttle and brakes
+above the limit anywhere on the pit road; it cannot be at the limit for you at the entry
+line. `pit_speeding` shows how far over the limit the car is and `pit_limiter` (`RRSensors`)
+whether the limiter is acting. Robots built for older ABIs get the limiter automatically in
+the lane (`lane_start_s` to `lane_end_s`, as before) and these two rules do not apply.
+
+Causing a collision applies to every robot, in races only: the car whose nose hits another
+car's side or rear at a closing speed of at least `RR_PEN_COLLISION_SPEED` (3 m/s) gets
+`RR_PEN_COLLISION` (5 s), and `RR_PEN_COLLISION_HIGH` (10 s) from `RR_PEN_COLLISION_HIGH_SPEED`
+(10 m/s). Wheel to wheel, head-on, and a car that was itself just knocked into another (within 1 s)
+are racing incidents. Contact penalties are 2 s apart at most.
+
+These three penalties are *served*: they are owed (`penalty_owed`) and the next stop in the
+box holds the car still for that long before the crew starts (`service_penalty_left`,
+`pit_state == RR_PIT_SERVICE`), with the crew's hands off the car. A stop with nothing to
+fit (`pit_request` set, no fuel, tyres or repair) only serves the penalty and does not count
+as a pit stop. Whatever is still owed when the car takes the flag is added to the race time.
+Track limit, blue flag and two-compound penalties keep adding to the race time at once. The
+race log lists served penalties with 0 s when given and a line when served (`penalty_served`
+in the JSON, per stop and per car).
 
 **The timing screen and race rules (ABI 5).** Every team sees the same
 timing screen: `timing[num_timing]`, in race order, one `RRTimingEntry` per

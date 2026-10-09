@@ -29,8 +29,8 @@
 extern "C" {
 #endif
 
-#define RR_ABI_VERSION 12
-/* Robots built for ABI 2 to 11 still load: later versions only appended
+#define RR_ABI_VERSION 13
+/* Robots built for ABI 2 to 12 still load: later versions only appended
  * fields to RRTrackInfo, RRCarSpec, RRRobotConfig, RRSensors and RRControl. */
 #define RR_ABI_MIN_VERSION 2
 
@@ -429,6 +429,14 @@ typedef struct RRSensors {
     int track_limit_strikes;   /* strikes so far this race */
     int track_limit_exempt;    /* 1 while no strike can be given (see above) */
     float track_limit_dwell;   /* s with all four wheels outside so far in this excursion */
+
+    /* --- ABI 13 --- pit road and penalties to serve (see RR_PIT_SPEED_TOLERANCE) */
+    float pit_speed_limit;     /* m/s, 0 when the track has no pit lane */
+    int pit_zone;              /* 1 while on the pit road (entry line to exit line, pit side of the white line) */
+    int pit_limiter;           /* 1 while the host's limiter is acting */
+    float pit_speeding;        /* m/s over the limit right now, 0 if not over */
+    float penalty_owed;        /* s of penalties still to serve in a stop (or to be added to the race time) */
+    float service_penalty_left;/* s the car is held still for a penalty, while RR_PIT_SERVICE (before the crew starts) */
 } RRSensors;
 
 #define RR_TRACK_LIMIT_WARNINGS 2
@@ -436,6 +444,38 @@ typedef struct RRSensors {
 #define RR_TRACK_LIMIT_DWELL 0.25f   /* s */
 #define RR_TRACK_LIMIT_REPEAT 4.0f   /* s: staying outside earns another strike this often */
 #define RR_TRACK_LIMIT_GRACE 2.0f    /* s after contact, a spin or a slide */
+
+/* --- ABI 13: pit lane rules and penalties served in the pits ---
+ * Pit road: from the pit entry line (RRPitInfo.entry_s) to the exit line (exit_s), on the pit side of
+ * the white line. Robots built for ABI 13 or later must keep to RRPitInfo.speed_limit there:
+ *  - pit_limiter (RRControl) engages the host's limiter, which cuts the throttle and brakes above the
+ *    limit; without it the car may go faster and is caught speeding. Be at the limit by the entry line
+ *    (the limiter starts when the car is already inside).
+ *  - Speeding: more than RR_PIT_SPEED_TOLERANCE m/s over the limit is a RR_PEN_PIT_SPEEDING time penalty
+ *    (RR_PEN_PIT_SPEEDING_HIGH if more than RR_PIT_SPEED_HIGH m/s over), once per visit, escalating to
+ *    the higher one.
+ *  - Exit line: after the pit lane, the car's centre must stay on the pit side of the white line until
+ *    RR_PIT_EXIT_MARGIN m before exit_s; crossing early is a RR_PEN_PIT_EXIT penalty.
+ * Robots built for older ABIs get the limiter on automatically in the pit lane (lane_start_s to
+ * lane_end_s, as before) and none of the pit road rules above.
+ * Rules for every robot, in races only:
+ *  - Causing a collision: a car whose nose hits another car's side or rear at a closing speed of at
+ *    least RR_PEN_COLLISION_SPEED m/s gets RR_PEN_COLLISION s (RR_PEN_COLLISION_HIGH s from
+ *    RR_PEN_COLLISION_HIGH_SPEED m/s). Wheel to wheel and head-on contact is a racing incident.
+ * Penalties from pit speeding, the exit line and collisions are served: they are owed (penalty_owed)
+ * and the next stop in the box holds the car still for that long before the crew starts, with the
+ * crew's hands off the car (service_penalty_left). Whatever is still owed when the car takes the flag
+ * is added to its race time. Track limits and blue flag penalties keep adding to the race time at once. */
+#define RR_PIT_SPEED_TOLERANCE 0.5f   /* m/s over the limit before it counts */
+#define RR_PIT_SPEED_HIGH 1.4f        /* m/s over the limit (about 5 km/h): the higher penalty */
+#define RR_PIT_EXIT_MARGIN 15.0f      /* m before exit_s where the white line may be crossed */
+#define RR_PEN_PIT_SPEEDING 5.0f      /* s */
+#define RR_PEN_PIT_SPEEDING_HIGH 10.0f
+#define RR_PEN_PIT_EXIT 5.0f
+#define RR_PEN_COLLISION 5.0f
+#define RR_PEN_COLLISION_HIGH 10.0f
+#define RR_PEN_COLLISION_SPEED 3.0f       /* m/s closing speed */
+#define RR_PEN_COLLISION_HIGH_SPEED 10.0f
 
 #define RR_SURF_TARMAC 0
 #define RR_SURF_KERB 1
@@ -474,6 +514,9 @@ typedef struct RRControl {
     /* --- ABI 10 --- */
     float kers;         /* 0 .. 1: share of kers_power to deploy, scaled by the throttle (0 = harvest only) */
     int drs;            /* 1: open the DRS flap (if RR_DRS_AVAILABLE) */
+
+    /* --- ABI 13 --- */
+    int pit_limiter;    /* 1: engage the pit limiter (see RR_PIT_SPEED_TOLERANCE); robots of older ABIs get it automatically */
 } RRControl;
 
 /* How a session went for this car (ABI 8). */

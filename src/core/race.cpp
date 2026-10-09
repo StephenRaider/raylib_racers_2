@@ -189,6 +189,7 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
                 *err = "robot '" + c.robotName + "' refused car " + std::to_string(i) + " (params: \"" + c.params + "\")";
             return false;
         }
+        c.abi = c.driver->abi();
         c.robotCfg.initial_fuel = clampf(c.robotCfg.initial_fuel, 0.0f, c.phys.fuelCapacity);
         if (c.phys.noRefuel > 0.5f) c.robotCfg.initial_fuel = c.phys.fuelCapacity;
         if (cfg.fuelLimit > 0) c.robotCfg.initial_fuel = std::min(c.robotCfg.initial_fuel, cfg.fuelLimit);
@@ -296,6 +297,12 @@ void Race::computeSensors(Car& c) {
     s.track_limit_strikes = c.limitStrikes;
     s.track_limit_exempt = c.limitExempt ? 1 : 0;
     s.track_limit_dwell = c.outsideT;
+    s.pit_speed_limit = track_.hasPit() ? track_.pit().speed_limit : 0.0f;
+    s.pit_zone = c.pitZone ? 1 : 0;
+    s.pit_limiter = c.pitLimiter ? 1 : 0;
+    s.pit_speeding = c.pitOver;
+    s.penalty_owed = c.penaltyOwed;
+    s.service_penalty_left = c.pitState == RR_PIT_SERVICE ? c.penaltyHold : 0.0f;
 
     std::normal_distribution<float> noise(0.0f, cfg_.sensorNoise);
     for (int k = 0; k < RR_NUM_TRACK_SENSORS; ++k) {
@@ -420,7 +427,7 @@ void Race::computeSensors(Car& c) {
     s.pit_state = c.pitState;
     s.pit_stops = c.pitStops;
     s.pit_box_s = c.pitBoxS;
-    s.service_time_left = c.pitState == RR_PIT_SERVICE ? c.serviceLeft : 0.0f;
+    s.service_time_left = c.pitState == RR_PIT_SERVICE ? c.serviceLeft : 0.0f;  // the crew's work, after any penalty hold
 
     if (c.phys.kersPower > 0) {
         s.kers_store = st.kersCharge;
@@ -701,12 +708,43 @@ void Race::resolveCarPair(Car& a, Car& b) {
             const Car& cb = cars_[ib];
             contacts_.push_back({time_, ia, ib, -vrel, ds, cb.lateral - ca.lateral, wrapAngle(cb.state.yaw - ca.state.yaw)});
         }
+        // Who caused it: the car whose nose hit the other car's side or rear (a car that was itself just
+        // knocked into someone is not to blame). Wheel to wheel and head-on are racing incidents.
+        const Vec2 pa = bestC - a.state.pos, pb = bestC - b.state.pos;
+        const float noseA = dot(pa, fa), noseB = dot(pb, fb);
+        const bool aNose = noseA > 1.0f, bNose = noseB > 1.0f;
+        if (aNose != bNose) collisionFault(aNose ? a : b, -vrel);
+        a.lastContact = b.lastContact = time_;
         a.state.damage += vrel * vrel;
         b.state.damage += vrel * vrel;
         a.collisions++;
         b.collisions++;
         a.lastUncontrolled = b.lastUncontrolled = time_;
     }
+}
+
+// A penalty. Served ones are owed until a stop in the box holds the car still for that long, or the
+// flag adds what is left to the race time; the others add to the race time at once.
+void Race::givePenalty(Car& c, float seconds, const char* why, bool served) {
+    if (cfg_.session != RR_SESSION_RACE || over_ || c.finished || c.dnf) return;
+    c.penalties++;
+    char buf[200];
+    if (served) {
+        c.penaltyOwed += seconds;
+        std::snprintf(buf, sizeof buf, "%s (%.0f s to serve in the pits)", why, (double)seconds);
+    } else {
+        c.penaltyTime += seconds;
+        std::snprintf(buf, sizeof buf, "%s", why);
+    }
+    c.penaltyLog.push_back({time_, c.currentLap(cfg_.laps), served ? 0.0f : seconds, buf});
+}
+
+void Race::collisionFault(Car& c, float closing) {
+    if (closing < RR_PEN_COLLISION_SPEED || cfg_.session != RR_SESSION_RACE || c.distRaced < 0) return;
+    if (time_ - c.lastContact < 1.0 || time_ - c.lastCollisionPen < 2.0) return;
+    c.lastCollisionPen = time_;
+    const bool high = closing >= RR_PEN_COLLISION_HIGH_SPEED;
+    givePenalty(c, high ? RR_PEN_COLLISION_HIGH : RR_PEN_COLLISION, high ? "causing a serious collision" : "causing a collision", true);
 }
 
 // Where each wheel is and what it runs on, and the track-limits rule: all four wheels beyond
@@ -809,6 +847,14 @@ void Race::updateProgress(Car& c) {
                 c.twoCompoundPenalty = true;
                 c.penaltyLog.push_back({time_, c.lapsDone, RR_TWO_COMPOUND_PENALTY,
                                         "two-compound rule: finished having raced only one tyre compound"});
+            }
+            if (c.penaltyOwed > 0) {  // never served in the pits: it comes off the race time instead
+                c.penaltyTime += c.penaltyOwed;
+                char why[100];
+                std::snprintf(why, sizeof why, "%.0f s of penalties not served in the pits, added to the race time",
+                              (double)c.penaltyOwed);
+                c.penaltyLog.push_back({time_, c.lapsDone, c.penaltyOwed, why});
+                c.penaltyOwed = 0;
             }
             if (leaderFinish_ < 0) leaderFinish_ = time_;
             break;
@@ -920,10 +966,35 @@ void Race::updatePit(Car& c) {
     const bool inLane = track_.inPitLane(c.trackS) && c.lateral * side > divMid;
     const float speed = std::sqrt(c.state.vx * c.state.vx + c.state.vy * c.state.vy);
 
+    // The pit road: entry line to exit line, clear of the racing surface (ABI 13 rules).
+    c.pitZone = track_.inPitArea(c.trackS) && c.lateral * side > c.halfWidth + 1.0f;
+    c.pitOver = c.pitZone ? std::max(0.0f, speed - p.speed_limit) : 0.0f;
+    if (c.abi >= 13 && !c.finished && !c.dnf && !over_ && c.distRaced >= 0) {
+        if (c.pitOver > RR_PIT_SPEED_TOLERANCE) {
+            const float want = c.pitOver > RR_PIT_SPEED_HIGH ? RR_PEN_PIT_SPEEDING_HIGH : RR_PEN_PIT_SPEEDING;
+            if (want > c.pitOverPen) {
+                char why[120];
+                std::snprintf(why, sizeof why, "speeding in the pit road: %.1f km/h over the limit", (double)c.pitOver * 3.6);
+                givePenalty(c, want - c.pitOverPen, why, true);
+                c.pitOverPen = want;
+            }
+        }
+        // The exit line: after the lane, stay on the pit side of the white line until the exit.
+        if (c.pitInLane && !c.pitExitCrossed && track_.inSpan(c.trackS, p.lane_end_s, p.exit_s) &&
+            std::fmod(p.exit_s - c.trackS + track_.length(), track_.length()) > RR_PIT_EXIT_MARGIN && c.lateral * side < c.halfWidth) {
+            c.pitExitCrossed = true;
+            givePenalty(c, RR_PEN_PIT_EXIT, "crossed the pit exit line (left the pit road early)", true);
+        }
+    }
+    if (!track_.inPitArea(c.trackS)) {
+        c.pitInLane = c.pitExitCrossed = false;
+        c.pitOverPen = 0;
+    }
+
     if (inLane && !c.finished && !over_) c.pitLaneTime += cfg_.dt;
     switch (c.pitState) {
     case RR_PIT_NONE:
-        if (inLane && !c.dnf) c.pitState = RR_PIT_LANE;
+        if (inLane && !c.dnf) { c.pitState = RR_PIT_LANE; c.pitInLane = true; }
         break;
     case RR_PIT_LANE: {
         if (!inLane) { c.pitState = RR_PIT_NONE; break; }
@@ -935,9 +1006,14 @@ void Race::updatePit(Car& c) {
             c.pitOrder.pit_fuel = fuel;
             bool tyres = c.pitOrder.pit_tires >= RR_TIRE_SOFT && c.pitOrder.pit_tires <= RR_TIRE_HARD;
             if (!tyres) c.pitOrder.pit_tires = 0;
-            c.serviceLeft = c.phys.pitServiceScale *
-                            (kServiceBase + std::max(fuel / kFuelFlow, tyres ? kTireChange : 0.0f) +
-                             (c.pitOrder.pit_repair ? kRepairPer1000 * c.state.damage / 1000.0f : 0.0f));
+            const bool repair = c.pitOrder.pit_repair && c.state.damage > 0;
+            const bool work = fuel > 0 || tyres || repair;
+            // Penalties first: the car stands still with the crew's hands off it.
+            c.penaltyHold = c.penaltyOwed;
+            c.serviceLeft = !work ? 0.0f
+                                  : c.phys.pitServiceScale *
+                                        (kServiceBase + std::max(fuel / kFuelFlow, tyres ? kTireChange : 0.0f) +
+                                         (repair ? kRepairPer1000 * c.state.damage / 1000.0f : 0.0f));
             c.pitState = RR_PIT_SERVICE;
             Car::StopLog log;
             log.lap = c.currentLap(cfg_.laps);
@@ -948,6 +1024,7 @@ void Race::updatePit(Car& c) {
             log.wear[1] = c.state.tireWear[1];
             log.damage = c.state.damage;
             log.service = c.serviceLeft;
+            log.penaltyServed = c.penaltyHold;
             log.tiresBefore = c.state.compound;
             log.tiresFitted = c.pitOrder.pit_tires;
             log.repair = c.pitOrder.pit_repair != 0;
@@ -957,8 +1034,20 @@ void Race::updatePit(Car& c) {
         break;
     }
     case RR_PIT_SERVICE:
-        c.serviceLeft -= cfg_.dt;
-        if (c.serviceLeft <= 0) finishService(c);
+        if (c.penaltyHold > 0) {
+            c.penaltyHold -= cfg_.dt;
+            if (c.penaltyHold <= 0) {
+                c.penaltyHold = 0;
+                char why[100];
+                std::snprintf(why, sizeof why, "served %.0f s of penalties standing in the box", (double)c.penaltyOwed);
+                c.penaltyLog.push_back({time_, c.currentLap(cfg_.laps), 0.0f, why});
+                c.penaltyServedTotal += c.penaltyOwed;
+                c.penaltyOwed = 0;
+            }
+        } else {
+            c.serviceLeft -= cfg_.dt;
+        }
+        if (c.penaltyHold <= 0 && c.serviceLeft <= 0) finishService(c);
         break;
     case RR_PIT_DONE:
         if (!inLane) c.pitState = RR_PIT_NONE;
@@ -977,9 +1066,12 @@ void Race::finishService(Car& c) {
         c.lapsOnTires = 0;
     }
     if (c.pitOrder.pit_repair) c.state.damage = 0;
+    const bool work = !c.stopLog.empty() && c.stopLog.back().service > 0;  // else a stop only to serve penalties
     c.serviceLeft = 0;
-    c.pitStops++;
-    c.pitLaps.push_back(c.currentLap(cfg_.laps));
+    if (work) {
+        c.pitStops++;
+        c.pitLaps.push_back(c.currentLap(cfg_.laps));
+    }
     c.pitState = RR_PIT_DONE;
 }
 
@@ -1163,19 +1255,23 @@ void Race::step() {
             surf.vcurv = vcurv * dot(td, fwd) * dot(td, fwd);
         }
         RRControl in = c.control;
+        c.pitLimiter = false;
         if (!c.dnf && (c.finished || over_)) {
             in = coolDownControl(c);
         } else if (c.pitState == RR_PIT_SERVICE) {
             in = RRControl{};
             in.brake = 1;
             in.gear = c.state.gear;
-        } else if (c.pitState == RR_PIT_LANE || c.pitState == RR_PIT_DONE) {
-            // Pit limiter: no drive above the limit, braking well above it.
-            float over = c.state.vx - track_.pit().speed_limit;
+        } else if (c.abi >= 13 ? (c.pitZone && in.pit_limiter != 0)
+                                : (c.pitState == RR_PIT_LANE || c.pitState == RR_PIT_DONE)) {
+            // Pit limiter: no drive above the limit, braking well above it. Older robots get it in
+            // the lane; ABI 13 robots ask for it and may use it on the whole pit road.
+            float over = std::fabs(c.state.vx) - track_.pit().speed_limit;
             if (over > 0) {
                 in.accel = 0;
                 in.brake = std::max(in.brake, clampf(over * 0.3f, 0.0f, 1.0f));
             }
+            c.pitLimiter = true;
         }
         stepCar(c.state, c.phys, in, (c.robotCfg.auto_gear != 0) || c.finished || over_, surf, rates, dt);
         if (!c.finished && !c.dnf) {
@@ -1248,7 +1344,8 @@ void Race::printResults(FILE* out) const {
         std::string stops = std::to_string(c.pitStops);
         for (size_t k = 0; k < c.pitLaps.size(); ++k) stops += (k ? "," : " (L") + std::to_string(c.pitLaps[k]);
         if (!c.pitLaps.empty()) stops += ")";
-        if (c.penalties) stops += "  pen +" + std::to_string((int)c.penaltyTime) + "s";
+        if (c.penaltyTime > 0) stops += "  pen +" + std::to_string((int)c.penaltyTime) + "s";
+        if (c.penaltyServedTotal > 0) stops += "  served " + std::to_string((int)c.penaltyServedTotal) + "s";
         std::fprintf(out, " %3d  %-22s %-12s %10s %10s %6d %6d %s\n", c.position, c.name.c_str(),
                      c.robotName.c_str(), t.c_str(), fmtTime(c.bestLap).c_str(), c.lapsDone, c.collisions,
                      stops.c_str());
@@ -1272,8 +1369,8 @@ bool Race::writeJson(const std::string& path, double wallSeconds) const {
                      c.finished ? c.raceTime() : 0.0, c.bestLap);
         std::fprintf(f, "\"cpu_avg_ms\": %.4f, \"cpu_max_ms\": %.4f, \"cpu_overruns\": %d, ",
                      c.driveCalls ? 1000.0 * c.cpuTotal / (double)c.driveCalls : 0.0, 1000.0 * c.cpuMax, c.cpuOverruns);
-        std::fprintf(f, "\"penalties\": %d, \"penalty_time\": %.1f, \"blue_flags\": %d, ", c.penalties, c.penaltyTime,
-                     c.blueFlags);
+        std::fprintf(f, "\"penalties\": %d, \"penalty_time\": %.1f, \"penalty_served\": %.1f, \"blue_flags\": %d, ", c.penalties, c.penaltyTime,
+                     c.penaltyServedTotal, c.blueFlags);
         std::fprintf(f, "\"distance\": %.2f, \"collisions\": %d, \"damage\": %.1f, ", c.distRaced,
                      c.collisions, c.state.damage);
         std::fprintf(f, "\"fuel_left\": %.2f, \"tire_wear\": [%.3f, %.3f], \"tire_compound\": %d, \"pit_stops\": %d, "
@@ -1303,9 +1400,9 @@ bool Race::writeJson(const std::string& path, double wallSeconds) const {
             std::fprintf(f,
                          "%s\n      {\"lap\": %d, \"time\": %.2f, \"fuel_before\": %.2f, \"fuel_added\": %.2f, "
                          "\"tires_before\": \"%s\", \"tires_fitted\": \"%s\", \"wear\": [%.3f, %.3f], \"damage\": %.0f, "
-                         "\"repair\": %s, \"service\": %.2f, \"reason\": \"%s\"}",
+                         "\"repair\": %s, \"service\": %.2f, \"penalty_served\": %.1f, \"reason\": \"%s\"}",
                          k ? "," : "", s.lap, s.time, s.fuelBefore, s.fuelAdded, tyre[s.tiresBefore & 3],
-                         tyre[s.tiresFitted & 3], s.wear[0], s.wear[1], s.damage, s.repair ? "true" : "false", s.service,
+                         tyre[s.tiresFitted & 3], s.wear[0], s.wear[1], s.damage, s.repair ? "true" : "false", s.service, s.penaltyServed,
                          jsonEscape(s.reason).c_str());
         }
         std::fprintf(f, "]}%s\n", p + 1 < order_.size() ? "," : "");

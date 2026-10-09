@@ -81,7 +81,7 @@ struct Car {
     struct StopLog {
         int lap = 0;
         double time = 0;
-        float fuelBefore = 0, fuelAdded = 0, wear[2] = {0, 0}, damage = 0, service = 0;
+        float fuelBefore = 0, fuelAdded = 0, wear[2] = {0, 0}, damage = 0, service = 0, penaltyServed = 0;
         int tiresBefore = 0, tiresFitted = 0;  // RR_TIRE_*, 0 = kept
         bool repair = false;
         std::string reason;                    // the robot's status text as it stopped
@@ -112,7 +112,20 @@ struct Car {
     int blueFlags = 0;          // times a blue flag was shown
     int penalties = 0;
     float penaltyTime = 0;      // s added to the race time
+    float penaltyOwed = 0;      // s of served penalties not yet served (see givePenalty); added to the race time at the flag
+    float penaltyServedTotal = 0; // s of penalties served standing in the box
+    float penaltyHold = 0;      // s of the current stop spent standing still for those
     double raceTime() const { return finishTime + penaltyTime; }
+    int abi = 0;                // the robot's ABI version
+    // pit road rules
+    bool pitZone = false;       // on the pit road, entry line to exit line
+    bool pitLimiter = false;    // the limiter acted this step
+    float pitOver = 0;          // m/s over the limit now
+    float pitOverPen = 0;       // s of speeding penalty given in this visit
+    bool pitInLane = false;     // went down the pit lane in this visit
+    bool pitExitCrossed = false;
+    double lastCollisionPen = -1e9; // time of the last collision penalty, and of the last contact
+    double lastContact = -1e9;
 
     // after the flag: a cool-down lap into the pit lane
     bool parked = false;
@@ -193,6 +206,8 @@ private:
     void updateOrder();
     void writeTelemetry(const Car& c);
     void updatePit(Car& c);
+    void givePenalty(Car& c, float seconds, const char* why, bool served);
+    void collisionFault(Car& c, float closing);
     void updateBlueFlags();
     void updateWheels(Car& c);  // wheel positions, surfaces and track limits
     void updateDrs(Car& c);

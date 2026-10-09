@@ -877,10 +877,16 @@ float pitOffset(const RacingLine& r, int i, float boxS, bool serviced) {
         return lane;
     }
     if (r.inSpan(s, p.lane_end_s, p.exit_s)) {
-        float start = 5.0f;  // stay clear of the end of the pit wall
-        float len = std::max(10.0f, r.fwd(p.lane_end_s, p.exit_s) - start);
-        float u = smooth01((r.fwd(p.lane_end_s, s) - start) / len);
-        return lane + (line - lane) * u;
+        // Stay clear of the end of the pit wall, edge up to the white line, and cross it only in the last
+        // metres before the exit (RR_PIT_EXIT_MARGIN: crossing earlier is a penalty).
+        const float start = 5.0f, finalBlend = 0.8f * RR_PIT_EXIT_MARGIN;
+        const float d = r.fwd(p.lane_end_s, s), road = r.fwd(p.lane_end_s, p.exit_s);
+        const float edge = lane + (lane > 0 ? 1 : -1) * (r.tp[r.wrap(i)].half_width + 1.5f - std::fabs(lane));
+        if (road - d > finalBlend) {
+            float u = smooth01((d - start) / std::max(10.0f, road - finalBlend - start));
+            return lane + (edge - lane) * u;
+        }
+        return edge + (line - edge) * smooth01(1.0f - (road - d) / finalBlend);
     }
     return line;
 }
@@ -1294,13 +1300,13 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
             out->pit_fuel = r->order.pit_fuel;
             out->pit_tires = r->order.pit_tires;
             out->pit_repair = r->order.pit_repair;
-            // Brake for the limit by the lane start, then for the box.
-            float toLane = r->inSpan(s, p.lane_start_s, p.lane_end_s) ? 0.0f : r->fwd(s, p.lane_start_s);
+            // Brake for the limit by the pit entry line, then for the box.
+            float toLane = in->pit_zone || r->inSpan(s, p.entry_s, p.lane_end_s) ? 0.0f : r->fwd(s, p.entry_s);
             vTarget = std::min(vTarget, std::sqrt(vLim * vLim + 2 * 7.0f * toLane));
             float toBox = r->signedDs(s, in->pit_box_s);
             if (toBox > -3.0f) vTarget = std::min(vTarget, std::sqrt(2 * 3.0f * std::max(0.0f, toBox - 0.3f)));
             if (toBox < 0.6f && v < 3.0f) vTarget = 0;
-        } else if (r->inSpan(s, p.lane_start_s, p.lane_end_s)) {
+        } else if (in->pit_zone || r->inSpan(s, p.lane_start_s, p.lane_end_s)) {
             vTarget = std::min(vTarget, vLim);
             // Pulling out of the box: let cars already in the lane go by.
             if (v < 3.0f)
@@ -1330,6 +1336,7 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     if (!in->on_track && !pitting) out->accel = std::min(out->accel, 0.5f);
     // 2013's KERS on a full throttle with the wheels gripping, and the DRS flap whenever it is ours
     // and we are not braking or about to (it closes on the brakes by itself).
+    out->pit_limiter = in->pit_zone;  // the limiter backs up the speed plan on the pit road (ABI 13)
     out->kers = (in->kers_deploy_left > 0 && out->accel > 0.9f && in->wheel_spin < 0.05f && !pitting) ? 1.0f : 0.0f;
     out->drs = ((in->drs_state == RR_DRS_AVAILABLE || in->drs_state == RR_DRS_OPEN) && out->brake < 0.02f &&
                 out->accel > 0.9f && !coast && in->grip_use[1] < 1.0f)

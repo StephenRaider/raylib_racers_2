@@ -40,7 +40,7 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   (soft, medium and hard compounds, each with a temperature window), tyre, brake
   and rim temperatures, dirty air, slipstream, damage that costs downforce,
   power and grip, KERS and DRS on the 2013 car, and a pit lane with a speed limiter, a box per car and timed service (fuel,
-  tyres, repairs). After the flag each car runs a slow lap into the pit lane
+  tyres, repairs), pit road rules (speeding, the exit line) and collision penalties served standing in the box. After the flag each car runs a slow lap into the pit lane
   and parks behind its box.
 - **Robot API** (`include/rr/robot_api.h`): one C header. Sensors follow the
   TORCS SCR championship (angle, track position, 19 range finders, 36 opponent
