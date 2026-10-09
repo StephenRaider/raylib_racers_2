@@ -92,6 +92,20 @@ struct Renderer::Impl {
         return t.empty() || t[carLivery(i)].model == 0 || !stockPresent(t[carLivery(i)].model);
     }
 
+    // Glossy lacquer on every car; chrome on the McLaren and metallic silver on the Mercedes in their
+    // own team livery (not the Mercedes standing in for a team that asked for its own colour).
+    void applyFinish(int i) {
+        if (!cars[i]) return;
+        CarRender::Finish f;
+        f.roughness = 0.3f, f.metalness = 0.1f;
+        if (carPaint[i].a == 0 && carModel[i] == 8) {
+            f.metalness = 1.0f, f.roughness = 0.08f, f.clearcoat = 0.0f;
+        } else if (carPaint[i].a == 0 && carModel[i] == 2) {  // the Mercedes' metallic silver under the lacquer
+            f.metalness = 0.7f, f.roughness = 0.28f;
+        }
+        cars[i]->setFinish(f);
+    }
+
     CarRender* car(int i) { return i >= 0 && i < (int)cars.size() ? cars[i].get() : nullptr; }
 
     void ensureCars(const rr::Race& race) {
@@ -107,6 +121,7 @@ struct Renderer::Impl {
                         if (c.a) cars[i]->setPaint(c);
                         else cars[i]->clearPaint();
                         carPaint[i] = c;
+                        applyFinish(i);
                     }
                 }
                 return;
@@ -133,10 +148,6 @@ struct Renderer::Impl {
                 continue;
             }
             CarRender::Finish paint;
-            if (m == 2 || m == 8) {  // Mercedes and McLaren: bright metallic silver under the lacquer
-                paint.metalness = 0.7f;
-                paint.roughness = 0.28f;
-            }
             std::string err;
             if (cars[i]->load(assets + dir, paint, &err)) {
                 loaded[m] = cars[i].get();
@@ -149,6 +160,7 @@ struct Renderer::Impl {
             if (cars[i]) {
                 carPaint[i] = ownColour(i) ? teamColor(i) : Color{0, 0, 0, 0};
                 if (carPaint[i].a) cars[i]->setPaint(carPaint[i]);
+                applyFinish(i);
             }
     }
 

@@ -34,6 +34,8 @@ public:
     // The team colour: the body's paint in this colour, parts that are dark in the model's own paint
     // (floor, diffuser, cockpit housing, shoulder covers) plain black (livery_default.png and livery_mask.png in the model's
     // folder). Does nothing without them, or when the folder has a livery.png of its own.
+    // The finish of the bodywork's paint (this car only, even when it shares meshes with another).
+    void setFinish(const Finish& f);
     void setPaint(Color c);
     void clearPaint();   // back to the model's own livery
     // The tyre compound fitted (RR_TIRE_*, update() follows the car's): the lettering on the sidewall is
