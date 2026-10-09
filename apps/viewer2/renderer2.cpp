@@ -92,14 +92,16 @@ struct Renderer::Impl {
         return t.empty() || t[carLivery(i)].model == 0 || !stockPresent(t[carLivery(i)].model);
     }
 
-    // Glossy lacquer on every car; chrome on the Mercedes and McLaren in their own team livery
-    // (not the Mercedes standing in for a team that asked for its own colour).
+    // Glossy lacquer on every car; chrome on the McLaren and metallic silver on the Mercedes in their
+    // own team livery (not the Mercedes standing in for a team that asked for its own colour).
     void applyFinish(int i) {
         if (!cars[i]) return;
         CarRender::Finish f;
         f.roughness = 0.3f, f.metalness = 0.1f;
-        if ((carModel[i] == 2 || carModel[i] == 8) && carPaint[i].a == 0) {
+        if (carPaint[i].a == 0 && carModel[i] == 8) {
             f.metalness = 1.0f, f.roughness = 0.08f, f.clearcoat = 0.0f;
+        } else if (carPaint[i].a == 0 && carModel[i] == 2) {  // the Mercedes' metallic silver under the lacquer
+            f.metalness = 0.7f, f.roughness = 0.28f;
         }
         cars[i]->setFinish(f);
     }
