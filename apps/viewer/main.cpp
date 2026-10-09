@@ -52,7 +52,7 @@ std::vector<Algorithm> listAlgorithms(const Paths& paths) {
         // the team stats that suit its style (40 points over 8 stats), applied with
         // the menu's style button: Spongebob needs tyre management, Granny Doris can
         // spend on speed.
-        {"John Fone", "racingline", "", ""},
+        {"John F One", "racingline", "", ""},
         {"Spongebob", "spongebob", "", "tire_management=8,pit_stop=4,fuel_efficiency=4,brakes=4"},
         {"Dave", "dave", "", ""},
         {"Granny Doris", "granny", "", "tire_management=3,top_speed=6,acceleration=6"},

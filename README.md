@@ -47,7 +47,7 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   speed profile, plans its own pit strategy from the timing screen, overtakes
   and defends). In practice it runs each tyre compound, measures pace, wear and
   fuel, and uses what it learned in qualifying and the race. The default grid
-  drivers John Fone, Spongebob, Dave and Granny Doris are racingline with their
+  drivers John F One, Spongebob, Dave and Granny Doris are racingline with their
   own driving styles.
 - **Race weekends and championships**: practice, qualifying and race, with
   notes a robot keeps across the weekend; seasons over a calendar of tracks
@@ -137,7 +137,7 @@ each car goes out alone for an out lap and two flying laps, and the fastest
 lap takes pole. `Enter` skips the current run, `Shift+Enter` the rest of
 qualifying. `--no-menu` skips the menu. The default grid runs the four
 racingline family in turn, four robots that share one driving code:
-**John Fone** (`racingline`, the standard), **Spongebob** (`spongebob`:
+**John F One** (`racingline`, the standard), **Spongebob** (`spongebob`:
 `grip=0.85,brake=0.75,push=1.3,attack=1.4,heat=15`, brakes later, learns closer
 to the limit, follows closer, goes for gaps sooner and runs its tyres hotter),
 **Dave** (`dave`: `grip=0.75`, careful) and **Granny Doris** (`granny`:
