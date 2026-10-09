@@ -47,7 +47,7 @@ re-scans `bots/` by itself).
 
 | Call | When | Notes |
 |---|---|---|
-| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 9; the host also loads robots built for ABI 2 and later) |
+| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 10; the host also loads robots built for ABI 2 and later) |
 | `create(track, car, index, params, config)` | once per car | return your state, or `NULL` to refuse. Plan here: you get the full track geometry and car spec. |
 | `drive(self, sensors, control)` | every 1/robot-hz s | `control` arrives zeroed except `gear`. Fill it in. |
 | `destroy(self)` | end of race | free your state |
@@ -165,6 +165,41 @@ airflow takes it away, more at speed. Driving harder or following closely
 (dirty air makes the front slide) heats the tyres; lifting or a cleaner line
 cools them.
 
+KERS and DRS (ABI 10), on the 2013 car only (`specs/f1_2013.json`; all zero or
+`RR_DRS_NONE` on cars without them). Both are off until you ask: set
+`RRControl.kers` and `RRControl.drs`.
+
+| Field | Meaning |
+|---|---|
+| `kers_store` | J in the store. The car starts with one lap's worth (400 kJ) |
+| `kers_deploy_left` | J the store may still release this lap (400 kJ a lap, then it starts again at the line) |
+| `kers_harvest_left` | J the motor-generator may still recover this lap (2 MJ a lap) |
+| `kers_power` | W now: positive while deploying, negative while recovering |
+| `drs_state` | `RR_DRS_NONE` (no DRS, or not allowed: wet track, first two laps of a race, pit lane), `RR_DRS_OFF` (allowed, not earned), `RR_DRS_ARMED` (earned, the zone is ahead), `RR_DRS_AVAILABLE` (in the zone: request it), `RR_DRS_OPEN` |
+| `drs_open`, `drs_zone`, `drs_next_zone`, `drs_next_ds` | the flap is open; the zone index we are in (-1 outside); the next zone and the metres to its start (0 inside it) |
+| `drs_gap` | seconds behind the car ahead when we last crossed a detection point, -1 if none |
+
+`RRTrackInfo.drs_zones[num_drs_zones]` lists the zones (`detect_s`, `start_s`,
+`end_s`; they may wrap the start line). Tracks may give their own with
+`drs <detect> <start> <end>` lines; without any, the longest straights of 450 m or
+more (at most three) get one, starting 40 m after the corner and ending 130 m before the next.
+
+- **KERS** is a 60 kW motor-generator on the crankshaft (`RRCarSpec.kers_power`).
+  `RRControl.kers` (0 .. 1) is the share of that power to add to the engine, scaled by the
+  throttle, as torque (at most 200 N m at the crank). It stops at 400 kJ a lap
+  (6.67 s at full power) and when the store is empty. Braking recovers energy
+  automatically: the motor-generator takes up to 60 kW of the rear braking force (the
+  total braking is what the pedal asks for), 2 MJ a lap at most, and 85% of that reaches the
+  4 MJ store. Its weight is in the car's 642 kg. Fuel use is the engine's alone.
+- **DRS** opens the rear-wing flap: drag x0.78 and downforce x0.90 (all lost at the rear axle,
+  so the balance moves forward), over about 0.25 s (closing takes 0.15 s). In a race, a car
+  earns it for a zone when it is within `RR_DRS_GAP` (1 s) of the car ahead when it crosses
+  the zone's detection point, and only from lap `RR_DRS_FIRST_LAP` (3); `--wet` switches it
+  off. In practice, qualifying and testing it is free in every zone. Once `drs_state` is
+  `RR_DRS_AVAILABLE`, hold `RRControl.drs` = 1: the flap stays open until you let go, touch
+  the brake (`brake` >= 0.02), leave the zone or enter the pit lane. It must be requested
+  again for the next zone.
+
 Flags (ABI 3):
 
 | Field | Meaning |
@@ -193,6 +228,8 @@ heading in your body frame (`rel_x`, `rel_y`, `rel_yaw`), `race_pos`,
 | `pit_repair` | 0 / 1 | repair all damage |
 | `pit_window[2]` | laps | optional (ABI 5): earliest and latest lap of your next planned stop, 0 = none. The viewer shows it |
 | `pit_plan_tires` | 0 or `RR_TIRE_*` | optional (ABI 5): the compound you plan to fit then |
+| `kers` | 0 .. 1 | (ABI 10) share of the KERS power to deploy, scaled by `accel`; 0 only recovers |
+| `drs` | 0 / 1 | (ABI 10) hold at 1 to open the DRS flap while `drs_state` is `RR_DRS_AVAILABLE` |
 
 ## Fuel, tyres and pit stops
 

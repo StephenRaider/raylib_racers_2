@@ -77,6 +77,7 @@ inline void writeTrack(Writer& w, const RRTrackInfo& t) {
     w.bytes((const unsigned char*)t.points, sizeof(RRTrackPoint) * (size_t)t.num_points);
     w.bytes((const unsigned char*)t.turns, sizeof(RRTurn) * (size_t)t.num_turns);
     w.bytes((const unsigned char*)t.points3, t.points3 ? sizeof(RRTrackPoint3) * (size_t)t.num_points : 0);
+    w.bytes((const unsigned char*)t.drs_zones, t.drs_zones ? sizeof(RRDrsZone) * (size_t)t.num_drs_zones : 0);
 }
 
 struct TrackCopy {
@@ -84,6 +85,7 @@ struct TrackCopy {
     std::vector<RRTrackPoint> points;
     std::vector<RRTurn> turns;
     std::vector<RRTrackPoint3> points3;
+    std::vector<RRDrsZone> drs;
     RRTrackInfo info{};
 };
 
@@ -92,9 +94,10 @@ inline bool readTrack(Reader& r, TrackCopy& t) {
     t.info.length = r.pod<float>();
     t.info.runoff = r.pod<float>();
     t.info.pit = r.pod<RRPitInfo>();
-    std::vector<unsigned char> pts = r.bytes(), turns = r.bytes(), pts3 = r.bytes();
+    std::vector<unsigned char> pts = r.bytes(), turns = r.bytes(), pts3 = r.bytes(), drs = r.bytes();
     if (!r.ok || pts.size() % sizeof(RRTrackPoint) || turns.size() % sizeof(RRTurn)) return false;
-    if (pts3.size() != pts.size() / sizeof(RRTrackPoint) * sizeof(RRTrackPoint3)) return false;
+    if (pts3.size() != pts.size() / sizeof(RRTrackPoint) * sizeof(RRTrackPoint3) ||
+        drs.size() % sizeof(RRDrsZone)) return false;
     t.points.resize(pts.size() / sizeof(RRTrackPoint));
     if (!pts.empty()) std::memcpy(t.points.data(), pts.data(), pts.size());
     t.turns.resize(turns.size() / sizeof(RRTurn));
@@ -107,6 +110,10 @@ inline bool readTrack(Reader& r, TrackCopy& t) {
     t.points3.resize(t.points.size());
     if (!pts3.empty()) std::memcpy(t.points3.data(), pts3.data(), pts3.size());
     t.info.points3 = t.points3.data();
+    t.drs.resize(drs.size() / sizeof(RRDrsZone));
+    if (!drs.empty()) std::memcpy(t.drs.data(), drs.data(), drs.size());
+    t.info.num_drs_zones = (int)t.drs.size();
+    t.info.drs_zones = t.drs.data();
     return true;
 }
 

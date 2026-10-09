@@ -1328,6 +1328,13 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     rr_grip_guard(in, out, &r->tc, r->car.max_steer);
     r->lastAccel = out->accel;
     if (!in->on_track && !pitting) out->accel = std::min(out->accel, 0.5f);
+    // 2013's KERS on a full throttle with the wheels gripping, and the DRS flap whenever it is ours
+    // and we are not braking or about to (it closes on the brakes by itself).
+    out->kers = (in->kers_deploy_left > 0 && out->accel > 0.9f && in->wheel_spin < 0.05f && !pitting) ? 1.0f : 0.0f;
+    out->drs = ((in->drs_state == RR_DRS_AVAILABLE || in->drs_state == RR_DRS_OPEN) && out->brake < 0.02f &&
+                out->accel > 0.9f && !coast && in->grip_use[1] < 1.0f)
+                   ? 1
+                   : 0;
 
     const char* what = pitting              ? r->plan
                        : r->defendSide != 0 ? "defending"

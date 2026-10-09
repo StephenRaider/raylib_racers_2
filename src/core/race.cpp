@@ -221,7 +221,8 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
                          "dist_raced,lap,on_track,wheel_spin,fuel,wear_front,wear_rear,tire_grip,damage,pit_state,"
                          "grip_front,grip_rear,slip_front,slip_rear,accel_x,accel_y,blue_flag,temp_front,temp_rear,"
                          "axle_grip_front,axle_grip_rear,slipstream,dirty_air,d0,d1,d2,d3,d4,d5,d6,d7,"
-                         "tyre_fl,tyre_fr,tyre_rl,tyre_rr,brake_fl,brake_fr,brake_rl,brake_rr\n");
+                         "tyre_fl,tyre_fr,tyre_rl,tyre_rr,brake_fl,brake_fr,brake_rl,brake_rr,"
+                         "kers_store,kers_power,kers_deploy_left,kers_request,drs_state,drs_flap,drs_request\n");
         }
     }
 
@@ -243,6 +244,7 @@ void Race::placeOnGrid() {
         c.state.yaw = std::atan2(d.y, d.x);
         c.state.fuel = c.robotCfg.initial_fuel;
         c.state.compound = c.robotCfg.tire_compound;
+        c.state.kersCharge = std::min(c.phys.kersEnergy, c.phys.kersStore);  // a lap's worth from the formation lap
         c.compoundsUsed = 1 << c.state.compound;
         for (float& t : c.state.wheelTemp) t = c.phys.blanketTemp;
         c.state.tireTemp[0] = c.state.tireTemp[1] = c.phys.blanketTemp;
@@ -411,6 +413,19 @@ void Race::computeSensors(Car& c) {
     s.pit_box_s = c.pitBoxS;
     s.service_time_left = c.pitState == RR_PIT_SERVICE ? c.serviceLeft : 0.0f;
 
+    if (c.phys.kersPower > 0) {
+        s.kers_store = st.kersCharge;
+        s.kers_deploy_left = std::max(0.0f, c.phys.kersEnergy - st.kersDeployed);
+        s.kers_harvest_left = std::max(0.0f, c.phys.kersHarvest - st.kersHarvested);
+        s.kers_power = st.kersPowerNow;
+    }
+    s.drs_state = c.drsState;
+    s.drs_open = st.drsOpen ? 1 : 0;
+    s.drs_zone = c.drsZone;
+    s.drs_next_zone = c.drsNextZone;
+    s.drs_next_ds = c.drsNextDs;
+    s.drs_gap = c.drsGap;
+
     // Nearby cars, nearest first by track distance.
     struct Cand { float key; int idx; float ds; };
     Cand cand[64];
@@ -541,6 +556,7 @@ void Race::callRobots() {
         if (!std::isfinite(ctl.steer)) ctl.steer = 0;
         if (!std::isfinite(ctl.accel)) ctl.accel = 0;
         if (!std::isfinite(ctl.brake)) ctl.brake = 0;
+        if (!std::isfinite(ctl.kers)) ctl.kers = 0;
         c.control = ctl;
         if (c.telemetry) writeTelemetry(c);
     }
@@ -561,6 +577,8 @@ void Race::writeTelemetry(const Car& c) {
     for (float d : k.debug) std::fprintf(c.telemetry, ",%.4g", d);
     for (float t : s.tire_temp_wheel) std::fprintf(c.telemetry, ",%.1f", t);
     for (float t : s.brake_temp) std::fprintf(c.telemetry, ",%.0f", t);
+    std::fprintf(c.telemetry, ",%.0f,%.0f,%.0f,%.2f,%d,%.2f,%d", s.kers_store, s.kers_power, s.kers_deploy_left, k.kers,
+                 s.drs_state, c.state.drsFlap, k.drs);
     std::fputc('\n', c.telemetry);
 }
 
@@ -715,6 +733,7 @@ void Race::updateProgress(Car& c) {
         c.lapTemps.push_back(lt2);
         if (c.bestLap <= 0 || lt < c.bestLap) c.bestLap = lt;
         c.lapStart = time_;
+        c.state.kersDeployed = c.state.kersHarvested = 0;  // the lap's allowances start again
         c.lapsDone++;
         c.lapsOnTires++;
         if (c.lapsDone >= cfg_.laps) {
@@ -758,6 +777,74 @@ void Race::wake(Car& c) const {
         c.draft = std::max(c.draft, kDraftMax * (1 - behind / kDraftLength) * (1 - side / kDraftWidth));
         if (behind < kDirtyLength && side < kDirtyWidth)
             c.dirtyAir = std::max(c.dirtyAir, kDirtyMax * (1 - behind / kDirtyLength) * (1 - side / kDirtyWidth));
+    }
+}
+
+// DRS (2013 rules). At each zone's detection point the gap to the car ahead is timed; within
+// RR_DRS_GAP s it earns the flap for the zone, from its start to its end. Races only count it
+// from lap RR_DRS_FIRST_LAP and never on a wet track; practice and qualifying allow it in every
+// zone. The flap closes on a touch of the brakes, in the pit lane, and when the robot lets go.
+void Race::updateDrs(Car& c) {
+    const std::vector<RRDrsZone>& zones = track_.drsZones();
+    const int nz = (int)zones.size();
+    const bool hasDrs = c.phys.drsDragScale < 1.0f || c.phys.drsDownforceScale < 1.0f;
+    c.state.drsOpen = false;
+    c.drsState = RR_DRS_NONE;
+    c.drsZone = c.drsNextZone = -1;
+    c.drsNextDs = 0;
+    if (!hasDrs || nz == 0) return;
+    if ((int)c.drsEligible.size() != nz) {
+        c.drsEligible.assign(nz, 0);
+        c.drsDetectTime.assign(nz, -1.0);
+    }
+    const float L = track_.length(), s = c.trackS;
+    auto fwdDist = [&](float to, float from) { float d = std::fmod(to - from, L); return d < 0 ? d + L : d; };
+    const bool race = cfg_.session == RR_SESSION_RACE;
+    const bool rules = !cfg_.wet && (!race || c.lapsDone + 1 >= RR_DRS_FIRST_LAP);
+
+    // detection points crossed since the last step
+    const float moved = c.drsPrevS < 0 ? 0.0f : fwdDist(s, c.drsPrevS);
+    for (int z = 0; z < nz && moved > 0 && moved < 0.5f * L; ++z) {
+        const float d = fwdDist(zones[z].detect_s, c.drsPrevS);
+        if (d <= 0 || d > moved) continue;
+        c.drsEligible[z] = 0;
+        c.drsDetectTime[z] = time_;
+        c.drsGap = -1;
+        if (!race || c.position < 2 || c.finished || c.dnf) continue;
+        const Car& ahead = cars_[order_[c.position - 2]];
+        if ((int)ahead.drsDetectTime.size() != nz || ahead.drsDetectTime[z] < 0) continue;
+        c.drsGap = (float)(time_ - ahead.drsDetectTime[z]);
+        if (rules && c.drsGap <= RR_DRS_GAP) c.drsEligible[z] = 1;
+    }
+    c.drsPrevS = s;
+
+    int zone = -1;
+    for (int z = 0; z < nz; ++z)
+        if (track_.inSpan(s, zones[z].start_s, zones[z].end_s)) zone = z;
+    // leaving a zone ends what was earned for it
+    if (c.drsLastZone >= 0 && c.drsLastZone != zone) c.drsEligible[c.drsLastZone] = 0;
+    c.drsLastZone = zone;
+    if (!race && rules && zone >= 0) c.drsEligible[zone] = 1;
+    c.drsZone = zone;
+
+    float best = L;
+    for (int z = 0; z < nz; ++z) {
+        const float d = z == zone ? 0.0f : fwdDist(zones[z].start_s, s);
+        if (d < best) { best = d; c.drsNextZone = z; }
+    }
+    c.drsNextDs = c.drsNextZone >= 0 ? best : 0.0f;
+
+    const bool allowed = rules && c.pitState == RR_PIT_NONE && !c.finished && !c.dnf && !over_ && c.onTrack;
+    if (!allowed) return;
+    c.drsState = RR_DRS_OFF;
+    for (int z = 0; z < nz; ++z)
+        if (z != zone && c.drsEligible[z]) c.drsState = RR_DRS_ARMED;
+    if (zone >= 0 && c.drsEligible[zone]) {
+        c.drsState = RR_DRS_AVAILABLE;
+        if (c.control.drs && c.control.brake < 0.02f) {
+            c.state.drsOpen = true;
+            c.drsState = RR_DRS_OPEN;
+        }
     }
 }
 
@@ -991,6 +1078,7 @@ void Race::step() {
             surf.extraDrag = 250.0f;
         }
         wake(c);
+        updateDrs(c);
         surf.dragScale = 1.0f - c.draft;
         surf.downforceScale = 1.0f - c.dirtyAir;
         surf.frontDownforceScale = 1.0f - 0.5f * c.dirtyAir;  // the front loses more: the car pushes
@@ -1073,6 +1161,13 @@ void Race::advance(double seconds) {
 void Race::printResults(FILE* out) const {
     std::fprintf(out, "\n%s, %d lap%s, %.1f m\n", track_.name().c_str(), cfg_.laps, cfg_.laps > 1 ? "s" : "",
                  track_.length());
+    bool anyDrs = false;
+    for (const Car& c : cars_) anyDrs = anyDrs || c.phys.drsDragScale < 1.0f;
+    if (anyDrs && !track_.drsZones().empty()) {
+        std::fprintf(out, "DRS zones (detection, start-end):");
+        for (const RRDrsZone& z : track_.drsZones()) std::fprintf(out, " %.0f, %.0f-%.0f m;", z.detect_s, z.start_s, z.end_s);
+        std::fprintf(out, "%s\n", cfg_.wet ? " wet: DRS off" : "");
+    }
     std::fprintf(out, " Pos  %-22s %-12s %10s %10s %6s %6s %s\n", "Driver", "Robot", "Time", "Best lap", "Laps",
                  "Hits", "Stops");
     for (int idx : order_) {

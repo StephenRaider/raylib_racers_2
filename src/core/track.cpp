@@ -70,6 +70,19 @@ bool Track::load(const std::string& path, std::string* err) {
             pitCfg_.side = side == "left" ? 1 : -1;
         } else if (key == "pitspeed") {
             ss >> pitCfg_.speed_limit;
+        } else if (key == "drs") {
+            drsFromFile_ = true;
+            RRDrsZone z{};
+            std::string first;
+            ss >> first;
+            if (first != "none") {
+                std::istringstream zs(first);
+                if (!(zs >> z.detect_s) || !(ss >> z.start_s >> z.end_s)) {
+                    if (err) *err = path + ":" + std::to_string(lineNo) + ": expected 'drs detect_s start_s end_s' or 'drs none'";
+                    return false;
+                }
+                drsFile_.push_back(z);
+            }
         } else if (key == "p") {
             float x, y, w = -1, h = 0, bank = 0;
             const std::string usage = path + ":" + std::to_string(lineNo) + ": expected 'p x y [width] [h=m] [bank=deg]'";
@@ -257,7 +270,37 @@ void Track::finalize() {
         if (runoff_ > kPitBarrier) warnings_.push_back("runoff is wider than the pit area; the pit barrier will stick out");
     }
     findTurns();
+    findDrsZones();
     buildEdgeGrid();
+}
+
+// DRS zones: the track file's, or else the longest straights (at most three) that are 450 m or more
+// between two corners. A zone starts 40 m after the corner and ends 130 m before the next one; its
+// detection point is at the start of the corner before it.
+void Track::findDrsZones() {
+    drsZones_.clear();
+    auto wrapS = [&](float v) { v = std::fmod(v, length_); return v < 0 ? v + length_ : v; };
+    if (drsFromFile_) {
+        for (RRDrsZone z : drsFile_) drsZones_.push_back({wrapS(z.detect_s), wrapS(z.start_s), wrapS(z.end_s)});
+    } else {
+        struct Straight { float len; RRDrsZone z; };
+        std::vector<Straight> found;
+        const int nt = (int)turns_.size();
+        for (int i = 0; i < nt && nt > 1; ++i) {
+            const RRTurn& a = turns_[i];
+            const RRTurn& b = turns_[(i + 1) % nt];
+            float len = b.start_s - a.end_s;
+            if (len <= 0) len += length_;
+            if (len < 450.0f) continue;
+            found.push_back({len, {wrapS(a.start_s), wrapS(a.end_s + 40.0f), wrapS(b.start_s - 130.0f)}});
+        }
+        std::sort(found.begin(), found.end(), [](const Straight& x, const Straight& y) { return x.len > y.len; });
+        if (found.size() > 3) found.resize(3);
+        std::sort(found.begin(), found.end(), [](const Straight& x, const Straight& y) { return x.z.start_s < y.z.start_s; });
+        for (const Straight& f : found) drsZones_.push_back(f.z);
+    }
+    info_.num_drs_zones = (int)drsZones_.size();
+    info_.drs_zones = drsZones_.data();
 }
 
 // Corners: stretches tighter than a 300 m radius (curvature smoothed over

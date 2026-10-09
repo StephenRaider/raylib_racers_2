@@ -44,6 +44,10 @@ struct TrackLoc {
 //   pit left|right <entry_s> <lane_start_s> <lane_end_s> <exit_s>
 //                              optional pit lane alongside the track (s in metres)
 //   pitspeed <m/s>             pit lane speed limit (default 22)
+//   drs <detect_s> <start_s> <end_s>
+//                              a DRS zone (s in metres, may wrap the line); with none given
+//                              the zones are the longest straights, see findDrsZones. "drs none"
+//                              switches DRS off on the track.
 class Track {
 public:
     bool load(const std::string& path, std::string* err);
@@ -102,6 +106,9 @@ public:
 
     const RRTrackInfo& info() const { return info_; }
 
+    // DRS zones, in track order (see RRDrsZone).
+    const std::vector<RRDrsZone>& drsZones() const { return drsZones_; }
+
     // The corners, numbered from the start line (see RRTurn).
     const std::vector<RRTurn>& turns() const { return turns_; }
     // The turn (index into turns()) at track distance s, -1 on a straight.
@@ -140,6 +147,9 @@ private:
     std::vector<RRTurn> turns_;
     std::vector<int> turnOf_;
     void findTurns();
+    void findDrsZones();
+    std::vector<RRDrsZone> drsZones_, drsFile_;
+    bool drsFromFile_ = false;
     std::vector<std::string> warnings_;
 };
 

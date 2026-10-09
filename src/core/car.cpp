@@ -45,7 +45,8 @@ const CarParams::Field* CarParams::fields(int* count) {
         F(fuelPerJoule), F(wearPerJoule), F(tireHeatCap), F(tireSlideHeat), F(tireLonHeat), F(tireRollHeat),
         F(tireCoolBase), F(tireCoolSpeed), F(blanketTemp), F(brakeHeatCap), F(brakeCoolBase), F(brakeCoolSpeed),
         F(brakeToRim), F(rimHeatCap), F(rimCoolBase), F(rimCoolSpeed), F(rimToTyre), F(brakeTempLo), F(brakeTempHi), F(maxAeroLoss), F(damageForMaxLoss), F(maxDragGain), F(maxPowerLoss), F(maxGripLoss), F(torqueScale),
-        F(pitServiceScale), F(engineV8), F(noRefuel), F(kersPower), F(kersEnergy), F(drsDragScale), F(drsDownforceScale),
+        F(pitServiceScale), F(engineV8), F(noRefuel), F(kersPower), F(kersEnergy), F(kersHarvest), F(kersStore),
+        F(drsDragScale), F(drsDownforceScale), F(kersMaxTorque), F(kersEfficiency), F(drsFlapOpenTime), F(drsFlapCloseTime),
     };
 #undef F
     *count = (int)(sizeof f / sizeof f[0]);
@@ -136,6 +137,12 @@ RRCarSpec CarParams::spec() const {
     s.tire_wear_scale = wearPerJoule / CarParams{}.wearPerJoule;
     s.fuel_use_scale = fuelPerJoule / CarParams{}.fuelPerJoule;
     s.pit_service_scale = pitServiceScale;
+    s.kers_power = kersPower;
+    s.kers_energy = kersEnergy;
+    s.kers_harvest = kersHarvest;
+    s.kers_store = kersStore;
+    s.drs_drag_scale = drsDragScale;
+    s.drs_downforce_scale = drsDownforceScale;
     return s;
 }
 
@@ -213,17 +220,35 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     const float ratio = gearRatio(p, c.gear);
     const float engRpm = rpmFor(p, c.vx, c.gear);
     c.rpm = std::max(p.idleRpm, engRpm);  // clutch slips below idle
-    float torque = 0;
+    float torque = 0, kersTorque = 0;
     const bool hasFuel = c.fuel > 0;
+    // KERS deploy: the motor-generator's power at the crank, as torque, from the store, limited by the
+    // lap's energy allowance. It follows the throttle and cuts out with the engine at the rev limiter.
+    const bool hasKers = p.kersPower > 0;
+    if (hasKers && c.gear > 0 && c.rpm < p.maxRpm && c.kersCharge > 0 && c.kersDeployed < p.kersEnergy) {
+        const float want = clampf(in.kers, 0, 1) * accel;
+        const float omega = std::max(c.rpm, p.idleRpm) * (2 * kPi / 60.0f);
+        kersTorque = std::min(want * p.kersPower / omega, want * p.kersMaxTorque);
+        const float room = std::min(c.kersCharge, p.kersEnergy - c.kersDeployed);  // J left this step may use
+        const float power = kersTorque * omega;
+        if (power * dt > room) kersTorque = room / (dt * omega);
+        c.kersPowerNow = kersTorque * omega;
+        const float used = c.kersPowerNow * dt;
+        c.kersCharge -= used;
+        c.kersDeployed += used;
+    } else {
+        c.kersPowerNow = 0;
+    }
     if (c.gear != 0) {
         if (c.rpm < p.maxRpm && hasFuel) torque = p.engineTorque(c.rpm) * accel * (1 - p.maxPowerLoss * damageLevel(p, c));
+        torque += kersTorque;
         if (engRpm > p.idleRpm) torque -= (1 - accel) * p.engineBrake * (engRpm / p.maxRpm);  // engine braking
     }
     // ratio carries the direction (negative in reverse)
     const float fDrive = torque * ratio * p.drivetrainEff / p.wheelRadius;
-    if (torque > 0) {
+    if (torque - kersTorque > 0) {
         const float engOmega = c.rpm * (2 * kPi / 60.0f);
-        c.fuel = std::max(0.0f, c.fuel - torque * engOmega * p.fuelPerJoule * rates.fuel * dt);
+        c.fuel = std::max(0.0f, c.fuel - (torque - kersTorque) * engOmega * p.fuelPerJoule * rates.fuel * dt);
     }
 
     // --- aero ---
@@ -234,11 +259,16 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     const float sideslip = std::fabs(c.vx) > 5.0f ? std::atan(c.vy / std::fabs(c.vx)) : 0.0f;
     const float yawLoss = std::max(0.75f, 1.0f - p.aeroYawLoss * sideslip * sideslip);
     // Dirty air takes away downforce, more of it at the front (the car pushes).
+    // DRS: the flap follows the request at its own speed (it closes on a brake touch or when told to).
+    const bool hasDrs = p.drsDragScale < 1.0f || p.drsDownforceScale < 1.0f;
+    const bool wantOpen = hasDrs && c.drsOpen && brake < 0.02f;
+    c.drsFlap = clampf(c.drsFlap + (wantOpen ? dt / std::max(p.drsFlapOpenTime, dt) : -dt / std::max(p.drsFlapCloseTime, dt)), 0.0f, 1.0f);
     const float down = p.downforceCoeff * (1 - aeroLoss) * yawLoss * surf.downforceScale * c.vx * c.vx;
+    const float downLossRear = (1 - p.drsDownforceScale) * c.drsFlap;  // share of the total, all taken from the rear axle
     const float balance0 = clampf(p.downforceFront - p.aeroPitchShift * c.ax / g, 0.3f, 0.6f);
     const float frontShare = balance0 * surf.frontDownforceScale;
     const float balance = frontShare / (frontShare + (1 - balance0));
-    const float drag = p.dragCoeff * (1 + p.maxDragGain * dmg) * surf.dragScale * c.vx * std::fabs(c.vx);
+    const float drag = p.dragCoeff * (1 + p.maxDragGain * dmg) * (1 + (p.drsDragScale - 1) * c.drsFlap) * surf.dragScale * c.vx * std::fabs(c.vx);
 
     // --- wheel loads ---
     // Static weight and downforce per axle, longitudinal transfer between the
@@ -255,7 +285,7 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     // fuel weight costs grip as well as acceleration.
     const float fzRef[2] = {p.mass * g * b / L, p.mass * g * a / L};
     float fzAxle[2] = {fzAxle0[0] + down * balance - m * c.ax * p.cgHeight / L,
-                       fzAxle0[1] + down * (1 - balance) + m * c.ax * p.cgHeight / L};
+                       fzAxle0[1] + down * std::max(0.0f, 1 - balance - downLossRear) + m * c.ax * p.cgHeight / L};
     const float track[2] = {p.trackFront, p.trackRear};
     const float rollShare[2] = {p.rollStiffFront, 1 - p.rollStiffFront};
     float fz[4];
@@ -298,11 +328,24 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     const float rampF = clampf(wfLong / 0.5f, -1, 1);
     const float rampR = clampf(c.vx / 0.5f, -1, 1);
     const float fBrake = brake * p.maxBrakeForce;
+    // KERS harvest: the motor-generator does part of the rear axle's braking (the total stays what the
+    // pedal asks for), limited by its power, the lap's recovery allowance and the room in the store.
+    float harvestF = 0;
+    if (hasKers && fBrake > 0 && c.vx > 3.0f && c.kersHarvested < p.kersHarvest && c.kersCharge < p.kersStore) {
+        const float rearBrake = fBrake * (1 - p.brakeFront);
+        harvestF = std::min(rearBrake, p.kersPower / c.vx);
+        float power = harvestF * c.vx;
+        const float room = std::min(p.kersHarvest - c.kersHarvested, (p.kersStore - c.kersCharge) / p.kersEfficiency);
+        if (power * dt > room) { power = room / dt; harvestF = power / c.vx; }
+        c.kersHarvested += power * dt;
+        c.kersCharge = std::min(p.kersStore, c.kersCharge + power * dt * p.kersEfficiency);
+        c.kersPowerNow = -power;
+    }
     float brakeW[4];  // each disc's brake force, N (signed with the wheel's travel)
     for (int w = 0; w < 4; ++w) {
         const float share = w < 2 ? p.brakeFront : 1 - p.brakeFront;
-        brakeW[w] = 0.5f * fBrake * share * brakeGrip(p, c.brakeTemp[w]) * (w < 2 ? rampF : rampR);
-        fxW[w] = -brakeW[w] - p.rollingResist * fz[w] * (w < 2 ? rampF : rampR);
+        brakeW[w] = 0.5f * (fBrake * share - (w < 2 ? 0.0f : harvestF)) * brakeGrip(p, c.brakeTemp[w]) * (w < 2 ? rampF : rampR);
+        fxW[w] = -brakeW[w] - (w < 2 ? 0.0f : 0.5f * harvestF * rampR) - p.rollingResist * fz[w] * (w < 2 ? rampF : rampR);
     }
     // Drive: half to each rear wheel; what a spinning wheel cannot use goes
     // partly to the other one through the limited-slip differential.

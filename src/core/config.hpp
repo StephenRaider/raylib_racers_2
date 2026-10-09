@@ -43,6 +43,7 @@ struct RaceConfig {
     std::string devRules = "development";  // rules for --dev, file or name in specs/
     float fuelLimit = 0;       // > 0: no car starts with more fuel than this (qualifying runs)
     bool pitsClosed = false;   // no pit stops (testing sessions)
+    bool wet = false;          // a wet track: DRS is not allowed (there is no rain model yet)
     int session = 0;           // RR_SESSION_*: race, practice (laps is the lap limit), qualifying, test
     // Competition rules: each robot in its own locked-down process (rr_bothost, found
     // at botHost), and a cap on the CPU one drive() call may use, ms (0 = none).

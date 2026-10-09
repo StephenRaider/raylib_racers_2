@@ -29,8 +29,8 @@
 extern "C" {
 #endif
 
-#define RR_ABI_VERSION 9
-/* Robots built for ABI 2 to 8 still load: later versions only appended
+#define RR_ABI_VERSION 10
+/* Robots built for ABI 2 to 9 still load: later versions only appended
  * fields to RRTrackInfo, RRCarSpec, RRRobotConfig, RRSensors and RRControl. */
 #define RR_ABI_MIN_VERSION 2
 
@@ -142,6 +142,23 @@ typedef struct RRTurn {
     float angle;         /* rad turned through, always positive */
 } RRTurn;
 
+/* A DRS zone (ABI 10): where the rear-wing flap may be opened. The detection
+ * point is where the gap to the car ahead is timed; a car within
+ * RR_DRS_GAP s of it may open the flap from start_s to end_s. All values are
+ * track s in metres and may wrap across the start line. */
+typedef struct RRDrsZone {
+    float detect_s, start_s, end_s;
+} RRDrsZone;
+
+#define RR_DRS_GAP 1.0f          /* s: how close behind the car ahead at the detection point */
+#define RR_DRS_FIRST_LAP 3       /* races: DRS is off for the first two laps */
+/* RRSensors.drs_state */
+#define RR_DRS_NONE 0            /* this car has no DRS, or it is not allowed (wet, first laps, pit lane) */
+#define RR_DRS_OFF 1             /* allowed, but this car has not earned it for the zone ahead */
+#define RR_DRS_ARMED 2           /* earned at the detection point: open the flap when the zone starts */
+#define RR_DRS_AVAILABLE 3       /* in the zone and earned: set RRControl.drs to open the flap */
+#define RR_DRS_OPEN 4            /* the flap is open */
+
 typedef struct RRTrackInfo {
     const char* name;
     float length;        /* centreline length, m */
@@ -156,6 +173,10 @@ typedef struct RRTrackInfo {
 
     /* --- ABI 9 --- */
     const RRTrackPoint3* points3;  /* num_points entries, parallel to points */
+
+    /* --- ABI 10 --- */
+    int num_drs_zones;
+    const RRDrsZone* drs_zones;
 } RRTrackInfo;
 
 typedef struct RRCarSpec {
@@ -186,6 +207,14 @@ typedef struct RRCarSpec {
     float tire_wear_scale;   /* tyre wear multiplier from this car's development (1 = baseline) */
     float fuel_use_scale;    /* fuel use multiplier from this car's development (1 = baseline) */
     float pit_service_scale; /* pit crew time multiplier (1 = baseline, < 1 = faster crew) */
+
+    /* --- ABI 10 --- 0 when the car has no KERS / DRS */
+    float kers_power;        /* W, most the motor-generator deploys or recovers (2013: 60 kW) */
+    float kers_energy;       /* J the store may release per lap (2013: 400 kJ) */
+    float kers_harvest;      /* J the motor-generator may recover per lap (2013: 2 MJ) */
+    float kers_store;        /* J, capacity of the store (2013: 4 MJ) */
+    float drs_drag_scale;    /* drag coefficient with the flap open (1 = no DRS) */
+    float drs_downforce_scale; /* downforce with the flap open; the loss is all at the rear axle */
 } RRCarSpec;
 
 /* A nearby car, for racecraft (overtaking, defending, pit timing). */
@@ -362,6 +391,23 @@ typedef struct RRSensors {
     float z;                   /* road height, m */
     float grade;               /* along the track, + = uphill */
     float bank;                /* rad, + = left edge higher */
+
+    /* --- ABI 10 --- KERS: a 60 kW motor-generator on the crankshaft. It
+     * recovers energy under braking (a part of the braking is done by it) and
+     * adds kers_power W to the engine while RRControl.kers is set at full
+     * throttle, up to kers_energy J per lap. All zero without KERS. */
+    float kers_store;          /* J in the store now */
+    float kers_deploy_left;    /* J that may still be released this lap */
+    float kers_harvest_left;   /* J that may still be recovered this lap */
+    float kers_power;          /* W now: + deploying, - recovering */
+    /* DRS: RR_DRS_*. Open it with RRControl.drs while it is RR_DRS_AVAILABLE;
+     * it closes when you touch the brakes, leave the zone or let go of drs. */
+    int drs_state;
+    int drs_open;              /* 1 while the flap is (opening) open */
+    int drs_zone;              /* index into RRTrackInfo.drs_zones of the zone we are in, -1 outside */
+    int drs_next_zone;         /* the next zone ahead */
+    float drs_next_ds;         /* m to the start of drs_next_zone (0 inside it) */
+    float drs_gap;             /* s behind the car ahead when we last crossed a detection point, -1 if none */
 } RRSensors;
 
 #define RR_BLUE_FLAG_RANGE 60.0f   /* m behind us (or 1.2 s, whichever is more) */
@@ -388,6 +434,10 @@ typedef struct RRControl {
     /* --- ABI 5 --- optional, for the viewer: the strategy we are planning */
     int pit_window[2];  /* laps of the next planned stop: earliest, latest (0 = no stop planned) */
     int pit_plan_tires; /* compound planned for that stop (0 = none / undecided) */
+
+    /* --- ABI 10 --- */
+    float kers;         /* 0 .. 1: share of kers_power to deploy, scaled by the throttle (0 = harvest only) */
+    int drs;            /* 1: open the DRS flap (if RR_DRS_AVAILABLE) */
 } RRControl;
 
 /* How a session went for this car (ABI 8). */

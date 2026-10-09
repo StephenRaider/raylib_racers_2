@@ -111,6 +111,16 @@ struct Car {
     float draft = 0, dirtyAir = 0;  // drag and downforce lost to other cars' wakes, fractions
     int parkSlot = -1;          // spot in the pit lane, 0 = furthest down
 
+    // DRS: per zone, whether this car earned it at the detection point, and when it last crossed
+    // that point (-1 never); the gap to the car ahead then; the zone we are in; what the robots see.
+    std::vector<char> drsEligible;
+    std::vector<double> drsDetectTime;
+    float drsPrevS = -1;
+    float drsGap = -1;
+    int drsZone = -1, drsNextZone = -1, drsLastZone = -1;
+    float drsNextDs = 0;
+    int drsState = RR_DRS_NONE;
+
     FILE* telemetry = nullptr;
 
     int currentLap(int raceLaps) const { return std::min(raceLaps, std::max(1, lapsDone + 1)); }
@@ -173,6 +183,7 @@ private:
     void writeTelemetry(const Car& c);
     void updatePit(Car& c);
     void updateBlueFlags();
+    void updateDrs(Car& c);
     RRControl coolDownControl(Car& c);
     void endSession(Car& c);
     void retire(Car& c, const std::string& why);

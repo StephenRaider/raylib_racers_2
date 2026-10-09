@@ -39,6 +39,7 @@ std::string usage(const char* prog, bool viewer) {
         "  --ambient C            air and track temperature (default 25): hotter days overheat the tyres\n"
         "  --two-compounds on|off|auto  every car must use two compounds (auto: races over 20 laps)\n"
         "  --no-pits              pit requests are ignored (robots are told, ABI 6)\n"
+        "  --wet                  a wet track: no DRS (there is no rain model yet)\n"
         "Competition\n"
         "  --sandbox              run each robot in its own locked-down process (rr_bothost): no file\n"
         "                         access, and a robot that crashes or hangs only loses its car\n"
@@ -121,6 +122,7 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
                 cfg.entries.back().fuel = v;
             }
             else if (a == "--no-pits") cfg.pitsClosed = true;
+            else if (a == "--wet") cfg.wet = true;
             else if (a == "--sandbox") cfg.sandbox = true;
             else if (a == "--cpu-cap") {
                 cfg.cpuCapMs = std::stof(need(i, a));

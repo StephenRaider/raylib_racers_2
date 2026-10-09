@@ -214,6 +214,16 @@ if(RR_BUILD_BOTS)
   add_test(NAME weekend_memory_wrong COMMAND rr_race --track oval --laps 1 --quiet --practice 1 --qualifying
            --car $<TARGET_FILE:memcheck> --params expect=3)
   set_tests_properties(weekend_memory_wrong PROPERTIES WILL_FAIL TRUE)
+  # KERS and DRS (2013 car): the ersdrs robot checks the sensors and prints ERSDRS OK or ERSDRS FAIL.
+  rr_add_robot(ersdrs tests/ersdrs/ersdrs.c)
+  rr_output(ersdrs "${RR_OUT}/test_bots")
+  add_test(NAME ers_drs_practice COMMAND rr_race --track oval --laps 3 --quiet --practice 3
+           --car $<TARGET_FILE:ersdrs> --spec f1_2013)
+  add_test(NAME ers_drs_race COMMAND rr_race --track oval --laps 4 --quiet --car $<TARGET_FILE:ersdrs> --spec f1_2013)
+  add_test(NAME ers_drs_wet COMMAND rr_race --track oval --laps 4 --quiet --wet
+           --car $<TARGET_FILE:ersdrs> --spec f1_2013 --params wet=1)
+  set_tests_properties(ers_drs_practice ers_drs_race ers_drs_wet PROPERTIES
+                       PASS_REGULAR_EXPRESSION "ERSDRS OK" FAIL_REGULAR_EXPRESSION "ERSDRS FAIL")
   # The sandbox: a robot can't write files, and one that crashes, hangs or hogs
   # the CPU only loses its own car.
   rr_add_robot(evil tests/evil/evil.c)

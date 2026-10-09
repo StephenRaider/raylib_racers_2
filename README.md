@@ -18,7 +18,7 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   The menu, HUD, testing screens and director are Raylib Racers 1's, unchanged.
 - **A 2013 car** (`specs/f1_2013.json`): 642 kg, a 2.4 l V8 (560 kW at 18,000 rpm),
   about 3 g of downforce, no refuelling (a fixed start load, tyre-only stops) and
-  305 km races. KERS and DRS values are in the spec for later.
+  305 km races, KERS (60 kW, 400 kJ a lap) and DRS (detection zones, 1 s rule).
 - **A V8 sound**: eight firings a cycle through a recorded F1 exhaust response, with
   gearshift effects and the odd pop.
 
@@ -388,7 +388,7 @@ race-end windows and keys, see "Run" above) with its renderer replaced by the PB
 `apps/viewer2/renderer2.*`. It starts on Highmoor Ridge with the 2013 car spec
 (`specs/f1_2013.json`: 642 kg, a 2.4 l V8 with 560 kW at 18,000 rpm, about 3 g of
 downforce at 300 km/h; no refuelling: a fixed 215 l start load and tyre-only stops;
-KERS and DRS values are in the file but not simulated yet) and runs the fewest whole
+KERS and DRS are simulated, see `docs/ROBOTS.md`) and runs the fewest whole
 laps over 305 km (67 laps of Highmoor Ridge) unless `--laps` is given. Only one 2013 car
 model is bundled (the Mercedes, `assets/cars/f1_2013_02`): every team wears it for now.
 The V8 sound plays through a recorded F1 exhaust response (`assets/sound`); `M` mutes.

@@ -95,11 +95,18 @@ struct CarParams {
     float engineV8 = 0.0f;
     // 1: no refuelling in the pits (2010 onwards); a stop changes tyres and repairs only.
     float noRefuel = 0.0f;
-    // Prepared for 2013's energy recovery and drag reduction; the simulation does not use
-    // them yet. kersPower W and kersEnergy J per lap (a boost of 60 kW for 6.67 s), and what
-    // the open DRS flap does to the drag and downforce coefficients.
-    float kersPower = 0.0f, kersEnergy = 0.0f;
+    // 2013's energy recovery and drag reduction (all zero/1 = the car has neither).
+    // KERS: a motor-generator of kersPower W on the crankshaft. Under braking it takes
+    // part of the rear braking force and charges the store (kersHarvest J a lap at most,
+    // 85% ends up in the store); on request it adds up to kersPower W to the engine, at
+    // most kersEnergy J a lap, from a store of kersStore J. Its weight is in the car's
+    // minimum mass already. DRS: the open flap scales the drag coefficient by drsDragScale
+    // and the downforce by drsDownforceScale, the loss all at the rear axle.
+    float kersPower = 0.0f, kersEnergy = 0.0f, kersHarvest = 0.0f, kersStore = 0.0f;
     float drsDragScale = 1.0f, drsDownforceScale = 1.0f;
+    float kersMaxTorque = 200.0f;  // N m the motor-generator adds at the crank, whatever the revs
+    float kersEfficiency = 0.85f;  // share of the recovered energy that reaches the store
+    float drsFlapOpenTime = 0.25f, drsFlapCloseTime = 0.15f;  // s for the flap to travel
 
     float wheelbase() const { return cgToFront + cgToRear; }
     float engineTorque(float rpm) const;  // N m at full throttle
@@ -134,6 +141,11 @@ struct CarState {
     float brakeTemp[4] = {300, 300, 300, 300};  // C, each disc
     float rimTemp[4] = {70, 70, 70, 70};        // C, each wheel rim
     int compound = RR_TIRE_MEDIUM;
+    // KERS: J in the store, this lap's deployed and recovered energy, and the power now (+ deploying, - recovering).
+    float kersCharge = 0, kersDeployed = 0, kersHarvested = 0, kersPowerNow = 0;
+    // DRS: whether the flap is asked open (the race sets it) and how far it has travelled, 0 closed .. 1 open.
+    bool drsOpen = false;
+    float drsFlap = 0;
 
     Vec2 velWorld() const { return rotate({vx, vy}, yaw); }
     void setVelWorld(Vec2 v) { Vec2 b = rotate(v, -yaw); vx = b.x; vy = b.y; }
