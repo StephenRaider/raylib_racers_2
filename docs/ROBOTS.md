@@ -47,7 +47,7 @@ re-scans `bots/` by itself).
 
 | Call | When | Notes |
 |---|---|---|
-| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 10; the host also loads robots built for ABI 2 and later) |
+| `rr_robot_entry()` | library load | return a static `RRRobotApi`; set `abi_version` to `RR_ABI_VERSION` (ABI 11; the host also loads robots built for ABI 2 and later) |
 | `create(track, car, index, params, config)` | once per car | return your state, or `NULL` to refuse. Plan here: you get the full track geometry and car spec. |
 | `drive(self, sensors, control)` | every 1/robot-hz s | `control` arrives zeroed except `gear`. Fill it in. |
 | `destroy(self)` | end of race | free your state |
@@ -123,7 +123,9 @@ Race state: `dist_from_start`, `dist_raced`, `lap`, `race_laps`, `race_pos`,
 `num_cars`, `cur_lap_time`, `last_lap_time`, `best_lap_time`.
 
 Ground truth, like a TORCS robot gets: world pose `x`, `y`, `yaw`, the nearest
-centreline sample `track_index`, and `on_track`.
+centreline sample `track_index`, and `on_track`. `surface` (ABI 11) is what is under the
+car's centre: `RR_SURF_TARMAC`, `_KERB`, `_GRASS`, `_GRAVEL`, `_DIRT`, `_PIT` or `_RUNOFF`. Kerbs and run-off
+grip almost like tarmac (97% and 95%), grass 70% with extra drag, gravel 55% with more, dirt 65%.
 
 Consumables and pit:
 

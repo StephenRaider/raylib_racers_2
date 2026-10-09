@@ -4,6 +4,7 @@
 
 #include "engine_sound.hpp"
 #include "race.hpp"
+#include "surface_sound.hpp"
 #include "raylib.h"
 
 // Engine sound for the viewer: picks the cars nearest the camera, works out how
@@ -33,7 +34,8 @@ public:
 
 private:
     EngineSynth synth_;
-    AudioStream stream_{};
+    SurfaceSynth surf_;
+    AudioStream stream_{}, surfStream_{};
     bool ready_ = false;
     Vector3 lastPos_{};
     bool havePos_ = false;

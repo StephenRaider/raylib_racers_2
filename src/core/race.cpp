@@ -287,6 +287,7 @@ void Race::computeSensors(Car& c) {
     s.angle = wrapAngle(st.yaw - std::atan2(td.y, td.x));
     s.track_pos = c.lateral / c.halfWidth;
     s.on_track = c.onTrack ? 1 : 0;
+    s.surface = c.surface;
 
     std::normal_distribution<float> noise(0.0f, cfg_.sensorNoise);
     for (int k = 0; k < RR_NUM_TRACK_SENSORS; ++k) {
@@ -1073,10 +1074,10 @@ void Race::step() {
     const WearRates rates{cfg_.fuelRate, cfg_.wearRate, cfg_.ambient};
     for (Car& c : cars_) {
         Surface surf;
-        if (!track_.paved(c.trackS, c.lateral, c.halfWidth)) {
-            surf.muScale = 0.7f;
-            surf.extraDrag = 250.0f;
-        }
+        c.surface = track_.surfaceAt(c.trackS, c.lateral, c.halfWidth);
+        surf.type = c.surface;
+        surf.muScale = surfaceProps(c.surface).mu;
+        surf.extraDrag = surfaceProps(c.surface).drag;
         wake(c);
         updateDrs(c);
         surf.dragScale = 1.0f - c.draft;

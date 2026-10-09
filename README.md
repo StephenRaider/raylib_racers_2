@@ -341,11 +341,19 @@ width 14
 runoff 7
 pit left 20 80 420 500   # side, entry, lane start, lane end, exit (metres along the track)
 pitspeed 22              # pit lane speed limit, m/s
+gravel auto              # gravel traps outside the faster corners (auto, the default, or none)
+offtrack grass           # what lies beyond the kerbs: grass (default), gravel, dirt, ...
+surface gravel right 800 900 1.2 20   # type, side (left/right/both), from s, to s, metres out from the edge (optional)
 p 0 0
 p 300 0
 p 400 120 16     # wider here
 ...
 ```
+
+Surfaces (tarmac, kerb, grass, gravel, dirt, pit, runoff) each have their own grip and drag
+(`surfaceProps` in `track.cpp`: kerbs keep 97% of the tarmac grip and add no bumps, grass 70%, gravel 55% with
+more drag). Robots read the one under the car in `surface` (ABI 11). The viewer plays kerb rumble, grass and
+gravel sounds, generated in `apps/viewer/surface_sound.cpp`.
 
 Besides Circuit Raylib and the oval there are seven circuits inspired by real
 ones (shape kept, details changed): Autodromo Monzetta (Monza), Ardennes Ring

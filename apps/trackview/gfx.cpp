@@ -307,6 +307,9 @@ void sampleLayer(sampler2D a, sampler2D nm, sampler2D o, float scale, vec3 lt, f
         nn = detail ? mix(textureGrad(nm, uv + oa, dx, dy).rgb, textureGrad(nm, uv + ob, dx, dy).rgb, b) : vec3(0.5, 0.5, 1.0);
         // and broad patches of older, paler and fresher, darker tarmac
         al *= 0.86 + 0.24 * vnoise(fragPos.xz * 0.035) + 0.08 * vnoise(fragPos.xz * 0.3);
+        // and a roughness that drifts too: glossier where rubber and age have polished it, duller
+        // where it is fresh or dusty (kept to a few percent either way: this is a hint, not a texture)
+        or.g = clamp(or.g * (1.05 + 0.20 * (vnoise(fragPos.xz * 0.06) - 0.5) + 0.12 * (vnoise(fragPos.xz * 0.9) - 0.5)), 0.0, 1.0);
     } else {
         al = texture(a, uv).rgb;
         or = texture(o, uv).rgb;

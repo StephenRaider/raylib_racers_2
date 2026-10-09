@@ -91,5 +91,4 @@ private:
     // 0..1: how much a plan-view point lies in a conifer plantation (before keeping clear of the track)
     float plantation(rr::Vec2 p) const;
     unsigned seed_ = 1;
-    std::vector<float> gravelSide_;  // per sample: + gravel trap on the left, - on the right, 0 none
 };

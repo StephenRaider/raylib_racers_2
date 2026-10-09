@@ -490,9 +490,7 @@ void Renderer::buildTrack(const rr::Track& tr) {
 
     // Kerbs where the track bends, widened a little either side.
     std::vector<char> kerb(n, 0);
-    for (int i = 0; i < n; ++i)
-        if (std::fabs(tr.at(i).curvature) > 1.0f / 220.0f)
-            for (int k = -12; k <= 12; ++k) kerb[tr.wrap(i + k)] = 1;
+    for (int i = 0; i < n; ++i) kerb[i] = tr.kerbAt(i);
 
     MeshBuilder asphalt, marks, walls, ground, start;
     float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f;

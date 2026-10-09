@@ -22,6 +22,15 @@ struct TrackSample {
     float vcurv = 0;      // d(grade)/ds, 1/m: + = compression, - = crest (smoothed over ~20 m)
 };
 
+// What each surface does to a car: grip multiplier and extra drag (N per m/s). Kerbs add no
+// bumps or kicks: the sim is flat, they only change the grip a little.
+struct SurfaceProps {
+    const char* name;
+    float mu, drag;
+};
+const SurfaceProps& surfaceProps(int type);       // RR_SURF_*
+int surfaceFromName(const std::string& name);     // -1 if unknown
+
 // Where a point is relative to the track.
 struct TrackLoc {
     int idx = 0;        // segment start sample
@@ -44,6 +53,13 @@ struct TrackLoc {
 //   pit left|right <entry_s> <lane_start_s> <lane_end_s> <exit_s>
 //                              optional pit lane alongside the track (s in metres)
 //   pitspeed <m/s>             pit lane speed limit (default 22)
+//   gravel auto|none           gravel traps on the outside of the faster corners (default auto)
+//   offtrack <surface>         what lies beyond the kerbs by default (default grass)
+//   surface <surface> <left|right|both> <s0> <s1> [from to]
+//                              a strip beyond the tarmac edge between track distances s0 and s1
+//                              (may wrap the line), from..to metres out from the edge (default
+//                              from the kerb to the barrier). Later lines win. Surfaces: tarmac,
+//                              kerb, grass, gravel, dirt, pit, runoff.
 //   drs <detect_s> <start_s> <end_s>
 //                              a DRS zone (s in metres, may wrap the line); with none given
 //                              the zones are the longest straights, see findDrsZones. "drs none"
@@ -98,8 +114,25 @@ public:
     static constexpr float kLaneCentre = 5.0f, kBoxCentre = 9.0f, kPitBarrier = 12.5f;
     // Distance from the centreline to the barrier on side (+1 left, -1 right).
     float barrierOffset(float s, int side, float halfWidth) const;
-    // Paved for grip purposes: tarmac plus kerbs, plus the pit area.
+    // Paved for grip purposes: tarmac, kerbs, pit area and paved run-off.
     bool paved(float s, float lateral, float halfWidth) const;
+    // The surface (RR_SURF_*) at track distance s and lateral offset.
+    int surfaceAt(float s, float lateral, float halfWidth) const;
+    // Kerbs run along the corners, a little either side; the same for both sides.
+    bool kerbAt(int i) const { return kerb_[wrap(i)] != 0; }
+    static constexpr float kKerbWidth = 1.2f;  // beyond the tarmac edge
+    struct SurfaceZone {
+        int type;
+        int side;  // +1 left, -1 right, 0 both
+        float s0, s1, from, to;  // track distance range; metres beyond the tarmac edge
+    };
+    const std::vector<SurfaceZone>& surfaceZones() const { return zones_; }
+    int offtrackSurface() const { return offtrack_; }
+    // The automatic gravel traps: per sample, + on the left, - on the right, 0 none; the magnitude
+    // is how strong (the viewer fades the gravel in with it). Gravel counts from 0.5 up.
+    float gravelSide(int i) const { return gravelSide_[wrap(i)]; }
+    // The surface a "surface" line gives this spot, or -1 for none.
+    int zoneSurface(float s, float lateral, float halfWidth) const;
 
     // Self-intersection / overlap warnings found while building.
     const std::vector<std::string>& warnings() const { return warnings_; }
@@ -132,6 +165,11 @@ private:
     std::vector<int> gridStart_;  // gridW*gridH + 1 offsets into gridItems_
     std::vector<int> gridItems_;
 
+    std::vector<char> kerb_;
+    std::vector<float> gravelSide_;
+    bool autoGravel_ = true;
+    std::vector<SurfaceZone> zones_;
+    int offtrack_ = 2;  // RR_SURF_GRASS
     std::string name_ = "unnamed";
     std::string scenery_;
     RRPitInfo pitCfg_{};

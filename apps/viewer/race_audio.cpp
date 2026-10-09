@@ -8,6 +8,11 @@
 namespace {
 
 EngineSynth* gSynth = nullptr;
+SurfaceSynth* gSurf = nullptr;
+
+void surfaceCallback(void* buffer, unsigned int frames) {
+    if (gSurf) gSurf->render(static_cast<float*>(buffer), (int)frames);
+}
 
 void audioCallback(void* buffer, unsigned int frames) {
     if (gSynth) gSynth->render(static_cast<float*>(buffer), (int)frames);
@@ -35,6 +40,12 @@ bool RaceAudio::init() {
     gSynth = &synth_;
     SetAudioStreamCallback(stream_, audioCallback);
     PlayAudioStream(stream_);
+    surfStream_ = LoadAudioStream(SurfaceSynth::kRate, 32, 2);
+    if (IsAudioStreamValid(surfStream_)) {
+        gSurf = &surf_;
+        SetAudioStreamCallback(surfStream_, surfaceCallback);
+        PlayAudioStream(surfStream_);
+    }
     ready_ = true;
     return true;
 }
@@ -44,6 +55,11 @@ void RaceAudio::shutdown() {
     StopAudioStream(stream_);
     UnloadAudioStream(stream_);
     gSynth = nullptr;
+    if (gSurf) {
+        gSurf = nullptr;
+        StopAudioStream(surfStream_);
+        UnloadAudioStream(surfStream_);
+    }
     CloseAudioDevice();
     ready_ = false;
 }
@@ -109,4 +125,50 @@ void RaceAudio::update(const rr::Race& race, const Camera3D& camera, int focus, 
     synth_.setVoices(active ? listen(race, camera.position, vel, right, focus, engine, heightOf ? &heightOf : nullptr)
                             : std::vector<EngineSynth::Voice>{},
                      active ? 1.1f * master_ : 0.0f);
+
+    // Surface sounds: the cars near the listener, wheel by wheel.
+    std::vector<SurfaceSynth::Voice> sv;
+    if (active && gSurf) {
+        const rr::Track& tr = race.track();
+        const auto* hf = heightOf ? &heightOf : nullptr;
+        struct Near { int car; float dist; };
+        std::vector<Near> near;
+        const auto& cars = race.cars();
+        for (int i = 0; i < (int)cars.size(); ++i)
+            if (!cars[i].dnf) near.push_back({i, Vector3Distance(camera.position, carPosAt(cars[i], hf))});
+        std::sort(near.begin(), near.end(), [&](const Near& a, const Near& b) {
+            if ((a.car == focus) != (b.car == focus)) return a.car == focus;
+            return a.dist < b.dist;
+        });
+        if (near.size() > 6) near.resize(6);
+        for (const Near& nr : near) {
+            const rr::Car& c = cars[nr.car];
+            const float speed = rr::length(c.state.velWorld());
+            if (speed < 2.0f) continue;
+            const float lx[4] = {c.phys.cgToFront, c.phys.cgToFront, -c.phys.cgToRear, -c.phys.cgToRear};
+            const float ly[4] = {c.phys.trackFront * 0.5f, -c.phys.trackFront * 0.5f, c.phys.trackRear * 0.5f, -c.phys.trackRear * 0.5f};
+            const rr::Vec2 fwd = rr::fromAngle(c.state.yaw), left = rr::perpLeft(fwd);
+            SurfaceSynth::Voice v;
+            v.car = nr.car;
+            v.speed = speed;
+            for (int w = 0; w < 4; ++w) {
+                const rr::Vec2 p = c.state.pos + fwd * lx[w] + left * ly[w];
+                const rr::TrackLoc loc = tr.locate(p, c.trackIdx, 10);
+                switch (tr.surfaceAt(loc.s, loc.lateral, loc.halfWidth)) {
+                    case RR_SURF_KERB: v.kerb += 1; break;
+                    case RR_SURF_GRASS: v.grass += 1; break;
+                    case RR_SURF_GRAVEL: v.gravel += 1; break;
+                    case RR_SURF_DIRT: v.dirt += 1; break;
+                    default: break;
+                }
+            }
+            if (v.kerb + v.grass + v.gravel + v.dirt == 0) continue;
+            v.gain = std::min(1.0f, 8.0f / (nr.dist + 2.0f)) * (nr.car == focus ? 1.0f : 0.7f);
+            Vector3 to = Vector3Subtract(carPosAt(c, hf), camera.position);
+            Vector3 dir = nr.dist > 0.1f ? Vector3Scale(to, 1.0f / nr.dist) : Vector3{0, 0, 1};
+            v.pan = std::clamp(Vector3DotProduct(dir, right), -1.0f, 1.0f) * 0.8f;
+            sv.push_back(v);
+        }
+    }
+    surf_.setVoices(sv, 0.8f * master_);
 }

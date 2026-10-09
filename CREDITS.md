@@ -47,6 +47,11 @@ split into one car (body and wheels, metres, RR layout; see its `car.json`).
 by Ange Yaghi (AngeTheGreat), MIT licence (copy in `assets/sound/ENGINE_SIM_LICENSE.txt`): the exhaust
 impulse response of its F1 V10 engine. The V8 sound runs its firing pulses through it.
 
+## Surface sounds
+
+The kerb rumble, grass and gravel sounds are generated in code (`apps/viewer/surface_sound.cpp`) from noise
+and oscillators. There are no audio files, so nothing to credit.
+
 ## assets/scenery
 
 See [assets/scenery/CREDITS.md](assets/scenery/CREDITS.md) (Low Poly Forest Tree Pack, CC BY 4.0;

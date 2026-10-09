@@ -68,6 +68,37 @@ bool Track::load(const std::string& path, std::string* err) {
             }
             pitCfg_.has_pit = 1;
             pitCfg_.side = side == "left" ? 1 : -1;
+        } else if (key == "gravel") {
+            std::string mode;
+            ss >> mode;
+            if (mode != "auto" && mode != "none") {
+                if (err) *err = path + ":" + std::to_string(lineNo) + ": expected 'gravel auto|none'";
+                return false;
+            }
+            autoGravel_ = mode == "auto";
+        } else if (key == "offtrack") {
+            std::string nm;
+            ss >> nm;
+            offtrack_ = surfaceFromName(nm);
+            if (offtrack_ < 0) {
+                if (err) *err = path + ":" + std::to_string(lineNo) + ": unknown surface '" + nm + "'";
+                return false;
+            }
+        } else if (key == "surface") {
+            std::string nm, side;
+            SurfaceZone z{};
+            z.from = kKerbWidth;
+            z.to = 1e9f;
+            ss >> nm >> side;
+            z.type = surfaceFromName(nm);
+            z.side = side == "left" ? 1 : side == "right" ? -1 : 0;
+            if (z.type < 0 || (side != "left" && side != "right" && side != "both") || !(ss >> z.s0 >> z.s1)) {
+                if (err) *err = path + ":" + std::to_string(lineNo) + ": expected 'surface <type> left|right|both s0 s1 [from to]'";
+                return false;
+            }
+            float a, b;
+            if (ss >> a >> b) { z.from = a; z.to = b; }
+            zones_.push_back(z);
         } else if (key == "pitspeed") {
             ss >> pitCfg_.speed_limit;
         } else if (key == "drs") {
@@ -272,6 +303,38 @@ void Track::finalize() {
     findTurns();
     findDrsZones();
     buildEdgeGrid();
+    kerb_.assign(n, 0);
+    for (int i = 0; i < n; ++i)
+        if (std::fabs(at(i).curvature) > 1.0f / 220.0f)
+            for (int k = -12; k <= 12; ++k) kerb_[wrap(i + k)] = 1;
+    // Gravel traps on the outside of the faster corners, a little beyond them either way.
+    {
+        std::vector<float> k(n);
+        for (int i = 0; i < n; ++i) {
+            float sum = 0;
+            for (int o = -20; o <= 20; ++o) sum += at(i + o).curvature;
+            k[i] = sum / 41;
+        }
+        gravelSide_.assign(n, 0.0f);
+        for (int i = 0; autoGravel_ && i < n; ++i) {
+            float x = clampf((std::fabs(k[i]) - 1.0f / 260.0f) / (1.0f / 110.0f - 1.0f / 260.0f), 0, 1);
+            const float strength = x * x * (3 - 2 * x);
+            if (strength <= 0) continue;
+            const float side = k[i] > 0 ? -1.0f : 1.0f;  // outside of the bend
+            for (int o = -10; o <= 45; ++o) {            // gravel runs on past the exit
+                int j = wrap(i + o);
+                float v = strength * (1.0f - std::max(0, o - 25) / 20.0f);
+                if (std::fabs(gravelSide_[j]) < v) gravelSide_[j] = side * v;
+            }
+        }
+        if (hasPit())
+            for (int i = 0; i < n; ++i)
+                if (inPitArea(at(i).s) && gravelSide_[i] * info_.pit.side > 0) gravelSide_[i] = 0;
+    }
+    for (SurfaceZone& z : zones_) {
+        z.s0 = std::fmod(z.s0, length_); if (z.s0 < 0) z.s0 += length_;
+        z.s1 = std::fmod(z.s1, length_); if (z.s1 < 0) z.s1 += length_;
+    }
 }
 
 // DRS zones: the track file's, or else the longest straights (at most three) that are 450 m or more
@@ -404,10 +467,50 @@ float Track::barrierOffset(float s, int side, float halfWidth) const {
 }
 
 bool Track::paved(float s, float lateral, float halfWidth) const {
-    float a = std::fabs(lateral);
-    if (a <= halfWidth + 1.2f) return true;
-    int side = lateral > 0 ? 1 : -1;
-    return side == info_.pit.side && inPitArea(s) && a <= halfWidth + kPitBarrier;
+    switch (surfaceAt(s, lateral, halfWidth)) {
+        case RR_SURF_TARMAC: case RR_SURF_KERB: case RR_SURF_PIT: case RR_SURF_RUNOFF: return true;
+        default: return false;
+    }
+}
+
+int Track::surfaceAt(float s, float lateral, float halfWidth) const {
+    const float a = std::fabs(lateral);
+    if (a <= halfWidth) return RR_SURF_TARMAC;
+    const int side = lateral > 0 ? 1 : -1;
+    const float out = a - halfWidth;
+    const int t = zoneSurface(s, lateral, halfWidth);
+    if (t >= 0) return t;
+    if (side == info_.pit.side && inPitArea(s) && a <= halfWidth + kPitBarrier) return RR_SURF_PIT;
+    if (out <= kKerbWidth) return kerbAt(indexAt(s)) ? RR_SURF_KERB : RR_SURF_TARMAC;
+    const int i = indexAt(s);
+    if (gravelSide_[i] * lateral > 0 && std::fabs(gravelSide_[i]) >= 0.5f && out >= 2.0f &&
+        a < barrierOffset(s, side, halfWidth) - 1.1f)
+        return RR_SURF_GRAVEL;
+    return offtrack_;
+}
+
+int Track::zoneSurface(float s, float lateral, float halfWidth) const {
+    const float out = std::fabs(lateral) - halfWidth;
+    const int side = lateral > 0 ? 1 : -1;
+    int t = -1;
+    for (const SurfaceZone& z : zones_)
+        if ((z.side == 0 || z.side == side) && out >= z.from && out <= z.to && inSpan(s, z.s0, z.s1)) t = z.type;
+    return t;
+}
+
+const SurfaceProps& surfaceProps(int type) {
+    // Grass is what the sim always used (0.7, 250); the rest are set against it. Kerbs keep
+    // nearly all the grip and add no drag.
+    static const SurfaceProps t[RR_NUM_SURFACES] = {
+        {"tarmac", 1.00f, 0.0f}, {"kerb", 0.97f, 0.0f}, {"grass", 0.70f, 250.0f}, {"gravel", 0.55f, 700.0f},
+        {"dirt", 0.65f, 380.0f}, {"pit", 1.00f, 0.0f},  {"runoff", 0.95f, 0.0f}};
+    return t[type < 0 || type >= RR_NUM_SURFACES ? 0 : type];
+}
+
+int surfaceFromName(const std::string& name) {
+    for (int i = 0; i < RR_NUM_SURFACES; ++i)
+        if (name == surfaceProps(i).name) return i;
+    return name == "asphalt" ? RR_SURF_TARMAC : name == "pitlane" ? RR_SURF_PIT : -1;
 }
 
 int Track::indexAt(float s) const {

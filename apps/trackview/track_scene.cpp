@@ -222,29 +222,6 @@ bool TrackScene::build(const rr::Track& track, const std::string& assetsDir, uns
     for (int i = 0; i < track.size(); ++i) zsum += track.at(i).z;
     centre_.y = zsum / track.size();
 
-    // gravel traps on the outside of the faster corners, a little beyond them either way
-    const int n = track.size();
-    std::vector<float> k(n), g(n, 0.0f);
-    for (int i = 0; i < n; ++i) {
-        float sum = 0;
-        for (int o = -20; o <= 20; ++o) sum += track.at(i + o).curvature;
-        k[i] = sum / 41;
-    }
-    gravelSide_.assign(n, 0.0f);
-    for (int i = 0; i < n; ++i) {
-        float strength = smoothstepf(1.0f / 260.0f, 1.0f / 110.0f, std::fabs(k[i]));
-        if (strength <= 0) continue;
-        float side = k[i] > 0 ? -1.0f : 1.0f;  // outside of the bend
-        for (int o = -10; o <= 45; ++o) {     // gravel runs on past the exit
-            int j = track.wrap(i + o);
-            float v = strength * (1.0f - std::max(0, o - 25) / 20.0f);
-            if (std::fabs(gravelSide_[j]) < v) gravelSide_[j] = side * v;
-        }
-    }
-    if (track.hasPit())
-        for (int i = 0; i < n; ++i)
-            if (track.inPitArea(track.at(i).s) && gravelSide_[i] * track.pit().side > 0) gravelSide_[i] = 0;
-
     seed_ = seed;
     buildTerrain(seed);
     buildRoad(seed);
@@ -322,9 +299,7 @@ void TrackScene::buildRoad(unsigned seed) {
     auto sAt = [&](int i) { return i >= n ? L : tr.at(i).s; };
 
     std::vector<char> kerb(n, 0);
-    for (int i = 0; i < n; ++i)
-        if (std::fabs(tr.at(i).curvature) > 1.0f / 220.0f)
-            for (int o = -12; o <= 12; ++o) kerb[tr.wrap(i + o)] = 1;
+    for (int i = 0; i < n; ++i) kerb[i] = tr.kerbAt(i);
 
     gfx::MeshBuilder road, paint, kerbRed, kerbWhite, walls, armco, apron, skirt, startLine;
 
@@ -687,13 +662,17 @@ void TrackScene::buildTerrain(unsigned seed) {
                                                            al < loc.halfWidth + rr::Track::kPitBarrier + 0.5f);
                 if (garagesAt(loc.s) && side == tr.pit().side && al < flat) paved = true;  // under the paddock slab
                 if (paved) h -= 0.06f;
-                float gs = gravelSide_[loc.idx];
+                float gs = tr.gravelSide(loc.idx);
                 if (gs * lat > 0)
                     gravel = std::fabs(gs) * smoothstepf(loc.halfWidth + 1.4f, loc.halfWidth + 2.6f, al) *
                              (1.0f - smoothstepf(barrier - 1.6f, barrier - 0.6f, al));
+                // strips the track file names ("surface gravel left 100 200")
+                const int zs = tr.zoneSurface(loc.s, lat, loc.halfWidth);
+                if (zs == RR_SURF_GRAVEL) gravel = 1.0f;
                 // worn earth along the foot of the barrier, none on the verge
                 float foot = 1.0f - smoothstepf(0.3f, 1.4f, std::fabs(al - barrier - 0.3f));
                 dirt = std::max(dirt * smoothstepf(barrier, barrier + 8.0f, al), foot * 0.7f);
+                if (zs == RR_SURF_DIRT) dirt = 0.95f;
                 forest *= smoothstepf(barrier + 10.0f, barrier + 16.0f, al);
                 if (tr.hasPit() && tr.inPitArea(loc.s)) forest *= smoothstepf(88.0f, 96.0f, al);  // as the trees
             }

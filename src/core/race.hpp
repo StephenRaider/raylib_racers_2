@@ -39,6 +39,7 @@ struct Car {
     float lateral = 0;
     float halfWidth = 7;
     bool onTrack = true;
+    int surface = 0;  // RR_SURF_* under the centre
 
     // race progress
     double distRaced = 0;

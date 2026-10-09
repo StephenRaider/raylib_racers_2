@@ -153,8 +153,9 @@ struct CarState {
 };
 
 struct Surface {
+    int type = 0;           // RR_SURF_*
     float muScale = 1.0f;   // grip multiplier
-    float extraDrag = 0.0f; // N per m/s (grass)
+    float extraDrag = 0.0f; // N per m/s (grass, gravel)
     float dragScale = 1.0f; // < 1 in another car's slipstream
     float downforceScale = 1.0f, frontDownforceScale = 1.0f;  // < 1 in another car's dirty air
     // The road's 3D shape under the car (0 on a flat track):

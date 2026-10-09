@@ -29,8 +29,8 @@
 extern "C" {
 #endif
 
-#define RR_ABI_VERSION 10
-/* Robots built for ABI 2 to 9 still load: later versions only appended
+#define RR_ABI_VERSION 11
+/* Robots built for ABI 2 to 10 still load: later versions only appended
  * fields to RRTrackInfo, RRCarSpec, RRRobotConfig, RRSensors and RRControl. */
 #define RR_ABI_MIN_VERSION 2
 
@@ -408,7 +408,20 @@ typedef struct RRSensors {
     int drs_next_zone;         /* the next zone ahead */
     float drs_next_ds;         /* m to the start of drs_next_zone (0 inside it) */
     float drs_gap;             /* s behind the car ahead when we last crossed a detection point, -1 if none */
+
+    /* --- ABI 11 --- the surface under the car's centre: RR_SURF_*. Grip and drag
+     * differ per surface (grass and gravel are slow, kerbs grip almost like tarmac). */
+    int surface;
 } RRSensors;
+
+#define RR_SURF_TARMAC 0
+#define RR_SURF_KERB 1
+#define RR_SURF_GRASS 2
+#define RR_SURF_GRAVEL 3
+#define RR_SURF_DIRT 4
+#define RR_SURF_PIT 5      /* pit lane and the paved pit area */
+#define RR_SURF_RUNOFF 6   /* paved run-off area */
+#define RR_NUM_SURFACES 7
 
 #define RR_BLUE_FLAG_RANGE 60.0f   /* m behind us (or 1.2 s, whichever is more) */
 #define RR_BLUE_FLAG_LIMIT 8.0f    /* s of holding a lapping car up before a penalty */
