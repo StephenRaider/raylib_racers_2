@@ -357,7 +357,7 @@ lowering another. `specs/development.json` defines them. Each point away from
 Lap times are measured on Highmoor Ridge and Circuit Raylib, where a full swing
 of one stat is a few tenths a lap. The `fuel_efficiency` stat of older lineups is
 ignored. `--dev "top_speed=8,downforce=3"` sets one car's stats (stats left out stay at
-5); over 40 points, outside 0-10 or an unknown stat is an error. The car's
+5); over 50 points, outside 0-10 or an unknown stat is an error. The car's
 spec reaches its robot through `RRCarSpec`, so planners adapt to it.
 
 In the viewer the **Team stats** page edits each team's stats. Teammates share
