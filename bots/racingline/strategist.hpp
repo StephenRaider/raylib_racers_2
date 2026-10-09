@@ -25,7 +25,7 @@ namespace strat {
 // the tyres cool gets ~2.5% a lap from it at 2x the wear. Measured on the
 // circuit with the three racingline styles.
 struct Compounds {
-    float wear[4] = {1, 2.0f, 1, 0.55f};    // by RR_TIRE_*
+    float wear[4] = {1, 2.0f, 1, 0.72f};    // by RR_TIRE_*
     float pace[4] = {0, -0.025f, 0, 0.035f};
     static Compounds forHeat(float heat) {
         const float h = std::clamp(heat / 5.0f, 0.0f, 1.0f);

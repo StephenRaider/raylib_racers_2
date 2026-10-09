@@ -45,7 +45,7 @@ extern "C" {
 /* Tyre compounds: softer is grippier but wears faster and works cooler.
  *                    soft      medium    hard
  * New-tyre grip:     x1.05     x1.0      x0.965
- * Wear rate:         x2.0      x1.0      x0.55
+ * Wear rate:         x2.0      x1.0      x0.72
  * Working window:    85-105 C  95-115 C  105-125 C
  * Worn grip: 1 - 0.07 * wear, falling off a cliff past wear 0.7 (-0.8 per unit beyond).
  * Temperature: -0.25% grip per C below the window, -0.2% per C above (at most -20%);

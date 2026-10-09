@@ -209,7 +209,7 @@ The physics is in `src/core/car.cpp`; the numbers a strategy needs are:
   A medium loses about 0.02-0.03 per lap of the circuit, and a worn tyre slides
   more, so the rate grows through a stint. Grip falls 7% from new to wear 0.7,
   then off a cliff (-0.8 per unit of wear beyond 0.7). Softs grip 5% more and
-  wear 2x faster; hards grip 3.5% less and wear 0.55x. Temperature outside
+  wear 2x faster; hards grip 3.5% less and wear 0.72x. Temperature outside
   the compound's window costs grip and adds wear (see ABI 4 above).
   `--wear-rate X` scales wear (handy for forcing stops in short races).
 - **Slipstream**: a car up to 60 m behind another and within 3.5 m of its
@@ -287,7 +287,7 @@ when it has stopped (overcut), or answer a rival's stop.
   Compound priors depend on how hot the car runs its tyres (`heat`): for a
   hot driver the soft barely gains anything and wears 2.75 times as fast as
   the medium; for a cool one it is 2.5% quicker and wears twice as fast. The
-  hard wears 0.55 times as fast and is 1.5-3.5% slower. It starts from
+  hard wears 0.72 times as fast and is 1.5-3.5% slower. It starts from
   priors (the planned line's lap time, fuel from the track length with a 6%
   margin, wear from `heat`) and replaces them with what it measures: fuel and
   wear per lap since the last stop, clean lap times, the real time lost in

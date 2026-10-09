@@ -61,7 +61,7 @@ float* CarParams::field(const std::string& name) {
 }
 
 const Compound& compoundInfo(int compound) {
-    static const Compound soft{1.05f, 2.0f, 85, 105}, medium{1.0f, 1.0f, 95, 115}, hard{0.965f, 0.55f, 105, 125};
+    static const Compound soft{1.05f, 2.0f, 85, 105}, medium{1.0f, 1.0f, 95, 115}, hard{0.965f, 0.72f, 105, 125};
     return compound == RR_TIRE_SOFT ? soft : (compound == RR_TIRE_HARD ? hard : medium);
 }
 
