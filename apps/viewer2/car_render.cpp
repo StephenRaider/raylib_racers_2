@@ -95,6 +95,7 @@ bool CarRender::loadPart(const std::string& file, const Finish& paint, int liver
                 Part p;
                 p.mesh = mesh;
                 p.set = set;
+                p.livery = !wheel && mi == liveryMaterial;
                 p.mat.layer[0] = set;
                 p.mat.clearcoat = cc;
                 p.mat.clearcoatRoughness = ccRough;
@@ -138,6 +139,18 @@ bool CarRender::load(const std::string& dir, const Finish& paint, std::string* e
         !loadPart(dir + "/wheel_front.glb", paint, -1, &wheel_parts_[0], true, wheels_[0].radius, err) ||
         !loadPart(dir + "/wheel_rear.glb", paint, -1, &wheel_parts_[1], true, wheels_[2].radius, err))
         return false;
+    if (liveryFile_.empty() && FileExists((dir + "/livery_default.png").c_str()) && FileExists((dir + "/livery_mask.png").c_str())) {
+        paintBase_ = LoadImage((dir + "/livery_default.png").c_str());
+        paintMask_ = LoadImage((dir + "/livery_mask.png").c_str());
+        if (paintBase_.data && paintMask_.data && paintBase_.width == paintMask_.width && paintBase_.height == paintMask_.height) {
+            ImageFormat(&paintBase_, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
+            ImageFormat(&paintMask_, PIXELFORMAT_UNCOMPRESSED_GRAYSCALE);
+        } else {
+            UnloadImage(paintBase_);
+            UnloadImage(paintMask_);
+            paintBase_ = paintMask_ = {};
+        }
+    }
     // the DRS flap: its own file, whose node sits at the hinge (raylib bakes that into the
     // vertices, so the flap loads closed, in the body's frame)
     const mjson::Value& drs = j["drs"];
@@ -154,6 +167,7 @@ bool CarRender::load(const std::string& dir, const Finish& paint, std::string* e
 }
 
 void CarRender::shareFrom(const CarRender& src) {
+    origin_ = const_cast<CarRender*>(src.origin_);
     body_parts_ = src.body_parts_;
     steer_parts_ = src.steer_parts_;
     drs_parts_ = src.drs_parts_;
@@ -170,6 +184,40 @@ void CarRender::shareFrom(const CarRender& src) {
     owner_ = false;
 }
 
+gfx::TextureSet* CarRender::paintSet(Color c) {
+    if (!paintBase_.data) return nullptr;
+    const uint32_t key = (uint32_t)c.r << 16 | (uint32_t)c.g << 8 | c.b;
+    auto it = paintSets_.find(key);
+    if (it != paintSets_.end()) return it->second;
+    Image img = ImageCopy(paintBase_);
+    unsigned char* px = (unsigned char*)img.data;
+    const unsigned char* mk = (const unsigned char*)paintMask_.data;
+    const unsigned char col[3] = {c.r, c.g, c.b};
+    for (int i = 0, n = img.width * img.height; i < n; ++i) {
+        const int a = mk[i];
+        if (a == 0) continue;
+        for (int k = 0; k < 3; ++k) px[3 * i + k] = (unsigned char)((px[3 * i + k] * (255 - a) + col[k] * a + 127) / 255);
+    }
+    Texture2D t = LoadTextureFromImage(img);
+    UnloadImage(img);
+    GenTextureMipmaps(&t);
+    SetTextureFilter(t, TEXTURE_FILTER_ANISOTROPIC_16X);
+    auto* set = new gfx::TextureSet(gfx::flatTextureSet(t, 0.3f, 0.3f));
+    paintSets_[key] = set;
+    return set;
+}
+
+void CarRender::setPaint(Color c) {
+    gfx::TextureSet* s = origin_->paintSet(c);
+    if (!s) return;
+    for (auto* list : {&body_parts_, &drs_parts_})
+        for (Part& p : *list)
+            if (p.livery) {
+                p.set = s;
+                p.mat.layer[0] = s;
+            }
+}
+
 void CarRender::unload() {
     if (!owner_) {
         body_parts_.clear();
@@ -183,6 +231,14 @@ void CarRender::unload() {
         for (Part& p : *list) UnloadMesh(p.mesh);
         list->clear();
     }
+    for (auto& kv : paintSets_) {
+        gfx::unloadTextureSet(*kv.second);
+        delete kv.second;
+    }
+    paintSets_.clear();
+    UnloadImage(paintBase_);
+    UnloadImage(paintMask_);
+    paintBase_ = paintMask_ = {};
     if (liveryTex_.id) UnloadTexture(liveryTex_);
     liveryTex_ = {};
     for (gfx::TextureSet* s : sets_) {

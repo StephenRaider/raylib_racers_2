@@ -15,6 +15,8 @@ For assets/cars/<id> (after tools/rig_drs.py) it writes:
                             the centre line, to put on top of the painting as a layer
     livery_guide.png        the same on solid colours, one hue per view. Save a copy as livery.png
                             to see where each view lands on the car (and how it stretches)
+    livery_mask.png         white where a team colour replaces the paint, black where a part keeps
+                            its (dark) colours; the game tints with it
     livery_views.json       the layout: each view's panel on the sheet
 
 To use a livery in the game, paint on livery_default.png (keep it opaque) and save it as
@@ -79,10 +81,11 @@ def sample(tex, uv):
 
 def bake(tris_new, tris_old, tex, size):
     """Repaints the old texture onto the new layout, the first triangle to reach a texel keeping it.
-    tris_*: (T, 3, 2) uv, v down. Returns the image and which texels were painted."""
+    tris_*: (T, 3, 2) uv, v down. Returns the image, which texels were painted and which triangle painted each."""
     out = np.zeros((size, size, 4), np.float64)
     hit = np.zeros((size, size), bool)
-    for tn, to in zip(tris_new, tris_old):
+    owner = np.full((size, size), -1, np.int64)
+    for ti, (tn, to) in enumerate(zip(tris_new, tris_old)):
         p = tn * size
         x0, x1 = int(max(0, math.floor(p[:, 0].min() - 1))), int(min(size - 1, math.ceil(p[:, 0].max() + 1)))
         y0, y1 = int(max(0, math.floor(p[:, 1].min() - 1))), int(min(size - 1, math.ceil(p[:, 1].max() + 1)))
@@ -105,7 +108,8 @@ def bake(tris_new, tris_old, tex, size):
         fresh = ~hit[ys, xs]
         out[ys[fresh], xs[fresh]] = sample(tex, uv[fresh])
         hit[ys[fresh], xs[fresh]] = True
-    return out, hit
+        owner[ys[fresh], xs[fresh]] = ti
+    return out, hit, owner
 
 
 def pad(img, hit, passes):
@@ -130,12 +134,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("car_dirs", nargs="+", metavar="car_dir")
     ap.add_argument("--size", type=int, default=2048, help="the livery sheet's side in texels")
+    ap.add_argument("--mask-threshold", type=float, default=0.22,
+                    help="a triangle whose paint is darker than this (0..1 brightness) is not recoloured")
     a = ap.parse_args()
     for car_dir in a.car_dirs:
-        unwrap(car_dir, a.size)
+        unwrap(car_dir, a.size, a.mask_threshold)
 
 
-def unwrap(d, size):
+def unwrap(d, size, a_thr):
     meta = json.load(open(os.path.join(d, "car.json"), encoding="utf-8-sig"))
     assert "drs" in meta, "run tools/rig_drs.py first (the flap shares the livery sheet)"
     mat_name = meta["source_material"]
@@ -230,13 +236,26 @@ def unwrap(d, size):
     # the default paint: the old texture rebaked, nearest surfaces first
     towards = np.einsum("ij,ij->i", cpos.mean(1), dirs[view])
     order = np.argsort(-towards, kind="stable")
-    baked, hit = bake(new[order], cold[order], old_tex, size)
+    baked, hit, owner = bake(new[order], cold[order], old_tex, size)
     padded, got = pad(baked, hit, 24)
     padded[~got] = baked[hit].mean(0)
     padded[..., 3] = 255
     default_png = Image.fromarray(np.clip(padded + 0.5, 0, 255).astype(np.uint8), "RGBA")
     default_png.save(os.path.join(d, "livery_default.png"))
     print(f"{100 * hit.mean():.1f}% of the sheet is paint surface")
+
+    # the paint mask: white where a flat team colour replaces the paint, black where the part stays as
+    # it was (a triangle whose original colours are dark on average: floor, diffuser, carbon, tyre-black bits)
+    lum = (0.299 * baked[..., 0] + 0.587 * baked[..., 1] + 0.114 * baked[..., 2]) / 255.0
+    ids = owner[hit]
+    mean = np.bincount(ids, weights=lum[hit], minlength=T) / np.maximum(1, np.bincount(ids, minlength=T))
+    flag = (mean > a_thr).astype(np.float64)
+    mask = np.zeros((size, size, 4))
+    mask[hit, 0] = flag[ids]
+    mask_p, got_m = pad(mask, hit, 24)
+    mimg = np.where(got_m, mask_p[..., 0], 0.0)
+    Image.fromarray(np.clip(mimg * 255 + 0.5, 0, 255).astype(np.uint8), "L").save(os.path.join(d, "livery_mask.png"))
+    print(f"{100 * float(flag[ids].mean()):.1f}% of the paint surface takes a team colour")
 
     # the template and the guide
     sc = 2

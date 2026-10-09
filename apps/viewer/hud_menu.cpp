@@ -201,7 +201,7 @@ void Hud::drawTrackCard(const MenuState& m, std::vector<MenuHit>& hits, Rectangl
 void Hud::drawGridCard(const MenuState& m, std::vector<MenuHit>& hits, Rectangle r, bool teamList) {
     using Row = MenuState::Row;
     char buf[160];
-    std::snprintf(buf, sizeof buf, "%d cars", m.cars);
+    std::snprintf(buf, sizeof buf, m.rr2 && teamList ? "%d cars   click a team to pick its colour" : "%d cars", m.cars);
     card(r, "GRID", buf);
     float y = r.y + 50;
     const float lw = r.width - 40;
@@ -226,9 +226,16 @@ void Hud::drawGridCard(const MenuState& m, std::vector<MenuHit>& hits, Rectangle
         for (size_t k = 0; k < teams.size() && y + rowH <= listBottom + 2; ++k, y += rowH) {
             const int t = teams[k];
             const int slot = m.teamSlots[t].empty() ? -1 : m.teamSlots[t][0];
-            DrawRectangleRounded({r.x + 22, y + 5, 5, rowH - 10}, 0.5f, 4, slotColor(slot));
+            if (m.rr2) {  // the team's colour is the player's to pick
+                const Rectangle rowR = {r.x + 20, y + 1, lw, rowH - 2};
+                if (hover(rowR)) DrawRectangleRounded(rowR, rnd(rowR, 8), 6, Fade(WHITE, 0.06f));
+                DrawRectangleRounded({r.x + 24, y + 5, 22, rowH - 10}, 0.35f, 4, slotColor(slot));
+                DrawRectangleRoundedLinesEx({r.x + 24, y + 5, 22, rowH - 10}, 0.35f, 4, 1.0f, Fade(WHITE, 0.5f));
+                hits.push_back({rowR.x, rowR.y, rowR.width, rowR.height, 8000 + t, 0});
+            } else
+                DrawRectangleRounded({r.x + 22, y + 5, 5, rowH - 10}, 0.5f, 4, slotColor(slot));
             const char* name = slot >= 0 && slot < (int)table.size() ? table[slot].team.c_str() : "Team";
-            text(name, r.x + 36, y + (rowH - 15) / 2 - 1, 15, kText, true);
+            text(name, r.x + (m.rr2 ? 56 : 36), y + (rowH - 15) / 2 - 1, 15, kText, true);
             std::string who;
             for (int car = 0; car < m.cars; ++car)
                 if (m.teamOfCar(car) == t && car < (int)m.carAlgo.size()) {
@@ -628,9 +635,61 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
     if (m.typing()) drawNameBox(m, hits);
     if (m.lineupLoad) drawLineupList(m, hits);
     if (m.popup >= 0) drawPopup(m, hits);
+    if (m.pickTeam >= 0) drawColourPicker(m, hits);
 }
 
 // ---------------------------------------------------------------- overlays
+
+void Hud::drawColourPicker(const MenuState& m, std::vector<MenuHit>& hits) {
+    const float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
+    DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.55f));
+    const float W = 640, H = 420;
+    const Rectangle r = {(sw - W) / 2, (sh - H) / 2, W, H};
+    card(r, "TEAM COLOUR");
+    hits.push_back({r.x, r.y, r.width, r.height, 8398, 0});
+    const auto& table = liveryTable();
+    const int slot = m.pickTeam < (int)m.teamSlots.size() && !m.teamSlots[m.pickTeam].empty() ? m.teamSlots[m.pickTeam][0] : -1;
+    text(slot >= 0 && slot < (int)table.size() ? table[slot].team.c_str() : "Team", r.x + 22, r.y + 40, 24, kText, true);
+    // saturation (across) and value (up) for the current hue
+    const Rectangle sv = {r.x + 22, r.y + 84, 280, 280};
+    const Color hueCol = ColorFromHSV(m.pickH, 1, 1);
+    DrawRectangleGradientH((int)sv.x, (int)sv.y, (int)sv.width, (int)sv.height, WHITE, hueCol);
+    DrawRectangleGradientV((int)sv.x, (int)sv.y, (int)sv.width, (int)sv.height, BLANK, BLACK);
+    DrawRectangleLinesEx(sv, 1, Fade(WHITE, 0.4f));
+    const Vector2 dot = {sv.x + m.pickS * sv.width, sv.y + (1 - m.pickV) * sv.height};
+    DrawCircleV(dot, 8, BLACK);
+    DrawCircleV(dot, 6, WHITE);
+    DrawCircleV(dot, 4, ColorFromHSV(m.pickH, m.pickS, m.pickV));
+    hits.push_back({sv.x, sv.y, sv.width, sv.height, 8200, 0});
+    // hue
+    const Rectangle hb = {sv.x + sv.width + 16, sv.y, 28, 280};
+    for (int i = 0; i < 6; ++i)
+        DrawRectangleGradientV((int)hb.x, (int)(hb.y + hb.height * i / 6), (int)hb.width, (int)std::ceil(hb.height / 6),
+                               ColorFromHSV(60.0f * i, 1, 1), ColorFromHSV(60.0f * (i + 1), 1, 1));
+    DrawRectangleLinesEx(hb, 1, Fade(WHITE, 0.4f));
+    const float hy = hb.y + hb.height * (m.pickH / 360.0f);
+    DrawRectangle((int)hb.x - 4, (int)hy - 2, (int)hb.width + 8, 4, BLACK);
+    DrawRectangle((int)hb.x - 3, (int)hy - 1, (int)hb.width + 6, 2, WHITE);
+    hits.push_back({hb.x - 6, hb.y - 4, hb.width + 12, hb.height + 8, 8201, 0});
+    // the colour, and the presets
+    const Color cur = ColorFromHSV(m.pickH, m.pickS, m.pickV);
+    const float px = hb.x + hb.width + 28, pw = r.x + r.width - 22 - px;
+    DrawRectangleRounded({px, sv.y, pw, 70}, 0.15f, 6, cur);
+    DrawRectangleRoundedLinesEx({px, sv.y, pw, 70}, 0.15f, 6, 1.0f, Fade(WHITE, 0.5f));
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "#%02X%02X%02X", cur.r, cur.g, cur.b);
+    text(buf, px, sv.y + 82, 18, kText, true, true);
+    text("PRESETS", px, sv.y + 118, 11, kDim, true);
+    const float cell = (pw - 4 * 8) / 5;
+    for (int i = 0; i < presetCount(); ++i) {
+        const Rectangle k = {px + (i % 5) * (cell + 8), sv.y + 138 + (i / 5) * (cell + 8), cell, cell};
+        DrawRectangleRounded(k, 0.25f, 6, presetColor(i));
+        DrawRectangleRoundedLinesEx(k, 0.25f, 6, hover(k) ? 2.5f : 1.0f, hover(k) ? kAccent : Fade(WHITE, 0.4f));
+        hits.push_back({k.x, k.y, k.width, k.height, 8300 + i, 0});
+    }
+    text("Drag in the square and on the bar, or click a preset", r.x + 22, r.y + H - 40, 13, kDim);
+    button({r.x + r.width - 22 - 120, r.y + H - 56, 120, 40}, "Done", 0, false, 8399, hits);
+}
 
 void Hud::drawPopup(const MenuState& m, std::vector<MenuHit>& hits) {
     const std::vector<std::string> opts = m.popupOptions();

@@ -23,3 +23,13 @@ const std::vector<CarLivery>& liveryTable();
 // Which slot each car (by race index) wears; cars beyond the list wear slot index % count.
 void setCarLiveries(const std::vector<int>& slotOfCar);
 int carLivery(int carIndex);
+
+// Raylib Racers 2: teams are Team 1, Team 2 ... and any of them can be any colour.
+// The ten preset colours (also the ten solid liveries of the 2013 Mercedes), in picker order.
+int presetCount();
+Color presetColor(int i);
+const char* presetName(int i);
+// Renames the table's teams (in order of first appearance) and gives each a preset colour.
+void neutralTeams(std::vector<CarLivery>& table);
+// A livery slot's team colour: the HUD, minimap and the car's paint.
+void setSlotColor(int slot, Color c);

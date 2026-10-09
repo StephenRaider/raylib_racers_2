@@ -144,6 +144,7 @@ private:
     void drawGridCard(const MenuState& m, std::vector<MenuHit>& hits, Rectangle r, bool teamList);
     void drawSeasonPage(const MenuState& m, std::vector<MenuHit>& hits);
     void drawPopup(const MenuState& m, std::vector<MenuHit>& hits);
+    void drawColourPicker(const MenuState& m, std::vector<MenuHit>& hits);
     void drawNameBox(const MenuState& m, std::vector<MenuHit>& hits);
     void drawLineupList(const MenuState& m, std::vector<MenuHit>& hits);
     void drawTeamsPage(const MenuState& m, std::vector<MenuHit>& hits);

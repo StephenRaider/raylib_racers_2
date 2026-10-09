@@ -88,3 +88,32 @@ int carLivery(int carIndex) {
     if (carIndex >= 0 && carIndex < (int)gCarSlot.size()) return ((gCarSlot[carIndex] % n) + n) % n;
     return ((carIndex % n) + n) % n;
 }
+
+namespace {
+struct Preset { const char* name; Color c; };
+const Preset kPresets[] = {
+    {"red", {200, 25, 30, 255}},     {"blue", {25, 70, 190, 255}},     {"orange", {240, 120, 15, 255}},
+    {"green", {25, 140, 60, 255}},   {"yellow", {245, 205, 20, 255}},  {"purple", {110, 45, 160, 255}},
+    {"teal", {0, 150, 140, 255}},    {"white", {240, 240, 240, 255}},  {"navy", {15, 25, 70, 255}},
+    {"black", {22, 22, 24, 255}},
+};
+}  // namespace
+
+int presetCount() { return (int)(sizeof kPresets / sizeof kPresets[0]); }
+Color presetColor(int i) { return kPresets[((i % presetCount()) + presetCount()) % presetCount()].c; }
+const char* presetName(int i) { return kPresets[((i % presetCount()) + presetCount()) % presetCount()].name; }
+
+void neutralTeams(std::vector<CarLivery>& table) {
+    std::vector<std::string> seen;
+    for (CarLivery& l : table) {
+        int k = (int)(std::find(seen.begin(), seen.end(), l.team) - seen.begin());
+        if (k == (int)seen.size()) seen.push_back(l.team);
+        l.team = "Team " + std::to_string(k + 1);
+        l.key = "team" + std::to_string(k + 1);
+        l.color = presetColor(k);
+    }
+}
+
+void setSlotColor(int slot, Color c) {
+    if (slot >= 0 && slot < (int)gTable.size()) gTable[slot].color = c;
+}

@@ -62,6 +62,7 @@ struct Renderer::Impl {
     std::string assets;
     std::vector<std::unique_ptr<CarRender>> cars;
     std::vector<int> carModel;
+    std::vector<Color> carPaint;   // the team colour each car was painted with
     std::vector<const rr::Car*> carPtrs;
     bool synced = false;
     double lastTime = -1;
@@ -87,10 +88,20 @@ struct Renderer::Impl {
             bool same = true;
             for (int i = 0; i < n; ++i)
                 if (carModel[i] != carLivery(i) % kCarModels + 1) same = false;
-            if (same) return;
+            if (same) {
+                for (int i = 0; i < n; ++i) {
+                    const Color c = teamColor(i);
+                    if (cars[i] && (c.r != carPaint[i].r || c.g != carPaint[i].g || c.b != carPaint[i].b)) {
+                        cars[i]->setPaint(c);
+                        carPaint[i] = c;
+                    }
+                }
+                return;
+            }
         }
         unloadCars();
         carModel.assign(n, 0);
+        carPaint.assign(n, Color{0, 0, 0, 0});
         std::vector<CarRender*> loaded(kCarModels + 1, nullptr);  // by model: the car that owns its meshes
         for (int i = 0; i < n; ++i) {
             const int want = carLivery(i) % kCarModels + 1;
@@ -121,6 +132,11 @@ struct Renderer::Impl {
                 cars[i].reset();
             }
         }
+        for (int i = 0; i < n; ++i)
+            if (cars[i]) {
+                carPaint[i] = teamColor(i);
+                cars[i]->setPaint(carPaint[i]);
+            }
     }
 
     // the cars that share meshes first, then the ones that own them

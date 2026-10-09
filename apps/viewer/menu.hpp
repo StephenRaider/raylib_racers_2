@@ -159,6 +159,11 @@ struct MenuState {
     std::string toast;                // a short message at the bottom of the menu
     double toastUntil = 0;
 
+    // ---- the team colour picker (RR2): a team's colour as hue (degrees), saturation and value (0..1)
+    int pickTeam = -1;
+    float pickH = 0, pickS = 1, pickV = 1;
+    int pickDrag = 0;   // 0 none, 1 dragging in the saturation/value square, 2 on the hue bar
+
     // ---- a drop-down list: the target is a setup row, or a grid cell (100 + ...)
     int popup = -1;
     int popupSel = 0, popupTop = 0;
@@ -232,6 +237,8 @@ enum class MenuAction { None, Start, Quit, TrackChanged, LoadRun, ViewRun,
 // remove / move up / move down a calendar round; 4500 + i continues saved season i;
 // 5000 + i picks drop-down option i (5999 closes it); 6000 / 6001 confirm / cancel
 // the name being typed; 6100 + i picks lineup i (6098 loads it, 6099 cancels);
-// 7000 / 7001 start the round / leave the season page, 7010 + k its tabs.
+// 7000 / 7001 start the round / leave the season page, 7010 + k its tabs; 8000 + t opens team t's
+// colour picker, whose parts are 8200 (saturation/value square), 8201 (hue bar), 8300 + i (preset
+// colour i), 8398 (the card) and 8399 (Done).
 struct MenuHit { float x, y, w, h; int row; int dir; int value = -1; };
 MenuAction updateMenu(MenuState& m, const std::vector<MenuHit>& hits);

@@ -664,7 +664,72 @@ bool isButtonRow(MenuState::Row r) {
 
 }  // namespace
 
+namespace {
+
+void applyPick(MenuState& m) {
+    const Color c = ColorFromHSV(m.pickH, m.pickS, m.pickV);
+    if (m.pickTeam >= 0 && m.pickTeam < (int)m.teamSlots.size())
+        for (int slot : m.teamSlots[m.pickTeam]) setSlotColor(slot, c);
+}
+
+void openPicker(MenuState& m, int team) {
+    if (team < 0 || team >= (int)m.teamSlots.size() || m.teamSlots[team].empty()) return;
+    const auto& table = liveryTable();
+    const int slot = m.teamSlots[team][0];
+    const Color c = slot < (int)table.size() ? table[slot].color : Color{200, 200, 200, 255};
+    const Vector3 hsv = ColorToHSV(c);
+    m.pickTeam = team;
+    m.pickH = hsv.x;
+    m.pickS = hsv.y;
+    m.pickV = hsv.z;
+    m.pickDrag = 0;
+}
+
+// The colour picker is modal: drag in the square (saturation across, value up) and on the hue bar,
+// click a preset, Enter / Esc / Done / a click outside the card to finish.
+MenuAction updatePicker(MenuState& m, const std::vector<MenuHit>& hits) {
+    if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) {
+        m.pickTeam = -1;
+        m.pickDrag = 0;
+        return MenuAction::None;
+    }
+    const Vector2 mp = GetMousePosition();
+    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) m.pickDrag = 0;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        bool onCard = false;
+        for (const MenuHit& h : hits) {
+            if (h.row < 8200 || !CheckCollisionPointRec(mp, {h.x, h.y, h.w, h.h})) continue;
+            onCard = true;
+            if (h.row == 8200) m.pickDrag = 1;
+            else if (h.row == 8201) m.pickDrag = 2;
+            else if (h.row == 8399) { m.pickTeam = -1; return MenuAction::None; }
+            else if (h.row >= 8300 && h.row < 8398) {
+                const Vector3 hsv = ColorToHSV(presetColor(h.row - 8300));
+                m.pickH = hsv.x, m.pickS = hsv.y, m.pickV = hsv.z;
+                applyPick(m);
+            }
+        }
+        if (!onCard) { m.pickTeam = -1; return MenuAction::None; }
+    }
+    if (m.pickDrag) {
+        for (const MenuHit& h : hits) {
+            if (h.row == 8200 && m.pickDrag == 1) {
+                m.pickS = std::clamp((mp.x - h.x) / h.w, 0.0f, 1.0f);
+                m.pickV = 1.0f - std::clamp((mp.y - h.y) / h.h, 0.0f, 1.0f);
+                applyPick(m);
+            } else if (h.row == 8201 && m.pickDrag == 2) {
+                m.pickH = 359.99f * std::clamp((mp.y - h.y) / h.h, 0.0f, 1.0f);
+                applyPick(m);
+            }
+        }
+    }
+    return MenuAction::None;
+}
+
+}  // namespace
+
 MenuAction updateMenu(MenuState& m, const std::vector<MenuHit>& hits) {
+    if (m.pickTeam >= 0) return updatePicker(m, hits);
     if (m.popup >= 0) return updatePopup(m, hits);
     if (m.typing()) return updateTyping(m, hits);
     if (m.lineupLoad) return updateLineupList(m, hits);
@@ -731,6 +796,10 @@ MenuAction updateMenu(MenuState& m, const std::vector<MenuHit>& hits) {
             m.seasonPick = h.row - 4500;
             act = MenuAction::ContinueSeason;
             break;
+        }
+        if (h.row >= 8000 && h.row < 8100) {  // a team's colour (RR2)
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) { openPicker(m, h.row - 8000); break; }
+            continue;
         }
         if (h.row < 0 || h.row >= n) continue;
         const Row r = rows[h.row];

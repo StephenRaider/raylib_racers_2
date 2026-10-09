@@ -213,7 +213,13 @@ int main(int argc, char** argv) {
     for (const std::string& a : {dir + "/assets", std::string(RR_SOURCE_DIR "/assets"), std::string("assets")})
         if (std::filesystem::exists(a + "/fonts")) { paths.assets = a; break; }
 
-    setLiveryTable(loadLiveries(paths.assets));
+    {
+        std::vector<CarLivery> liveries = loadLiveries(paths.assets);
+#ifdef RR2_RENDERER
+        neutralTeams(liveries);  // Team 1, Team 2 ...: the teams' colours are the player's to pick
+#endif
+        setLiveryTable(liveries);
+    }
     const int liveryCount = std::max(1, (int)liveryTable().size());
 
     // The grid: one livery slot and algorithm per car. Without --car, a full field over all the teams.

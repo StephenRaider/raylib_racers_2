@@ -2,6 +2,8 @@
 // A car of the 2013 pack (assets/cars/<id>: body.glb, wheel_front.glb, wheel_rear.glb,
 // car.json) drawn with the PBR renderer: clear-coat paint, rubber tyres, metal rims,
 // front wheels that steer, and a body that rolls, pitches and heaves on its springs.
+#include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -29,6 +31,10 @@ public:
     // only for a viewer without a race.
     void setDrsOpen(float open) { drsOpen_ = open < 0 ? 0 : open > 1 ? 1 : open; }
     bool hasDrs() const { return !drs_parts_.empty(); }
+    // The team colour: the body's paint in this colour, parts that are dark in the model's own paint
+    // (floor, diffuser, carbon) as they were (livery_default.png and livery_mask.png in the model's
+    // folder). Does nothing without them, or when the folder has a livery.png of its own.
+    void setPaint(Color c);
     void draw(gfx::Renderer& r) const;
     void drawShadow(gfx::Renderer& r) const;
 
@@ -46,6 +52,7 @@ private:
         Mesh mesh{};
         gfx::Material mat;
         const gfx::TextureSet* set = nullptr;
+        bool livery = false;            // wears the team paint
     };
     std::vector<Part> body_parts_;
     std::vector<Part> steer_parts_;     // the steering wheel, turned about its column
@@ -62,6 +69,11 @@ private:
     std::vector<Model> models_;         // keep the glTF textures alive
     std::string liveryFile_;            // dir/livery.png, if there is one
     Texture2D liveryTex_{};
+    // team paints: the model's paint and mask, and a texture set per colour made from them
+    CarRender* origin_ = this;          // the car that owns the meshes (and these)
+    Image paintBase_{}, paintMask_{};
+    std::map<uint32_t, gfx::TextureSet*> paintSets_;
+    gfx::TextureSet* paintSet(Color c);
 
     struct Wheel { Vector3 hub; float radius; bool front, mirrored; };
     Wheel wheels_[4]{};                 // FL, FR, RL, RR
