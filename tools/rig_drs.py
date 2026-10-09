@@ -7,7 +7,8 @@ For each car folder (assets/cars/<id> in the 2013 pack layout: body.glb, car.jso
   - writes it to drs_flap.glb as one node "drs_flap" whose origin is the hinge, so the flap
     opens by rotating the node about the hinge axis, and removes it from body.glb;
   - picks the opening angle that takes the slot gap (the narrowest distance between the main
-    plane and the flap, in side view) to 50 mm, the 2013 limit (Technical Regulations 3.18.3);
+    plane and the flap, in side view) to 50 mm, the 2013 limit (Technical Regulations 3.18.3),
+    then turns it EXTRA_OPEN_DEG further, which reads better on screen with this pack's short flaps;
   - adds a "drs" block to car.json: file, node, pivot, axis, max_angle_deg, gaps.
 
 drs_flap.glb also carries a glTF animation "drs_open" whose time is the open amount: t = 0 s
@@ -30,7 +31,8 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
-GAP_OPEN = 0.050          # m: slot gap with the flap fully open
+GAP_OPEN = 0.050          # m: the 2013 limit on the slot gap with the flap open
+EXTRA_OPEN_DEG = 10.0     # degrees past that, by eye (2026-10-09)
 CAP_MARGIN = 0.035        # m: how far an end cap may stick out of the flap's side profile
 CT = {5120: np.int8, 5121: np.uint8, 5122: np.int16, 5123: np.uint16, 5125: np.uint32, 5126: np.float32}
 NC = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
@@ -268,7 +270,8 @@ def rig(car_dir):
     for _ in range(40):
         mid = (lo + hi) / 2
         lo, hi = (mid, hi) if gap(mid) < GAP_OPEN else (lo, mid)
-    angle = (lo + hi) / 2
+    angle_rule = (lo + hi) / 2
+    angle = angle_rule + math.radians(EXTRA_OPEN_DEG)
 
     pivot = np.array([(fmn[0] + fmx[0]) / 2, pivot_yz[0], pivot_yz[1]])
     axis = [sign, 0.0, 0.0]
@@ -287,6 +290,7 @@ def rig(car_dir):
         "axis": axis,
         "max_angle_deg": round(math.degrees(angle), 2),
         "chord": round(chord, 4),
+        "rule_angle_deg": round(math.degrees(angle_rule), 2),
         "slot_gap_closed_mm": round(closed * 1000, 1),
         "slot_gap_open_mm": round(gap(angle) * 1000, 1),
         "materials": flap_mats,

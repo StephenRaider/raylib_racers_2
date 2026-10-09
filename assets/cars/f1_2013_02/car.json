@@ -75,10 +75,11 @@
             0.0,
             0.0
         ],
-        "max_angle_deg": 32.47,
+        "max_angle_deg": 42.47,
         "chord": 0.1001,
+        "rule_angle_deg": 32.47,
         "slot_gap_closed_mm": 11.4,
-        "slot_gap_open_mm": 50.0,
+        "slot_gap_open_mm": 59.6,
         "materials": [
             "Meshpart7Mtl.002"
         ]
