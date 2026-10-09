@@ -266,6 +266,46 @@ void Hud::distGraph(const TestView& tv, Rectangle box, int which, int lap, int r
             plotSeries(p, c, kRear, 1.6f);
             break;
         }
+        case 5: {  // KERS: energy in the battery
+            std::snprintf(title, sizeof title, "KERS battery (MJ)");
+            if (ci >= 0) std::snprintf(title, sizeof title, "KERS battery  %.2f MJ", S[ci].s.kersCharge / 1e6f);
+            float hi = 1.0f;
+            for (int i = f; i < e; ++i) hi = std::max(hi, S[i].s.kersCharge / 1e6f);
+            p = plotFrame(box, title, x0, L, 0, std::ceil(hi * 2) / 2, "%.1f", big ? 4 : 2, false);
+            series(rf, re, b, [](const rr::TestSample& s) { return s.s.kersCharge / 1e6f; });
+            series(f, e, a, [](const rr::TestSample& s) { return s.s.kersCharge / 1e6f; });
+            plotSeries(p, b, kRef, 1.5f);
+            plotSeries(p, a, Color{255, 170, 60, 255}, 2.0f);
+            break;
+        }
+        case 6: {  // KERS: power, up = deploying, down = harvesting
+            std::snprintf(title, sizeof title, "KERS power (kW)");
+            if (ci >= 0) {
+                const float kw = S[ci].s.kersPowerNow / 1000.0f;
+                std::snprintf(title, sizeof title, "KERS power  %s %.0f kW", kw > 1 ? "deploying" : kw < -1 ? "harvesting" : "idle", std::fabs(kw));
+            }
+            float hi = 60.0f;
+            for (int i = f; i < e; ++i) hi = std::max(hi, std::fabs(S[i].s.kersPowerNow) / 1000.0f);
+            hi = std::ceil(hi / 30.0f) * 30.0f;
+            p = plotFrame(box, title, x0, L, -hi, hi, "%.0f", big ? 4 : 2, false);
+            const Vector2 z0 = p.at(x0, 0.0f);
+            DrawLineEx({p.r.x, z0.y}, {p.r.x + p.r.width, z0.y}, 1, Fade(kDim, 0.6f));
+            series(f, e, a, [](const rr::TestSample& s) { return std::max(0.0f, s.s.kersPowerNow) / 1000.0f; });
+            series(f, e, c, [](const rr::TestSample& s) { return std::min(0.0f, s.s.kersPowerNow) / 1000.0f; });
+            plotSeries(p, a, Color{255, 170, 60, 255}, 2.0f);
+            plotSeries(p, c, kGood, 2.0f);
+            break;
+        }
+        case 7: {  // DRS flap
+            std::snprintf(title, sizeof title, "DRS flap");
+            if (ci >= 0) std::snprintf(title, sizeof title, "DRS flap  %.0f%% open", S[ci].s.drsFlap * 100.0f);
+            p = plotFrame(box, title, x0, L, 0, 1, "%.1f", 2, false);
+            series(rf, re, b, [](const rr::TestSample& s) { return s.s.drsFlap; });
+            series(f, e, a, [](const rr::TestSample& s) { return s.s.drsFlap; });
+            plotSeries(p, b, kRef, 1.5f);
+            plotSeries(p, a, kAccent, 2.0f);
+            break;
+        }
         default: {  // tyre temperatures, with the compound's working window shaded
             std::snprintf(title, sizeof title, "Tyre temperature");
             if (ci >= 0)
@@ -655,7 +695,7 @@ void Hud::drawTimeline(const TestView& tv, std::vector<TestHit>& hits) {
 }
 
 void Hud::drawDashboard(const TestView& tv, Rectangle area, std::vector<TestHit>& hits) {
-    const int cols = 2, rows = 4;
+    const int cols = 2, rows = 5;
     const float gap = 8;
     const float tw = (area.width - gap * (cols - 1)) / cols, th = (area.height - gap * (rows - 1)) / rows;
     const rr::TestRecorder& rec = *tv.rec;
@@ -673,9 +713,11 @@ void Hud::drawDashboard(const TestView& tv, Rectangle area, std::vector<TestHit>
             case 1: distGraph(tv, in, 1, lap, ref, false, hits); break;
             case 2: distGraph(tv, in, 3, lap, ref, false, hits); break;
             case 3: distGraph(tv, in, 4, lap, ref, false, hits); break;
-            case 4: sessionGraph(tv, in, 0, false); window = 2; break;
-            case 5: sessionGraph(tv, in, 2, false); window = 2; break;
-            case 6: sessionGraph(tv, in, 3, false); window = 2; break;
+            case 4: distGraph(tv, in, 5, lap, ref, false, hits); break;
+            case 5: distGraph(tv, in, 6, lap, ref, false, hits); break;
+            case 6: sessionGraph(tv, in, 0, false); window = 2; break;
+            case 7: sessionGraph(tv, in, 2, false); window = 2; break;
+            case 8: sessionGraph(tv, in, 3, false); window = 2; break;
             default:
                 text("Track: speed this lap", in.x + 6, in.y + 2, 14, kText, true);
                 drawTrackMap(tv, {in.x, in.y + 20, in.width, in.height - 20}, lap, false);
@@ -696,9 +738,9 @@ void Hud::drawDrivingWindow(const TestView& tv, Rectangle area, std::vector<Test
     else std::snprintf(buf, sizeof buf, "DRIVING   lap %d", lap);
     text(buf, area.x + 16, area.y + 12, 20, kAccent, true);
     textRight("[ / ] lap to compare   PgUp/PgDn lap shown   click a graph to move there", area.x + area.width - 60, area.y + 16, 14, kDim);
-    const int n = 5;
+    const int n = 8;
     const float top = area.y + 44, gap = 6, gh = (area.height - 44 - 10 - gap * (n - 1)) / n;
-    const int order[n] = {0, 1, 2, 3, 4};
+    const int order[n] = {0, 1, 2, 3, 4, 5, 6, 7};
     for (int i = 0; i < n; ++i)
         distGraph(tv, {area.x + 10, top + i * (gh + gap), area.width - 20, gh}, order[i], lap, ref, true, hits);
 }
@@ -839,7 +881,8 @@ void Hud::drawTest(const rr::Race& race, const HudState& st, const TestView& tv,
             drawTestSession(race, tv, hits);
             if (!tv.replay) drawCarPanel(race, st, 16, sh - 90 - 276);
             else drawCarPanel(race, st, 16, sh - 90 - 276);
-            if (tv.dashboard) drawDashboard(tv, {std::max(400.0f, sw * 0.5f), 16, sw - 16 - std::max(400.0f, sw * 0.5f), sh - 90 - 16 - 8}, hits);
+            const float dashX = std::max(400.0f, sw * (2.0f / 3.0f));  // the graphs take a third of the screen
+            if (tv.dashboard) drawDashboard(tv, {dashX, 16, sw - 16 - dashX, sh - 90 - 16 - 8}, hits);
             // state, top centre of the 3D view
             char buf[120];
             const char* what = tv.replay    ? (tv.playing ? "REPLAY  PLAYING" : "REPLAY")
@@ -849,7 +892,7 @@ void Hud::drawTest(const rr::Race& race, const HudState& st, const TestView& tv,
                                             : "SCRUBBING";
             if (tv.fastForward && tv.live && !st.paused) std::snprintf(buf, sizeof buf, "%s   FAST FORWARD", what);
             else std::snprintf(buf, sizeof buf, "%s   x%g   %s CAM", what, st.timeScale, camName(st.camera));
-            const float cxm = tv.dashboard ? (388 + std::max(400.0f, sw * 0.5f)) / 2 : sw / 2;
+            const float cxm = tv.dashboard ? (388 + dashX) / 2 : sw / 2;
             const float w = width(buf, 15, true) + 28;
             panel({cxm - w / 2, 12, w, 30});
             text(buf, cxm - w / 2 + 14, 18, 15, tv.live && !st.paused ? kGood : kAccent, true);

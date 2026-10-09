@@ -53,7 +53,7 @@ int compoundFromKey(const std::string& k) {
 const char* kCsvHeader =
     "t,lap,lap_time,lap_dist,x,y,yaw,speed_kmh,vx,vy,yaw_rate,steer,steer_angle,throttle,brake,gear,rpm,"
     "accel_x,accel_y,load_fl,load_fr,load_rl,load_rr,grip_use_f,grip_use_r,slip_f,slip_r,wheel_spin,damage,"
-    "fuel,wear_f,wear_r,temp_f,temp_r,compound,lateral,angle,on_track,wheel_rot";
+    "fuel,wear_f,wear_r,temp_f,temp_r,compound,lateral,angle,on_track,wheel_rot,kers_charge,kers_power,drs_flap";
 
 const char* kReadme = R"(# Test runs
 
@@ -103,6 +103,9 @@ Telemetry columns:
 | angle | heading minus track direction, rad |
 | on_track | 1 on the tarmac |
 | wheel_rot | wheel rotation (for replays) |
+| kers_charge | J in the KERS battery |
+| kers_power | W, + deploying, - recovering |
+| drs_flap | DRS flap, 0 closed .. 1 open |
 
 Comparing runs: lap times only compare on the same track and wear rate.
 `summary.json` events give the lap and `lap_dist` of each problem; look the
@@ -396,6 +399,9 @@ TestSample TestRecorder::at(double t) const {
     o.s.wheelRot = L(a.s.wheelRot, b.s.wheelRot);
     o.s.rpm = L(a.s.rpm, b.s.rpm);
     o.s.fuel = L(a.s.fuel, b.s.fuel);
+    o.s.kersCharge = L(a.s.kersCharge, b.s.kersCharge);
+    o.s.kersPowerNow = L(a.s.kersPowerNow, b.s.kersPowerNow);
+    o.s.drsFlap = L(a.s.drsFlap, b.s.drsFlap);
     return o;
 }
 
@@ -589,12 +595,12 @@ int TestStore::save(const TestSetup& setup, const TestRecorder& rec, const std::
         const CarState& s = x.s;
         std::fprintf(f,
                      "%.3f,%d,%.3f,%.1f,%.2f,%.2f,%.4f,%.1f,%.2f,%.2f,%.3f,%.3f,%.4f,%.2f,%.2f,%d,%.0f,%.2f,%.2f,"
-                     "%.0f,%.0f,%.0f,%.0f,%.3f,%.3f,%.4f,%.4f,%.3f,%.0f,%.3f,%.4f,%.4f,%.1f,%.1f,%d,%.2f,%.3f,%d,%.2f\n",
+                     "%.0f,%.0f,%.0f,%.0f,%.3f,%.3f,%.4f,%.4f,%.3f,%.0f,%.3f,%.4f,%.4f,%.1f,%.1f,%d,%.2f,%.3f,%d,%.2f,%.0f,%.0f,%.3f\n",
                      x.t, x.lap, x.lapTime, x.lapDist, s.pos.x, s.pos.y, s.yaw, std::hypot(s.vx, s.vy) * 3.6f, s.vx,
                      s.vy, s.yawRate, x.steer, s.steerAngle, x.accel, x.brake, s.gear, s.rpm, s.ax, s.ay,
                      s.wheelLoad[0], s.wheelLoad[1], s.wheelLoad[2], s.wheelLoad[3], s.gripUse[0], s.gripUse[1],
                      s.slipAngle[0], s.slipAngle[1], s.wheelSpin, s.damage, s.fuel, s.tireWear[0], s.tireWear[1],
-                     s.tireTemp[0], s.tireTemp[1], s.compound, x.lateral, x.angle, x.onTrack ? 1 : 0, s.wheelRot);
+                     s.tireTemp[0], s.tireTemp[1], s.compound, x.lateral, x.angle, x.onTrack ? 1 : 0, s.wheelRot, s.kersCharge, s.kersPowerNow, s.drsFlap);
     }
     std::fclose(f);
 
@@ -714,6 +720,11 @@ bool TestStore::loadTelemetry(const TestRun& run, TestRecorder& rec, std::string
         x.angle = v[k++];
         x.onTrack = v[k++] != 0;
         s.wheelRot = v[k++];
+        if (v.size() >= 42) {  // KERS and DRS columns, absent in older runs
+            s.kersCharge = v[k++];
+            s.kersPowerNow = v[k++];
+            s.drsFlap = v[k++];
+        }
         samples.push_back(x);
     }
     if (samples.empty()) {
