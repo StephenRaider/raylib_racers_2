@@ -22,5 +22,27 @@ Physics and environment, in the order agreed:
    and handling for corner speed, tyre and brake care for long stints, KERS capacity and efficiency for
    energy-managed laps. Check it by racing varied bots on varied tracks with each setup.
 
+6. **First-lap and cold-tyre caution for the racingline bots (John F One, Spongebob, Dave, Granny).** They plan
+   speeds from a grip model and only correct it after a stretch goes wrong, so lap 1 (and qualifying out
+   laps, and testing starts) spin or understeer, worst on cold soft tyres: Circuit Raylib turn 1 after the
+   long straight, Highmoor at about 1490 m, Brands at about 3630 m. Start the fast stretches a few percent
+   under the model's limit until the lap has been learnt (John F Wan does this: 5% under on stretches
+   planned above about 62 m/s, with the grip learning earning it back) and take the tyre temperature
+   (`axle_grip` against `tire_grip`) into the first lap's plan. Check with testing-mode runs on every track,
+   2013 car, soft and hard, for flagged laps and lap time.
+7. **Circuit Raylib: gentler first corner.** The 660 m straight runs into turn 1 (s 664-1162), whose radius
+   falls from about 100 m to 30 m. Shorten the straight or add a gentle bend before the braking zone, make
+   turn 1 a steadier radius (about 70 m) and give it run-off (gravel or paved), so a lap-1 mistake costs
+   time rather than a spin. Do after item 6, and check whether it is still needed.
+8. **Revamp all tracks with real elevation, banking and camber, and update their 3D models.** The circuits
+   are mostly flat or lightly sloped today. Rework each one from its real counterpart (or a believable
+   invented one): proper height profile along the lap, banked corners where the real track has them, road
+   camber, crests and compressions, with the control-point heights and banks in the `.trk` files (and
+   `tools/trackgen.py` where a track is generated). Then update the viewer's track models to match: road
+   mesh, kerbs, barriers, run-off, pit lane, terrain and scenery following the new heights, so the picture
+   and the sim agree. The bots read the shape through `RRTrackPoint3` already (grade, bank, vertical
+   curvature); re-tune their planning where a track becomes much more three-dimensional, and re-check lap
+   times, kerb and gravel-trap placement, and the first-lap behaviour of item 6 on every revamped track.
+
 Not planned (judged too small to matter): ride-height aero, camber, tyre pressure, suspension geometry,
 MGU-H.
