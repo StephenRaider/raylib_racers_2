@@ -261,7 +261,7 @@ void Hud::drawTower(const rr::Race& race, const HudState& st) {
     // Position numbers stay put; each car's row slides to its new place when it gains or loses one.
     for (size_t p = 0; p < order.size(); ++p) {
         const float y = kTowerTop + p * rowH;
-        DrawRectangleRec({x, y, kTowerPosW, h}, Fade(kInk, 0.92f));
+        DrawRectangleRec({x, y, kTowerPosW, h}, p == 0 ? kRed : Fade(kInk, 0.92f));
         std::snprintf(buf, sizeof buf, "%zu", p + 1);
         text(buf, x + (kTowerPosW - width(buf, 17, true)) / 2, y + 4, 17, kText, true);
         const int idx = order[p];
@@ -329,7 +329,11 @@ void Hud::drawTower(const rr::Race& race, const HudState& st) {
             std::snprintf(buf, sizeof buf, "%d", c.pitStops);
             textRight(buf, tx - 13, y + 7, 12, dim, false, true);
         }
-        compoundBadge({tx, ty}, 9.5f, c.state.compound);
+        {  // the compound as its coloured letter, as on the F1 tower
+            const char* l = c.state.compound == RR_TIRE_SOFT ? "S" : c.state.compound == RR_TIRE_HARD ? "H" : "M";
+            const Color cc = anim::mix(compoundColor(c.state.compound), anim::mix(compoundColor(c.state.compound), kInk, 0.35f), f);
+            text(l, tx - width(l, 17, true) / 2, ty - 10, 17, cc, true);
+        }
         std::snprintf(buf, sizeof buf, "%d", c.lapsOnTires);
         text(buf, tx + 14, y + 6, 13, anim::mix(Fade(kText, 0.8f), kInk, f), false, true);
         // gap to the leader, or what the car is doing
@@ -362,7 +366,7 @@ void Hud::drawMinimap(const rr::Race& race, const HudState& st) {
     const float w = sx * scale + 2 * pad;
     const float x0 = GetScreenWidth() - w - 16, y0 = 16;
     auto P = [&](rr::Vec2 p) { return Vector2{x0 + pad + (p.x - minX_) * scale, y0 + pad + (maxY_ - p.y) * scale}; };
-    const float thick = std::clamp(trackWidth_ * scale, 6.0f, 9.0f);
+    const float thick = std::clamp(trackWidth_ * scale, 8.0f, 11.0f);
     auto stroke = [&](float t, Color c) {
         for (size_t i = 0; i < outline_.size(); ++i) {
             const Vector2 a = P(outline_[i]), b = P(outline_[(i + 1) % outline_.size()]);
@@ -393,8 +397,14 @@ void Hud::drawMinimap(const rr::Race& race, const HudState& st) {
     for (size_t i = 0; i < cars.size(); ++i) {
         if ((int)i == st.focus) continue;
         const Vector2 c = P(cars[i].state.pos);
-        DrawCircleV(c, 6.5f, Fade(BLACK, 0.7f));
-        DrawCircleV(c, 5, teamColor((int)i));
+        const Color tc = teamColor((int)i);
+        DrawCircleV(c, 8.5f, Fade(BLACK, 0.7f));
+        DrawCircleV(c, 7, tc);
+        if (const int num = carNumber(cars[i].name)) {  // the race number on the dot
+            char nb[8];
+            std::snprintf(nb, sizeof nb, "%d", num);
+            text(nb, c.x - width(nb, 10, true) / 2, c.y - 5.5f, 10, anim::luminance(tc) > 0.55f ? kInk : WHITE, true);
+        }
     }
     // The followed car on top: a yellow and black ring (yellow next to a dark team colour, black
     // next to a light one), a slow pulse, and its code.
@@ -404,14 +414,19 @@ void Hud::drawMinimap(const rr::Race& race, const HudState& st) {
         const bool dark = anim::luminance(team) < 0.5f;
         const Color inner = dark ? kYellowLit : kInk, outer = dark ? kInk : kYellowLit;
         const float pulse = 0.5f + 0.5f * std::sin(clock_ * 4.0f);
-        DrawRing(c, 11, 13 + 4 * pulse, 0, 360, 32, Fade(kYellowLit, 0.35f * (1 - pulse) + 0.1f));
-        DrawCircleV(c, 11, outer);
-        DrawCircleV(c, 9, inner);
-        DrawCircleV(c, 6.5f, team);
+        DrawRing(c, 13, 15 + 4 * pulse, 0, 360, 32, Fade(kYellowLit, 0.35f * (1 - pulse) + 0.1f));
+        DrawCircleV(c, 13, outer);
+        DrawCircleV(c, 11, inner);
+        DrawCircleV(c, 8.5f, team);
+        if (const int num = carNumber(cars[st.focus].name)) {
+            char nb[8];
+            std::snprintf(nb, sizeof nb, "%d", num);
+            text(nb, c.x - width(nb, 11, true) / 2, c.y - 6, 11, anim::luminance(team) > 0.55f ? kInk : WHITE, true);
+        }
         const std::string code = shortName(cars[st.focus].name, cars[st.focus].robotName);
         const float cw = width(code.c_str(), 13, true) + 12;
-        const bool left = c.x + 16 + cw > GetScreenWidth() - 8;
-        const Rectangle chip = {left ? c.x - 16 - cw : c.x + 16, c.y - 10, cw, 20};
+        const bool left = c.x + 20 + cw > GetScreenWidth() - 8;
+        const Rectangle chip = {left ? c.x - 20 - cw : c.x + 20, c.y - 10, cw, 20};
         DrawRectangleRounded(chip, 0.3f, 4, Fade(kInk, 0.9f));
         DrawRectangleRec({chip.x, chip.y, 3, chip.height}, team);
         text(code.c_str(), chip.x + 7, chip.y + 3, 13, kText, true);
