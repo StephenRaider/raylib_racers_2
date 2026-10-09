@@ -148,7 +148,9 @@ void TestRecorder::sample(const Race& race) {
     x.brake = c.control.brake;
     x.lateral = c.lateral;
     x.angle = c.sensors.angle;
-    x.onTrack = c.onTrack;
+    // "off track" as the track-limits rule has it: all four wheels beyond the white line. The centre
+    // crossing the line with the outside wheels on the kerb is racing, not a mistake.
+    x.onTrack = c.wheelsOutside < 4;
     x.s = c.state;
     push(x, c.dnf ? c.dnfReason : std::string());
 }
