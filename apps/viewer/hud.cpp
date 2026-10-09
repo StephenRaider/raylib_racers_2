@@ -119,6 +119,8 @@ void Hud::animate(const rr::Race& race) {
         towerRows_.clear();
         qualiRows_.clear();
         panelAnim_ = PanelAnim{};
+        fastestCar_ = -1;
+        fastestAge_ = 99;
     }
     animRace_ = &race;
     animTime_ = race.time();
@@ -217,7 +219,7 @@ const char* compoundName(int compound) {
 }
 
 // Timing tower layout, shared by drawing and clicking: a header, then one row per position.
-static const float kTowerX = 16, kTowerW = 318, kTowerRowH = 29, kTowerTop = 94, kTowerPosW = 34;
+static const float kTowerX = 16, kTowerW = 238, kTowerRowH = 27, kTowerTop = 82, kTowerPosW = 28;
 
 int Hud::towerCarAt(const rr::Race& race, const HudState& st, Vector2 p) const {
     if (!st.showHud || st.qualifying) return -1;
@@ -227,44 +229,63 @@ int Hud::towerCarAt(const rr::Race& race, const HudState& st, Vector2 p) const {
     return row < (int)race.order().size() ? race.order()[row] : -1;
 }
 
-void Hud::towerHeader(float x, float w, const char* top, const char* line2, const char* clock, const char* corner) {
-    // the logo and the big line (LAP 3 / 10)
-    DrawRectangleRec({x, 16, w, 44}, Fade(kInk, 0.92f));
-    const Rectangle logo = {x + 8, 24, 56, 28};
-    band(logo, kRed, 8);
-#ifdef RR2_RENDERER
-    const char* name = "RR2";
-#else
-    const char* name = "RR";
-#endif
-    text(name, logo.x + (logo.width - width(name, 19, true)) / 2 + 2, logo.y + 4, 19, WHITE, true);
-    text(top, x + 76, 25, 23, kText, true);
-    if (corner) textRight(corner, x + w - 10, 31, 14, kDim, true);
-    // the track and the race clock
-    DrawRectangleRec({x, 60, w, 28}, Fade(Color{32, 35, 44, 255}, 0.9f));
-    text(line2, x + 10, 66, 15, kDim);
-    if (clock) textRight(clock, x + w - 10, 66, 15, kText, false, true);
+void Hud::towerHeader(float x, float w, const char* label, int now, int total, const char* line2, const char* clock,
+                      const char* corner) {
+    // LAP 3 / 10, centred
+    DrawRectangleRec({x, 16, w, 40}, Fade(kInk, 0.94f));
+    char a[16], b[16];
+    std::snprintf(a, sizeof a, "%d", now);
+    std::snprintf(b, sizeof b, " / %d", total);
+    const float lw = width(label, 15, true) + 6, aw = width(a, 24, true), bw = width(b, 16, true);
+    float tx = x + (w - lw - aw - bw) / 2;
+    text(label, tx, 25, 15, kDim, true);
+    text(a, tx + lw, 20, 24, kText, true);
+    text(b, tx + lw + aw, 25, 16, kDim, true);
+    // the track, the race clock and the sim speed
+    DrawRectangleRec({x, 56, w, 26}, Fade(Color{32, 35, 44, 255}, 0.94f));
+    float size = 13;
+    const float room = w - 20 - (clock ? width(clock, 13, false, true) + 8 : 0) - (corner ? width(corner, 11, true) + 8 : 0);
+    while (size > 9 && width(line2, size) > room) size -= 1;
+    text(line2, x + 8, 61 + (13 - size) / 2, size, kDim);
+    float right = x + w - 8;
+    if (corner) {
+        textRight(corner, right, 63, 11, Fade(kDim, 0.8f), true);
+        right -= width(corner, 11, true) + 8;
+    }
+    if (clock) textRight(clock, right, 61, 13, kText, false, true);
 }
 
 void Hud::drawTower(const rr::Race& race, const HudState& st) {
     const auto& cars = race.cars();
     const auto& order = race.order();
     const rr::Car& leader = cars[order[0]];
-    const float x = kTowerX, w = kTowerW, rowH = kTowerRowH, h = rowH - 2;
+    const float x = kTowerX, w = kTowerW, rowH = kTowerRowH, h = rowH;
     const int hover = towerCarAt(race, st, GetMousePosition());
-    char lap[32], corner[32], buf[96];
-    std::snprintf(lap, sizeof lap, "LAP %d / %d", leader.currentLap(race.laps()), race.laps());
+    char corner[32], buf[96];
     if (st.paused) std::snprintf(corner, sizeof corner, "PAUSED");
     else std::snprintf(corner, sizeof corner, "x%g", st.timeScale);
-    towerHeader(x, w, lap, race.track().name().c_str(), lapTime(race.time()).c_str(), corner);
+    towerHeader(x, w, "LAP", leader.currentLap(race.laps()), race.laps(), race.track().name().c_str(),
+                lapTime(race.time()).c_str(), corner);
+
+    // the race's fastest lap: its holder gets a purple border, and shows the time for a while
+    int fastest = -1;
+    for (size_t i = 0; i < cars.size(); ++i)
+        if (cars[i].bestLap > 0 && (fastest < 0 || cars[i].bestLap < cars[fastest].bestLap)) fastest = (int)i;
+    if (fastest >= 0 && (fastest != fastestCar_ || cars[fastest].bestLap != fastestTime_)) {
+        fastestAge_ = fastestCar_ < 0 && settle ? 99.0f : 0.0f;
+        fastestCar_ = fastest;
+        fastestTime_ = cars[fastest].bestLap;
+    }
+    fastestAge_ += dt_;
 
     // Position numbers stay put; each car's row slides to its new place when it gains or loses one.
     for (size_t p = 0; p < order.size(); ++p) {
         const float y = kTowerTop + p * rowH;
-        DrawRectangleRec({x, y, kTowerPosW, h}, p == 0 ? kRed : Fade(kInk, 0.92f));
+        DrawRectangleRec({x, y, kTowerPosW, h}, p == 0 ? kRed : Fade(kInk, 0.94f));
         std::snprintf(buf, sizeof buf, "%zu", p + 1);
-        text(buf, x + (kTowerPosW - width(buf, 17, true)) / 2, y + 4, 17, kText, true);
+        text(buf, x + (kTowerPosW - width(buf, 16, true)) / 2, y + 4, 16, kText, true);
         const int idx = order[p];
+        const rr::Car& c = cars[idx];
         RowAnim& a = towerRows_[idx];
         if (a.lastRow >= 0 && a.lastRow != (int)p) {
             a.delta = a.lastRow - (int)p;
@@ -276,6 +297,15 @@ void Hud::drawTower(const rr::Race& race, const HudState& st) {
         a.changed += dt_;
         a.focus.update(idx == st.focus, dt_, 0.15f, 0.25f);
         a.hover.update(idx == hover, dt_, 0.08f, 0.2f);
+        // the stop in the box: timed while the crew works, then shown a few seconds more
+        if (c.pitState == RR_PIT_SERVICE) {
+            if (a.pitStart < 0) a.pitStart = (float)race.time();
+            a.pitTime = (float)race.time() - a.pitStart;
+            a.pitShown = 0;
+        } else {
+            a.pitStart = -1;
+            a.pitShown += dt_;
+        }
     }
     // still rows first, then the ones on the move, the followed car on top
     std::vector<int> drawOrder(order.begin(), order.end());
@@ -283,78 +313,90 @@ void Hud::drawTower(const rr::Race& race, const HudState& st) {
         auto key = [&](int i) { return (i == st.focus ? 2 : 0) + (towerRows_[i].y.moving() ? 1 : 0); };
         return key(a) < key(b);
     });
+    const Color purple = {170, 90, 255, 255};
     for (int idx : drawOrder) {
         const rr::Car& c = cars[idx];
         RowAnim& a = towerRows_[idx];
         const int p = a.lastRow;
-        const float y = kTowerTop + a.y.value() * rowH, sx = x + kTowerPosW + 2, sw = w - kTowerPosW - 2;
+        const float y = kTowerTop + a.y.value() * rowH, sx = x + kTowerPosW, sw = w - kTowerPosW;
         const float f = a.focus.value();
-        DrawRectangleRec({sx, y, sw, h}, anim::mix(Fade(kInk, 0.86f), Color{238, 240, 244, 245}, f));
-        if (a.hover.value() > 0) DrawRectangleRec({sx, y, sw, h}, Fade(WHITE, 0.08f * a.hover.value()));
-        if (c.blueCar >= 0) DrawRectangleGradientH((int)sx, (int)y, (int)sw, (int)h, Fade(kBlueFlag, 0.8f), Fade(kBlueFlag, 0.15f));
-        if (c.held) DrawRectangleGradientH((int)sx, (int)y, (int)sw, (int)h, Fade(kYellowFlag, 0.7f), Fade(kYellowFlag, 0.1f));
-        const Color ink = anim::mix(kText, kInk, f), dim = anim::mix(kDim, Color{88, 92, 104, 255}, f);
-        DrawRectangleRec({sx, y, 5, h}, teamColor(idx));
-        // three-letter code, race number, chequered flag
-        const std::string code = shortName(c.name, c.robotName);
-        text(code.c_str(), sx + 14, y + 4, 18, c.dnf ? dim : ink, true);
-        float cx = sx + 14 + width(code.c_str(), 18, true) + 6;
-        if (const int num = carNumber(c.name)) {
-            std::snprintf(buf, sizeof buf, "%d", num);
-            text(buf, cx, y + 8, 12, dim, false, true);
-            cx += width(buf, 12, false, true) + 7;
-        }
-        if (c.finished) {
-            icon::chequered({cx, y + 8}, 15, 11);
-            cx += 21;
-        }
-        if (a.changed < 3 && a.delta != 0 && !c.dnf) {  // gained or lost places: a fading arrow
-            const float fade = 1 - anim::clamp01((a.changed - 2) / 1.0f);
-            icon::triangle({cx + 5, y + h / 2}, 10, a.delta > 0, Fade(a.delta > 0 ? kGreen : kHot, fade));
-            cx += 16;
-        }
-        if (c.penalties > 0 && !c.dnf) {  // seconds added, or still to serve in the pits
+        const bool out = c.dnf;
+        // a penalty: a red tab sticking out of the row
+        if (c.penalties > 0 && !out) {
             const float pen = c.penaltyTime + c.penaltyOwed;
             if (pen > 0) std::snprintf(buf, sizeof buf, "+%.0fs", pen);
             else std::snprintf(buf, sizeof buf, "PEN");
-            const float pw = width(buf, 11, true) + 10;
-            DrawRectangleRounded({cx, y + 6, pw, h - 12}, 0.4f, 4, Color{220, 60, 40, 255});
-            text(buf, cx + 5, y + 8, 11, WHITE, true);
+            const float pw = width(buf, 12, true) + 12;
+            DrawRectangleRec({x + w, y + 3, pw, h - 6}, Color{215, 45, 35, 255});
+            text(buf, x + w + 6, y + 6, 12, WHITE, true);
         }
-        // tyre: compound and its age in laps, pit stops as pips
-        const float tx = x + w - 108, ty = y + h / 2;
-        for (int i = 0; i < std::min(c.pitStops, 3); ++i)
-            DrawRectangleRec({tx - 17 - i * 5.0f, y + 8, 3, h - 16}, dim);
-        if (c.pitStops > 3) {
-            std::snprintf(buf, sizeof buf, "%d", c.pitStops);
-            textRight(buf, tx - 13, y + 7, 12, dim, false, true);
+        Color bg = anim::mix(Fade(kInk, 0.86f), Color{238, 240, 244, 245}, f);
+        if (out) bg = anim::mix(Fade(Color{40, 42, 48, 255}, 0.8f), Color{150, 152, 158, 235}, f);
+        DrawRectangleRec({sx, y, sw, h}, bg);
+        if (a.hover.value() > 0) DrawRectangleRec({sx, y, sw, h}, Fade(WHITE, 0.08f * a.hover.value()));
+        if (c.blueCar >= 0) DrawRectangleGradientH((int)sx, (int)y, (int)sw, (int)h, Fade(kBlueFlag, 0.8f), Fade(kBlueFlag, 0.15f));
+        if (c.held) DrawRectangleGradientH((int)sx, (int)y, (int)sw, (int)h, Fade(kYellowFlag, 0.7f), Fade(kYellowFlag, 0.1f));
+        Color ink = anim::mix(kText, kInk, f), dim = anim::mix(kDim, Color{88, 92, 104, 255}, f);
+        if (out) ink = dim = anim::mix(Color{120, 124, 132, 255}, Color{70, 72, 80, 255}, f);
+        DrawRectangleRec({sx, y, 4, h}, out ? Color{110, 112, 118, 255} : teamColor(idx));
+        // three-letter code and race number
+        const std::string code = shortName(c.name, c.robotName);
+        text(code.c_str(), sx + 10, y + 4, 17, ink, true);
+        float cx = sx + 10 + width(code.c_str(), 17, true) + 4;
+        if (const int num = carNumber(c.name)) {
+            std::snprintf(buf, sizeof buf, "%d", num);
+            text(buf, cx, y + 8, 11, dim, false, true);
+            cx += width(buf, 11, false, true) + 5;
         }
-        {  // the compound as its coloured letter, as on the F1 tower
-            const char* l = c.state.compound == RR_TIRE_SOFT ? "S" : c.state.compound == RR_TIRE_HARD ? "H" : "M";
-            const Color cc = anim::mix(compoundColor(c.state.compound), anim::mix(compoundColor(c.state.compound), kInk, 0.35f), f);
-            text(l, tx - width(l, 17, true) / 2, ty - 10, 17, cc, true);
+        if (c.finished) icon::chequered({cx, y + 8}, 12, 10);
+        if (a.changed < 3 && a.delta != 0 && !out) {  // gained or lost places: a fading arrow by the number
+            const float fade = 1 - anim::clamp01((a.changed - 2) / 1.0f);
+            icon::triangle({x + kTowerPosW - 6, y + h / 2}, 7, a.delta > 0, Fade(a.delta > 0 ? kGreen : kHot, fade));
         }
-        std::snprintf(buf, sizeof buf, "%d", c.lapsOnTires);
-        text(buf, tx + 14, y + 6, 13, anim::mix(Fade(kText, 0.8f), kInk, f), false, true);
-        // gap to the leader, or what the car is doing
+        // the time column: gap to the leader, or what the car is doing
+        const float gx = sx + 146;
         std::string gap;
-        if (p == 0) gap = c.finished ? "WINNER" : "LEADER";
-        else if (c.dnf) gap = "DNF";
+        Color gapCol = p == 0 ? dim : ink;
+        bool word = false;
+        if (p == 0) gap = c.finished ? "WINNER" : "LEADER", word = true;
         else if (c.lapsBehind > 0 && !c.finished) gap = "+" + std::to_string(c.lapsBehind) + (c.lapsBehind > 1 ? " LAPS" : " LAP");
         else if (c.gap < 0) gap = "-";
         else {
             std::snprintf(buf, sizeof buf, "+%.3f", c.gap);
             gap = buf;
         }
-        Color gapCol = c.dnf ? Color{230, 90, 80, 255} : p == 0 ? dim : ink;
-        bool word = p == 0 || c.dnf;
-        if (c.pitState != RR_PIT_NONE && !c.finished && !c.dnf) {
-            gap = c.pitState == RR_PIT_SERVICE ? "IN BOX" : "PIT";
-            gapCol = anim::mix(kAccent, Color{170, 110, 0, 255}, f);
-            word = true;
+        if (out) gap = "DNF", word = true;
+        const Color pitYellow = anim::mix(kYellowLit, Color{150, 105, 0, 255}, f);
+        if (!out && !c.finished && c.pitState == RR_PIT_SERVICE) {
+            std::snprintf(buf, sizeof buf, "%.1fs", a.pitTime);
+            gap = buf, gapCol = pitYellow, word = false;
+        } else if (!out && !c.finished && c.pitState != RR_PIT_NONE) {
+            gap = "IN PIT", gapCol = pitYellow, word = true;
+            if (a.pitShown < 4 && a.pitTime > 0) {  // just left the box: the stop's time
+                std::snprintf(buf, sizeof buf, "%.1fs", a.pitTime);
+                gap = buf, word = false;
+            }
+        } else if (!out && idx == fastestCar_ && fastestAge_ < 5) {
+            gap = lapTime(fastestTime_), gapCol = anim::mix(purple, Color{110, 40, 200, 255}, f), word = false;
         }
-        if (word) textRight(gap.c_str(), x + w - 10, y + 6, 14, gapCol, true);
-        else textRight(gap.c_str(), x + w - 10, y + 5, 15, gapCol, false, true);
+        if (word) textRight(gap.c_str(), gx, y + 6, 13, gapCol, true);
+        else textRight(gap.c_str(), gx, y + 5, 14, gapCol, false, true);
+        // tyre: the compound's coloured letter, its age in laps, a pip per stop
+        const float tx = sx + 162;
+        const char* l = c.state.compound == RR_TIRE_SOFT ? "S" : c.state.compound == RR_TIRE_HARD ? "H" : "M";
+        Color cc = anim::mix(compoundColor(c.state.compound), anim::mix(compoundColor(c.state.compound), kInk, 0.35f), f);
+        if (out) cc = dim;
+        text(l, tx - width(l, 16, true) / 2, y + 4, 16, cc, true);
+        std::snprintf(buf, sizeof buf, "%d", c.lapsOnTires);
+        text(buf, tx + 9, y + 7, 12, dim, false, true);
+        for (int i = 0; i < std::min(c.pitStops, 3); ++i)
+            DrawRectangleRec({x + w - 8 - i * 5.0f, y + 8, 3, h - 16}, dim);
+        if (c.pitStops > 3) {
+            std::snprintf(buf, sizeof buf, "%d", c.pitStops);
+            textRight(buf, x + w - 4, y + 7, 11, dim, false, true);
+        }
+        // fastest lap of the race: a purple border round the row
+        if (idx == fastestCar_ && !out) DrawRectangleLinesEx({sx, y, sw, h}, 2, purple);
     }
 }
 
@@ -423,13 +465,6 @@ void Hud::drawMinimap(const rr::Race& race, const HudState& st) {
             std::snprintf(nb, sizeof nb, "%d", num);
             text(nb, c.x - width(nb, 11, true) / 2, c.y - 6, 11, anim::luminance(team) > 0.55f ? kInk : WHITE, true);
         }
-        const std::string code = shortName(cars[st.focus].name, cars[st.focus].robotName);
-        const float cw = width(code.c_str(), 13, true) + 12;
-        const bool left = c.x + 20 + cw > GetScreenWidth() - 8;
-        const Rectangle chip = {left ? c.x - 20 - cw : c.x + 20, c.y - 10, cw, 20};
-        DrawRectangleRounded(chip, 0.3f, 4, Fade(kInk, 0.9f));
-        DrawRectangleRec({chip.x, chip.y, 3, chip.height}, team);
-        text(code.c_str(), chip.x + 7, chip.y + 3, 13, kText, true);
     }
 }
 
@@ -437,7 +472,7 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
     const rr::Car& c = race.cars()[st.focus];
     const RRControl& k = c.control;
     const bool hasKers = c.phys.kersPower > 0, hasDrs = c.phys.drsDragScale < 1.0f;
-    const float w = 452, h = 268;
+    const float w = 460, h = 272;
     const float x = atX >= 0 ? atX : GetScreenWidth() - w - 16, y = atY >= 0 ? atY : GetScreenHeight() - h - 16;
     PanelAnim& pa = panelAnim_;
     char buf[128];
@@ -488,165 +523,177 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
     pa.car.set(st.focus);
     pa.car.update(dt_, 0.35f);
     const float carIn = anim::easeOutCubic(pa.car.t);
-    band({x, y, w, 40}, Fade(kInk, 0.88f), 10);
-    DrawRectangleRec({x + 14, y + 6, 5, 28}, teamColor(st.focus));
-    text(c.name.c_str(), x + 28 + (1 - carIn) * 12, y + 3, 19, anim::alpha(kText, carIn), true);
+    // No boxes: a soft shade towards the screen corner keeps the light text readable.
+    if (atX < 0) {  // docked in the corner
+        const float sx0 = x - 60, sy0 = y - 40;
+        DrawRectangleGradientEx({sx0, sy0, GetScreenWidth() - sx0, GetScreenHeight() - sy0}, Fade(BLACK, 0.0f), Fade(BLACK, 0.0f),
+                                Fade(BLACK, 0.0f), Fade(BLACK, 0.5f));
+    }
+    DrawRectangleRec({x, y + 4, 4, 32}, teamColor(st.focus));
+    textS(c.name.c_str(), x + 12 + (1 - carIn) * 12, y + 2, 20, anim::alpha(kText, carIn), true);
     const auto& lt = liveryTable();
     const std::string team = lt.empty() ? std::string() : lt[carLivery(st.focus)].team + "   ";
     std::snprintf(buf, sizeof buf, "%s%s%s%s", team.c_str(), c.robotName.c_str(), c.params.empty() ? "" : "  ", c.params.c_str());
     {  // team, algorithm and parameters, smaller when long
         float size = 13;
-        while (size > 9 && width(buf, size) > w - 28 - 150) size -= 1;
-        text(buf, x + 28, y + 24, size, anim::alpha(kDim, carIn));
+        while (size > 9 && width(buf, size) > w - 12 - 150) size -= 1;
+        textS(buf, x + 12, y + 25, size, anim::alpha(Color{200, 204, 214, 255}, carIn));
     }
     if (c.state.damage > 0) {
         std::snprintf(buf, sizeof buf, "%.0f", c.state.damage);
-        const float dx = x + w - 92 - width(buf, 14, true);
+        const float dx = x + w - 84 - width(buf, 14, true);
         icon::warning({dx - 13, y + 19}, 17, Color{240, 110, 90, 255});
-        text(buf, dx, y + 12, 14, Color{240, 110, 90, 255}, true);
+        textS(buf, dx, y + 12, 14, Color{240, 110, 90, 255}, true);
     }
     pa.pos.set(c.position);
     pa.pos.update(dt_, 0.4f);
     {  // the position: the old number slides out, the new one in
-        const Rectangle pc = {x + w - 76, y, 76, 40};
-        band(pc, kYellowLit, 10);
+        const Rectangle pc = {x + w - 68, y + 2, 68, 34};
+        band(pc, kYellowLit, 8);
         const float t = anim::easeInOutCubic(pa.pos.t);
         const bool up = pa.pos.current < pa.pos.previous;
         BeginScissorMode((int)pc.x, (int)pc.y, (int)pc.width, (int)pc.height);
         auto num = [&](int pos, float dy, float a) {
             std::snprintf(buf, sizeof buf, "P%d", pos);
-            text(buf, pc.x + (pc.width - width(buf, 26, true)) / 2 + 3, pc.y + 6 + dy, 26, anim::alpha(kInk, a), true);
+            text(buf, pc.x + (pc.width - width(buf, 23, true)) / 2 + 2, pc.y + 5 + dy, 23, anim::alpha(kInk, a), true);
         };
         if (t < 1) num(pa.pos.previous, (up ? 1 : -1) * t * 30, 1 - t);
         num(pa.pos.current, (up ? -1 : 1) * (1 - t) * 30, t);
         EndScissorMode();
     }
 
-    const float by = y + 46;  // the body: tyres, rev gauge, driver inputs
-    // Tyres and brakes: a top view of the car, each tyre coloured by its temperature and filled
-    // to the life it has left, its temperature outboard, the brake disc's temperature under it.
+    const float by = y + 46;  // the body: tyres, driver inputs, rev gauge
+    // Tyres, as in a sim racing HUD: four blocks with tread, coloured by temperature and filled to
+    // the life left; the temperature over each front tyre and under each rear, with its brake disc's.
     {
-        DrawRectangleRounded({x, by, 156, 140}, 0.08f, 6, Fade(kInk, 0.55f));
-        compoundBadge({x + 18, by + 15}, 10, c.state.compound);
-        text(compoundName(c.state.compound), x + 34, by + 8, 13, kText, true);
-        std::snprintf(buf, sizeof buf, "%d LAPS", c.lapsOnTires);
-        textRight(buf, x + 148, by + 9, 12, kDim, false, true);
         const rr::Compound& comp = rr::compoundInfo(c.state.compound);
-        const Color body = Fade(WHITE, 0.18f);
-        DrawRectangleRounded({x + 70, by + 30, 16, 104}, 0.6f, 6, body);   // chassis
-        DrawRectangleRec({x + 44, by + 28, 68, 4}, body);                  // front wing
-        DrawRectangleRec({x + 48, by + 128, 60, 5}, body);                 // rear wing
-        DrawLineEx({x + 60, by + 48}, {x + 96, by + 48}, 2, body);         // axles
-        DrawLineEx({x + 62, by + 110}, {x + 94, by + 110}, 2, body);
-        static const Rectangle kTyre[4] = {{38, 30, 22, 36}, {96, 30, 22, 36}, {34, 90, 26, 40}, {96, 90, 26, 40}};
-        for (int i = 0; i < 4; ++i) {
-            const int axle = i / 2, side = i % 2;
-            const Rectangle r = {x + kTyre[i].x, by + kTyre[i].y, kTyre[i].width, kTyre[i].height};
+        const float tw = 34, th = 44, lx = x + 26, rxx = x + 124;
+        const float fy0 = by + 20, ry0 = by + 86;
+        const Color dark = {30, 32, 38, 230};
+        auto tyre = [&](int i, float tx, float ty) {
+            const int axle = i / 2;
             const float temp = c.state.wheelTemp[i], life = 1 - std::clamp(c.state.tireWear[axle], 0.0f, 1.0f);
             const Color tc = tempColor(temp, comp.tempLo, comp.tempHi, 10);
-            DrawRectangleRounded(r, 0.35f, 6, Color{34, 36, 44, 235});
-            const float fh = (r.height - 4) * life;
-            if (fh > 1) DrawRectangleRounded({r.x + 2, r.y + 2 + (r.height - 4 - fh), r.width - 4, fh}, 0.3f, 4, Fade(tc, 0.9f));
-            DrawRectangleRoundedLinesEx(r, 0.35f, 6, 1.5f, tc);
-            std::snprintf(buf, sizeof buf, "%.0f", temp);
-            if (side == 0) textRight(buf, r.x - 3, r.y, 14, tc, true, true);
-            else text(buf, r.x + r.width + 3, r.y, 14, tc, true, true);
-            // brake disc: a dot inboard, and its temperature
+            const Rectangle r = {tx, ty, tw, th};
+            DrawRectangleRounded({r.x + 1, r.y + 2, r.width, r.height}, 0.18f, 4, Fade(BLACK, 0.4f));  // shadow
+            DrawRectangleRounded(r, 0.18f, 4, dark);
+            const float fh = r.height * life;
+            if (fh > 1) DrawRectangleRounded({r.x, r.y + r.height - fh, r.width, fh}, 0.18f, 4, tc);
+            for (int g = 1; g < 4; ++g)  // tread grooves
+                DrawRectangleRec({r.x + g * tw / 4 - 1, r.y + 3, 2, r.height - 6}, Fade(BLACK, 0.35f));
+            // temperatures: tyre big, brake disc small after a disc mark
             const float bt = c.state.brakeTemp[i];
             const Color bc = tempColor(bt, c.phys.brakeTempLo, c.phys.brakeTempHi, 100);
-            DrawCircleV({side == 0 ? r.x + r.width + 6 : r.x - 6, r.y + r.height / 2}, 4, bc);
-            std::snprintf(buf, sizeof buf, "%.0f", bt);
-            if (side == 0) textRight(buf, r.x - 3, r.y + r.height - 13, 12, bc, false, true);
-            else text(buf, r.x + r.width + 3, r.y + r.height - 13, 12, bc, false, true);
+            char t1[16], t2[16];
+            std::snprintf(t1, sizeof t1, "%.0f\xB0", temp);
+            std::snprintf(t1, sizeof t1, "%.0f", temp);
+            std::snprintf(t2, sizeof t2, "%.0f", bt);
+            const float w1 = width(t1, 15, true), w2 = width(t2, 11, false, true);
+            const float total = w1 + 8 + 10 + w2, ox = tx + tw / 2 - total / 2;
+            const float oy = axle == 0 ? ty - 20 : ty + th + 3;
+            textS(t1, ox, oy, 15, tc, true);
+            DrawCircleV({ox + w1 + 13, oy + 8}, 4, bc);
+            DrawCircleV({ox + w1 + 13, oy + 8}, 1.5f, Fade(BLACK, 0.6f));
+            textS(t2, ox + w1 + 18, oy + 3, 11, bc, false, true);
+        };
+        // axles joining each pair, as in the reference
+        DrawRectangleRec({lx + tw, fy0 + th / 2 - 5, rxx - lx - tw, 10}, Fade(Color{60, 64, 72, 255}, 0.85f));
+        DrawRectangleRec({lx + tw, ry0 + th / 2 - 5, rxx - lx - tw, 10}, Fade(Color{60, 64, 72, 255}, 0.85f));
+        tyre(0, lx, fy0);
+        tyre(1, rxx, fy0);
+        tyre(2, lx, ry0);
+        tyre(3, rxx, ry0);
+        // compound and age between the axles
+        std::snprintf(buf, sizeof buf, "%s  %d L", compoundName(c.state.compound), c.lapsOnTires);
+        const float cw = width(buf, 13, true) + 18, cx0 = (lx + rxx + tw) / 2 - cw / 2;
+        DrawCircleV({cx0 + 5, by + 75}, 5, compoundColor(c.state.compound));
+        textS(buf, cx0 + 16, by + 68, 13, kText, true);
+    }
+
+    // Driver inputs: throttle and brake, the steering wheel; KERS under them.
+    {
+        const float rx = x + 196;
+        icon::slantBar({rx, by + 14}, 14, 80, 7, k.accel, kGreen, Fade(WHITE, 0.16f));
+        icon::slantBar({rx + 24, by + 14}, 14, 80, 7, k.brake, kHot, Fade(WHITE, 0.16f));
+        textS("THR", rx - 2, by + 98, 11, kDim, true);
+        textS("BRK", rx + 23, by + 98, 11, kDim, true);
+        const float steer = std::clamp(k.steer, -1.0f, 1.0f);  // + = left
+        icon::steeringWheel({rx + 80, by + 40}, 22, -steer * 90, kText, kAccent);
+        if (hasKers) {
+            const float frac = std::clamp(c.state.kersCharge / std::max(1.0f, c.phys.kersStore), 0.0f, 1.0f);
+            const float kw = c.state.kersPowerNow / 1000.0f;
+            const Color orange{255, 170, 60, 255};
+            icon::battery({rx + 58, by + 76}, 40, 18, frac, orange, kDim);
+            icon::bolt({rx + 75, by + 85}, 13, kw > 1 ? WHITE : Fade(WHITE, 0.6f));
+            std::snprintf(buf, sizeof buf, "%.1f MJ", c.state.kersCharge / 1e6f);
+            textS(buf, rx + 58, by + 98, 12, kText, false, true);
+            std::snprintf(buf, sizeof buf, "%s%.0f kW", kw > 1 ? "+" : "", kw);
+            textS(buf, rx + 58, by + 113, 12, kw > 1 ? orange : kw < -1 ? kGreen : kDim, false, true);
         }
     }
 
-    // Rev gauge: a ring of segments, the gear in the middle, the speed under it.
+    // Rev gauge, rightmost: a ring of segments; RPM over the gear, the speed under it.
     {
-        const Vector2 g = {x + 240, by + 70};
-        const float R = 66;
+        const float R = 74;
+        const Vector2 g = {x + w - R - 6, by + 72};
         pa.rpm = anim::approach(pa.rpm, rpmFrac, dt_, 0.08f);
         pa.shift = anim::ramp(pa.shift, rpmFrac > 0.95f ? 1.0f : 0.0f, dt_, 0.12f);
-        DrawCircleV(g, R + 6, Fade(kInk, 0.62f));
         if (pa.shift > 0) DrawRing(g, R + 2, R + 6, 135, 405, 48, Fade(kHot, 0.8f * anim::easeInOutCubic(pa.shift)));
+        DrawRing(g, R - 13, R + 1, 135, 405, 48, Fade(BLACK, 0.3f));  // a dark bed under the segments
         const int n = 34;
         const float span = 270.0f / n;
         for (int i = 0; i < n; ++i) {
             const float f = (i + 0.5f) / n, a0 = 135 + i * span + 1.2f;
             const Color lit = f > 0.92f ? kHot : f > 0.8f ? kYellowLit : kGreen;
-            const bool on = f <= pa.rpm;
-            icon::arc(g, R - 11, R, a0, a0 + span - 2.4f, on ? lit : Fade(WHITE, 0.1f));
+            icon::arc(g, R - 11, R, a0, a0 + span - 2.4f, f <= pa.rpm ? lit : Fade(WHITE, 0.16f));
         }
-        std::snprintf(buf, sizeof buf, "%.0f RPM", c.state.rpm);
-        text(buf, g.x - width(buf, 12, false, true) / 2, g.y - 46, 12, kDim, false, true);
+        std::snprintf(buf, sizeof buf, "%.0f", c.state.rpm);
+        const float rw = width(buf, 17, true), uw = width("RPM", 10, true);
+        textS(buf, g.x - (rw + uw + 4) / 2, g.y - 46, 17, kText, true);
+        textS("RPM", g.x - (rw + uw + 4) / 2 + rw + 4, g.y - 40, 10, kDim, true);
         pa.gear.set(c.state.gear);
         pa.gear.update(dt_, 0.25f);
         const int gear = pa.gear.current;
         std::snprintf(buf, sizeof buf, "%s", gear < 0 ? "R" : gear == 0 ? "N" : std::to_string(gear).c_str());
-        const float gs = 50 * (0.8f + 0.2f * anim::easeOutBack(pa.gear.t));
-        text(buf, g.x - width(buf, gs, true) / 2, g.y - 8 - gs * 0.55f, gs, anim::mix(kText, kYellowLit, anim::easeInOutCubic(pa.shift)), true);
+        const float gs = 36 * (0.8f + 0.2f * anim::easeOutBack(pa.gear.t));
+        textS(buf, g.x - width(buf, gs, true) / 2, g.y - 6 - gs * 0.55f, gs,
+              anim::mix(kYellowLit, kHot, anim::easeInOutCubic(pa.shift)), true);
         const float speed = rr::length(c.state.velWorld()) * 3.6f;
         std::snprintf(buf, sizeof buf, "%.0f", speed);
-        text(buf, g.x - width(buf, 26, true) / 2, g.y + 20, 26, kText, true);
-        text("km/h", g.x - width("km/h", 11) / 2, g.y + 48, 11, kDim);
-    }
-
-    // Driver inputs: throttle and brake, the steering wheel; KERS under them.
-    {
-        const float rx = x + 322;
-        DrawRectangleRounded({rx, by, 130, 140}, 0.08f, 6, Fade(kInk, 0.55f));
-        icon::slantBar({rx + 12, by + 12}, 14, 74, 7, k.accel, kGreen, Fade(WHITE, 0.12f));
-        icon::slantBar({rx + 36, by + 12}, 14, 74, 7, k.brake, kHot, Fade(WHITE, 0.12f));
-        text("THR", rx + 9, by + 90, 11, kDim, true);
-        text("BRK", rx + 34, by + 90, 11, kDim, true);
-        const float steer = std::clamp(k.steer, -1.0f, 1.0f);  // + = left
-        icon::steeringWheel({rx + 94, by + 42}, 24, -steer * 90, kText, kAccent);
-        text("STEER", rx + 94 - width("STEER", 11, true) / 2, by + 72, 11, kDim, true);
-        if (hasKers) {
-            const float frac = std::clamp(c.state.kersCharge / std::max(1.0f, c.phys.kersStore), 0.0f, 1.0f);
-            const float kw = c.state.kersPowerNow / 1000.0f;
-            const Color orange{255, 170, 60, 255};
-            icon::battery({rx + 10, by + 112}, 38, 18, frac, orange, kDim);
-            icon::bolt({rx + 26, by + 121}, 13, kw > 1 ? WHITE : Fade(WHITE, 0.6f));
-            std::snprintf(buf, sizeof buf, "%.1f MJ", c.state.kersCharge / 1e6f);
-            text(buf, rx + 56, by + 104, 12, kText, false, true);
-            std::snprintf(buf, sizeof buf, "%s%.0f kW", kw > 1 ? "+" : "", kw);
-            text(buf, rx + 56, by + 120, 12, kw > 1 ? orange : kw < -1 ? kGreen : kDim, false, true);
-        }
+        textS(buf, g.x - width(buf, 34, true) / 2, g.y + 12, 34, kText, true);
+        textS("km/h", g.x - width("km/h", 12, true) / 2, g.y + 50, 12, kDim, true);
     }
 
     // Lap times.
-    float sy = by + 146;
-    band({x, sy, w, 24}, Fade(kInk, 0.82f), 8);
+    float sy = by + 156;
     if (c.finished && st.lapClock < 0) {
-        icon::chequered({x + 14, sy + 6}, 16, 12);
+        icon::chequered({x + 6, sy + 4}, 16, 12);
         std::snprintf(buf, sizeof buf, "FINISHED  %s", lapTime(c.finishTime).c_str());
-        text(buf, x + 38, sy + 4, 15, kText, true, true);
+        textS(buf, x + 30, sy + 2, 15, kText, true, true);
     } else {
-        icon::stopwatch({x + 22, sy + 12}, 17, kText);
-        text(lapTime(st.lapClock >= 0 ? st.lapClock : race.time() - c.lapStart).c_str(), x + 38, sy + 3, 16, kText, true, true);
+        icon::stopwatch({x + 14, sy + 10}, 17, kText);
+        textS(lapTime(st.lapClock >= 0 ? st.lapClock : race.time() - c.lapStart).c_str(), x + 30, sy + 1, 17, kText, true, true);
     }
-    text("LAST", x + 200, sy + 7, 10, kDim, true);
-    text(lapTime(st.lastLap >= 0 ? st.lastLap : c.lapTimes.empty() ? 0 : c.lapTimes.back()).c_str(), x + 230, sy + 4, 14, kText, false, true);
-    text("BEST", x + 322, sy + 7, 10, kDim, true);
-    text(lapTime(st.bestLap >= 0 ? st.bestLap : c.bestLap).c_str(), x + 352, sy + 4, 14, Color{190, 120, 255, 255}, false, true);
+    textS("LAST", x + 200, sy + 6, 10, kDim, true);
+    textS(lapTime(st.lastLap >= 0 ? st.lastLap : c.lapTimes.empty() ? 0 : c.lapTimes.back()).c_str(), x + 230, sy + 2, 15, kText, false, true);
+    textS("BEST", x + 330, sy + 6, 10, kDim, true);
+    textS(lapTime(st.bestLap >= 0 ? st.bestLap : c.bestLap).c_str(), x + 360, sy + 2, 15, Color{190, 120, 255, 255}, false, true);
 
     // Fuel and pit stops; DRS and the DRS zone light up yellow.
-    sy += 27;
-    band({x, sy, w, 24}, Fade(kInk, 0.82f), 8);
+    sy += 26;
     {
         const float fuelFrac = std::clamp(c.state.fuel / c.phys.fuelCapacity, 0.0f, 1.0f);
-        icon::fuelPump({x + 22, sy + 12}, 16, kText);
-        const Rectangle fb = {x + 38, sy + 8, 80, 8};
-        DrawRectangleRounded(fb, 0.5f, 4, Fade(WHITE, 0.14f));
+        icon::fuelPump({x + 14, sy + 10}, 17, kText);
+        const Rectangle fb = {x + 30, sy + 6, 84, 8};
+        DrawRectangleRounded(fb, 0.5f, 4, Fade(WHITE, 0.2f));
         if (fuelFrac > 0.01f)
             DrawRectangleRounded({fb.x, fb.y, fb.width * fuelFrac, fb.height}, 0.5f, 4, fuelFrac < 0.1f ? kHot : Color{90, 170, 235, 255});
         std::snprintf(buf, sizeof buf, "%.1f L", c.state.fuel);
-        text(buf, fb.x + fb.width + 8, sy + 4, 14, kText, false, true);
+        textS(buf, fb.x + fb.width + 8, sy + 2, 14, kText, false, true);
         if (c.pitStops > 0) {
-            icon::wrench({x + 206, sy + 12}, 15, kDim);
+            icon::wrench({x + 204, sy + 10}, 15, kDim);
             std::snprintf(buf, sizeof buf, "%d %s", c.pitStops, c.pitStops == 1 ? "STOP" : "STOPS");
-            text(buf, x + 218, sy + 5, 12, kDim, true);
+            textS(buf, x + 216, sy + 3, 12, kDim, true);
         }
     }
     if (hasDrs) {
@@ -654,16 +701,16 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
         pa.zone = anim::ramp(pa.zone, zone ? 1.0f : 0.0f, dt_, 0.25f);
         pa.drs = anim::ramp(pa.drs, open ? 1.0f : ready ? 0.45f : 0.0f, dt_, 0.25f);
         auto lamp = [&](const char* label, float right, float level) {
-            const float v = anim::easeInOutCubic(level), lw = width(label, 16, true);
-            if (v > 0.01f) band({right - lw - 12, sy + 2, lw + 20, 20}, Fade(kYellowLit, 0.22f * v), 6);
-            text(label, right - lw, sy + 2, 16, anim::mix(Fade(kDim, 0.55f), kYellowLit, v), true);
+            const float v = anim::easeInOutCubic(level), lw = width(label, 17, true);
+            if (v > 0.01f) DrawRectangleRounded({right - lw - 6, sy - 1, lw + 12, 22}, 0.4f, 6, Fade(kYellowLit, 0.18f * v));
+            textS(label, right - lw, sy, 17, anim::mix(Color{150, 154, 162, 200}, kYellowLit, v), true);
         };
-        lamp("ZONE", x + w - 74, pa.zone);
-        lamp("DRS", x + w - 16, pa.drs);
+        lamp("ZONE", x + w - 70, pa.zone);
+        lamp("DRS", x + w - 8, pa.drs);
     }
 
     // The algorithm's status and its strategy: next planned stop, the two-compound rule.
-    sy += 27;
+    sy += 26;
     std::string status = k.status[0] ? k.status : "";
     std::string plan;
     if (k.pit_window[0] > 0 && !c.finished) {
@@ -672,25 +719,22 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
         plan = buf;
     }
     const bool due = race.twoCompoundRule() && !c.finished && !c.dnf && (c.compoundsUsed & (c.compoundsUsed - 1)) == 0;
-    if (!status.empty() || !plan.empty() || due) {
-        band({x, sy, w, 20}, Fade(kInk, 0.7f), 6);
-        float right = x + w - 12;
-        if (due) {
-            textRight("2ND COMPOUND DUE", right, sy + 4, 11, kAccent, true);
-            right -= width("2ND COMPOUND DUE", 11, true) + 14;
-        }
-        if (!plan.empty()) {
-            if (k.pit_plan_tires >= RR_TIRE_SOFT && k.pit_plan_tires <= RR_TIRE_HARD) {
-                compoundBadge({right - 7, sy + 10}, 7, k.pit_plan_tires);
-                right -= 20;
-            }
-            textRight(plan.c_str(), right, sy + 4, 11, kText, false, true);
-            right -= width(plan.c_str(), 11, false, true) + 14;
-        }
-        float size = 12;
-        while (size > 8 && width(status.c_str(), size) > right - x - 24) size -= 1;
-        text(status.c_str(), x + 14, sy + 3, size, kDim);
+    float right = x + w - 8;
+    if (due) {
+        textS("2ND COMPOUND DUE", right - width("2ND COMPOUND DUE", 11, true), sy + 2, 11, kAccent, true);
+        right -= width("2ND COMPOUND DUE", 11, true) + 14;
     }
+    if (!plan.empty()) {
+        if (k.pit_plan_tires >= RR_TIRE_SOFT && k.pit_plan_tires <= RR_TIRE_HARD) {
+            DrawCircleV({right - 5, sy + 9}, 5, compoundColor(k.pit_plan_tires));
+            right -= 16;
+        }
+        textS(plan.c_str(), right - width(plan.c_str(), 11, false, true), sy + 2, 11, kText, false, true);
+        right -= width(plan.c_str(), 11, false, true) + 14;
+    }
+    float size = 12;
+    while (size > 8 && width(status.c_str(), size) > right - x - 8) size -= 1;
+    textS(status.c_str(), x + 4, sy + 1, size, Color{190, 194, 204, 255});
 }
 
 void Hud::drawHelp() {
@@ -712,19 +756,18 @@ void Hud::drawHelp() {
 }
 
 void Hud::drawQualiTower(const rr::Race& race, const HudState& st) {
-    const float x = kTowerX, w = kTowerW, rowH = kTowerRowH, h = rowH - 2;
-    char run[32], lap[32], buf[96];
-    std::snprintf(run, sizeof run, "RUN %d / %d", st.qualiRun, st.qualiRuns);
+    const float x = kTowerX, w = kTowerW, rowH = kTowerRowH, h = rowH;
+    char lap[32], buf[96];
     const rr::Car& car = race.cars()[0];
-    std::snprintf(lap, sizeof lap, "LAP %d / %d", car.currentLap(race.laps()), race.laps());
+    std::snprintf(lap, sizeof lap, "LAP %d/%d", car.currentLap(race.laps()), race.laps());
     std::snprintf(buf, sizeof buf, "%s   %s", st.sessionTitle.c_str(), race.track().name().c_str());
-    towerHeader(x, w, run, buf, lap, nullptr);
+    towerHeader(x, w, "RUN", st.qualiRun, st.qualiRuns, buf, lap, nullptr);
     const float pole = st.quali.empty() ? 0 : st.quali[0].time;
     for (size_t p = 0; p < st.quali.size(); ++p) {
         const float y = kTowerTop + p * rowH;
-        DrawRectangleRec({x, y, kTowerPosW, h}, Fade(kInk, 0.92f));
+        DrawRectangleRec({x, y, kTowerPosW, h}, p == 0 && st.quali[p].time > 0 ? kRed : Fade(kInk, 0.94f));
         std::snprintf(buf, sizeof buf, "%zu", p + 1);
-        text(buf, x + (kTowerPosW - width(buf, 17, true)) / 2, y + 4, 17, st.quali[p].time > 0 ? kText : kDim, true);
+        text(buf, x + (kTowerPosW - width(buf, 16, true)) / 2, y + 4, 16, st.quali[p].time > 0 ? kText : kDim, true);
         RowAnim& a = qualiRows_[st.quali[p].name];
         a.lastRow = (int)p;
         a.y.set((float)p, 0.55f);
@@ -734,16 +777,16 @@ void Hud::drawQualiTower(const rr::Race& race, const HudState& st) {
     for (size_t p = 0; p < st.quali.size(); ++p) {
         const QualiLine& q = st.quali[p];
         RowAnim& a = qualiRows_[q.name];
-        const float y = kTowerTop + a.y.value() * rowH, sx = x + kTowerPosW + 2, sw = w - kTowerPosW - 2;
+        const float y = kTowerTop + a.y.value() * rowH, sx = x + kTowerPosW, sw = w - kTowerPosW;
         const float f = a.focus.value();
         DrawRectangleRec({sx, y, sw, h}, anim::mix(Fade(kInk, 0.86f), Color{238, 240, 244, 245}, f));
         const Color ink = anim::mix(q.time > 0 ? kText : kDim, kInk, f), dim = anim::mix(kDim, Color{88, 92, 104, 255}, f);
-        DrawRectangleRec({sx, y, 5, h}, q.color);
+        DrawRectangleRec({sx, y, 4, h}, q.color);
         const std::string code = shortName(q.name);
-        text(code.c_str(), sx + 14, y + 4, 18, ink, true);
+        text(code.c_str(), sx + 10, y + 4, 17, ink, true);
         if (const int num = carNumber(q.name)) {
             std::snprintf(buf, sizeof buf, "%d", num);
-            text(buf, sx + 20 + width(code.c_str(), 18, true), y + 8, 12, dim, false, true);
+            text(buf, sx + 14 + width(code.c_str(), 17, true), y + 8, 11, dim, false, true);
         }
         std::string t;
         if (q.running) t = "ON TRACK";
@@ -753,8 +796,8 @@ void Hud::drawQualiTower(const rr::Race& race, const HudState& st) {
             std::snprintf(buf, sizeof buf, "+%.3f", q.time - pole);
             t = buf;
         }
-        if (q.running) textRight(t.c_str(), x + w - 10, y + 6, 14, anim::mix(kAccent, Color{170, 110, 0, 255}, f), true);
-        else textRight(t.c_str(), x + w - 10, y + 5, 15, p == 0 ? Color{190, 120, 255, 255} : dim, false, true);
+        if (q.running) textRight(t.c_str(), x + w - 10, y + 6, 13, anim::mix(kAccent, Color{170, 110, 0, 255}, f), true);
+        else textRight(t.c_str(), x + w - 10, y + 5, 14, p == 0 ? Color{190, 120, 255, 255} : dim, false, true);
     }
 }
 

@@ -107,7 +107,8 @@ private:
     // the race HUD's building blocks: a slanted band, a tyre compound badge
     void band(Rectangle r, Color c, float slant = 8);
     void compoundBadge(Vector2 c, float r, int compound, float alpha = 1);
-    void towerHeader(float x, float w, const char* top, const char* line2, const char* clock, const char* corner);
+    void towerHeader(float x, float w, const char* label, int now, int total, const char* line2, const char* clock,
+                     const char* corner);
     // readies 2D drawing and advances the HUD's animations; resets them when a new race starts
     void animate(const rr::Race& race);
 
@@ -180,6 +181,7 @@ private:
         float changed = 99;     // seconds since the car gained or lost a place
         int delta = 0;          // + gained, - lost
         anim::Light focus, hover;
+        float pitStart = -1, pitTime = 0, pitShown = 99;  // the stop in the box: start (race time), length, s since
     };
     anim::Keyed<int, RowAnim> towerRows_;
     anim::Keyed<std::string, RowAnim> qualiRows_;
@@ -191,6 +193,8 @@ private:
         float rpm = 0;
         bool started = false;
     } panelAnim_;
+    int fastestCar_ = -1;                // holder of the race's fastest lap, its time, s since it was set
+    float fastestTime_ = 0, fastestAge_ = 99;
     float dt_ = 0, clock_ = 0;
     const rr::Race* animRace_ = nullptr;
     double animTime_ = 0;
