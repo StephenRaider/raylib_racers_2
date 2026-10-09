@@ -20,7 +20,7 @@ namespace {
 Vector3 W2(rr::Vec2 v, float h = 0) { return {v.x, h, -v.y}; }
 constexpr int kCarModels = 11;  // assets/cars/f1_2013_01 .. 11
 
-const char* kCamNames[CAM_COUNT] = {"FOLLOW", "CINEMATIC", "TV", "HELICOPTER", "TOP DOWN", "ORBIT", "OVERVIEW", "DIRECTOR"};
+const char* kCamNames[CAM_COUNT] = {"FOLLOW", "CINEMATIC", "TV", "HELICOPTER", "TOP DOWN", "ORBIT", "OVERVIEW", "DIRECTOR", "T-CAM", "NOSE"};
 
 }  // namespace
 
@@ -301,6 +301,18 @@ void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float
             c.fovy = 45;
             break;
         }
+        case CAM_TCAM:  // above and just behind the driver, the airbox camera of the era
+            c.position = local(0, 1.12f, -0.35f);
+            c.target = local(0, 0.85f, 25.0f);
+            c.up = u;
+            c.fovy = 70;
+            break;
+        case CAM_NOSE:  // on the nose, looking down the road
+            c.position = local(0, 0.42f, 2.35f);
+            c.target = local(0, 0.35f, 30.0f);
+            c.up = u;
+            c.fovy = 72;
+            break;
         case CAM_CHASE:
         default: {
             // behind and above, the heading flattened so the camera does not pitch with the car

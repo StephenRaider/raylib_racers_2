@@ -1228,6 +1228,8 @@ int main(int argc, char** argv) {
             if (IsKeyPressed(KEY_C)) st.camera = (CamMode)((st.camera + (shift ? CAM_COUNT - 1 : 1)) % CAM_COUNT);
             for (int k = 0; k < CAM_COUNT && k < 8; ++k)
                 if (IsKeyPressed(KEY_F2 + k)) st.camera = (CamMode)k;
+            if (IsKeyPressed(KEY_T)) st.camera = CAM_TCAM;
+            if (IsKeyPressed(KEY_B)) st.camera = CAM_NOSE;
             if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) st.timeScale = std::min(64.0f, st.timeScale * 2);
             if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) st.timeScale = std::max(0.125f, st.timeScale / 2);
             if (IsKeyPressed(KEY_P)) st.view.showPaths = !st.view.showPaths;
@@ -1353,6 +1355,8 @@ int main(int argc, char** argv) {
             if (IsKeyPressed(KEY_C)) st.camera = (CamMode)((st.camera + (shift ? CAM_COUNT - 1 : 1)) % CAM_COUNT);
             for (int k = 0; k < CAM_COUNT && k < 8; ++k)
                 if (IsKeyPressed(KEY_F2 + k)) st.camera = (CamMode)k;
+            if (IsKeyPressed(KEY_T)) st.camera = CAM_TCAM;
+            if (IsKeyPressed(KEY_B)) st.camera = CAM_NOSE;
             if (IsKeyPressed(KEY_SPACE)) st.paused = !st.paused;
             if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) st.timeScale = std::min(64.0f, st.timeScale * 2);
             if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) st.timeScale = std::max(0.125f, st.timeScale / 2);

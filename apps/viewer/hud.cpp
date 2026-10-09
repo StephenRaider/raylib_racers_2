@@ -450,7 +450,7 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
 void Hud::drawHelp() {
     const char* lines[] = {
         "Tab / Right   next car",       "Left          previous car",       "1-9           focus car by position",
-        "L             follow the leader", "C / Shift+C   next / prev camera",
+        "L             follow the leader", "C / Shift+C   next / prev camera", "T / B         T-cam (roll hoop) / nose camera",
         "F2-F9         follow, cinematic, TV, heli, top, orbit, overview, director",
         "Mouse drag    orbit (orbit cam)", "Wheel         zoom (orbit, heli, top)",
         "Space         pause",          "+ / -         simulation speed",  "N             single step (paused)",
