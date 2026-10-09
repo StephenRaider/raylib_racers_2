@@ -456,7 +456,7 @@ void Hud::drawHelp() {
         "Space         pause",          "+ / -         simulation speed",  "N             single step (paused)",
         "R             restart race",   "P             robot paths",       "S             range finders",
         "M             engine sound on / off", "Esc           race setup menu",
-        "H             hide HUD",       "F10           graphics quality", "F12           screenshot",        "F1            close help"};
+        "H             hide HUD",       "F10           graphics quality", "K             next sky and lighting", ";  '          turn the sun",   ",  .          exposure", "F12           screenshot",        "F1            close help"};
     const int n = sizeof(lines) / sizeof(lines[0]);
     float w = 760, h = 70 + n * 24.0f;
     float x = (GetScreenWidth() - w) / 2, y = (GetScreenHeight() - h) / 2;

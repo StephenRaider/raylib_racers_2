@@ -1497,6 +1497,14 @@ int main(int argc, char** argv) {
                      !inMenu && !st.paused && !st.muted && st.timeScale <= 2.0f && !race->cooledDown() && liveSound,
                      frameDt);
 
+#ifdef RR2_RENDERER
+        if (!inMenu) {  // sky and lighting, as in rr_trackview: K next sky, ; ' turn the sun, , . exposure
+            const float ldt = std::min(frameDt, 0.1f);
+            renderer->adjustLighting(IsKeyPressed(KEY_K), (IsKeyDown(KEY_APOSTROPHE) - IsKeyDown(KEY_SEMICOLON)) * ldt * 0.5f,
+                                     1.0f + (IsKeyDown(KEY_PERIOD) - IsKeyDown(KEY_COMMA)) * ldt);
+        }
+#endif
+
         BeginDrawing();
         ClearBackground(BLACK);
         renderer->draw(*race, inMenu ? race->order()[0] : st.focus, st.view);

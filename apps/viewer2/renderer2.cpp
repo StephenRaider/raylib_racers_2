@@ -66,6 +66,7 @@ struct Renderer::Impl {
     bool synced = false;
     double lastTime = -1;
     int frame = 0;
+    int skyIdx = 0;
 
     // camera state
     Vector3 eye{}, look{};
@@ -180,6 +181,18 @@ bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& as
     if (!p_->gr.loadSky(assetsDir + "/sky", "kloofendal_partly_cloudy", err)) return false;
     if (!p_->scene.build(track, assetsDir, seed ? seed : 1, err)) return false;
     return true;
+}
+
+void Renderer::adjustLighting(bool nextSky, float turn, float exposureFactor) {
+    static const char* skies[] = {"kloofendal_partly_cloudy", "mud_road", "overcast_soil"};
+    Impl& p = *p_;
+    if (nextSky) {
+        std::string err;
+        const int idx = (p.skyIdx + 1) % 3;
+        if (p.gr.loadSky(p.assets + "/sky", skies[idx], &err)) p.skyIdx = idx;
+    }
+    p.gr.skyYaw += turn;
+    p.gr.exposure = std::clamp(p.gr.exposure * exposureFactor, 0.2f, 3.0f);
 }
 
 void Renderer::shutdown() {

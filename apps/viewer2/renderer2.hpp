@@ -38,6 +38,9 @@ public:
     void updateCamera(const rr::Race& race, int focus, CamMode mode, float dt);
     void draw(const rr::Race& race, int focus, const ViewOptions& opt);
     void stepEffects(const rr::Race&, float) {}
+    // Sky and lighting, as in rr_trackview: the next sky (and its sun), a turn of the sky about the
+    // vertical (radians) and a factor on the exposure.
+    void adjustLighting(bool nextSky, float turn, float exposureFactor);
 
     Camera3D camera{};
 
