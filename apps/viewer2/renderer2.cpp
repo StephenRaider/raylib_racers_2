@@ -77,6 +77,7 @@ struct Renderer::Impl {
     std::vector<Vector3> tvSpots;
     int tvSpot = -1;
     float cineClock = 0;
+    Vector3 cineOff{};
 
     CarRender* car(int i) { return i >= 0 && i < (int)cars.size() ? cars[i].get() : nullptr; }
 
@@ -232,15 +233,21 @@ void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float
             p.cineClock += dt;
             const int shot = (int)(p.cineClock / 6.0f) % 4;
             const float side = ((int)(p.cineClock / 12.0f) % 2) ? 1.0f : -1.0f;
-            Vector3 want;
+            // The shot is an offset in the car's heading frame (yaw only, so the suspension's bobbing does
+            // not shake it), eased from one shot to the next; it is not chased in world space, which
+            // lags tens of metres behind at 90 m/s and makes the distance wobble.
+            Vector3 want;  // (left, up, forward)
             switch (shot) {
-                case 0: want = local(side * 2.6f, 0.8f, -6.5f); break;
-                case 1: want = local(side * 5.5f, 1.1f, 1.5f); break;
-                case 2: want = local(side * 3.0f, 0.7f, 8.0f); break;
-                default: want = local(side * 1.0f, 3.6f, -10.0f); break;
+                case 0: want = {side * 2.6f, 0.8f, -6.5f}; break;
+                case 1: want = {side * 5.5f, 1.1f, 1.5f}; break;
+                case 2: want = {side * 3.0f, 0.7f, 8.0f}; break;
+                default: want = {side * 1.0f, 3.6f, -10.0f}; break;
             }
-            if (!p.init) p.eye = want;
-            p.eye = Vector3Lerp(p.eye, want, shot == 1 ? 0.5f : k);
+            if (!p.init) p.cineOff = want;
+            p.cineOff = Vector3Lerp(p.cineOff, want, 1.0f - std::exp(-std::min(dt, 0.1f) * 2.5f));
+            const Vector3 fh = Vector3Normalize({f.x, 0, f.z});
+            const Vector3 lh = {fh.z, 0, -fh.x};
+            p.eye = Vector3Add(o, Vector3Add(Vector3Scale(lh, p.cineOff.x), Vector3Add({0, p.cineOff.y, 0}, Vector3Scale(fh, p.cineOff.z))));
             p.eye.y = std::max(p.eye.y, p.scene.groundHeight(p.eye.x, p.eye.z) + 0.5f);
             c.position = p.eye;
             c.target = Vector3Add(o, {0, 0.5f, 0});
