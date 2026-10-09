@@ -89,7 +89,9 @@ bool CarRender::loadPart(const std::string& file, const Finish& paint, int liver
             } else if (mi == liveryMaterial) {
                 rough = paint.roughness, metal = paint.metalness, cc = paint.clearcoat, ccRough = paint.clearcoatRoughness;
             }
-            auto* set = new gfx::TextureSet(gfx::flatTextureSet(tex, rough, metal));
+            // the paint's finish rides on the material's multipliers (setFinish), so the livery sets are neutral
+            const bool paintPart = !wheel && mi == liveryMaterial;
+            auto* set = new gfx::TextureSet(paintPart ? gfx::flatTextureSet(tex, 1.0f, 1.0f) : gfx::flatTextureSet(tex, rough, metal));
             sets_.push_back(set);
             for (Mesh& mesh : mb[which].build()) {
                 Part p;
@@ -98,6 +100,7 @@ bool CarRender::loadPart(const std::string& file, const Finish& paint, int liver
                 p.livery = !wheel && mi == liveryMaterial;
                 if (wheel) p.tyre = tex.width == 1024 && tex.height == 1024 ? 1 : tex.width == 1024 && tex.height == 256 ? 2 : 0;
                 p.mat.layer[0] = set;
+                if (paintPart) p.mat.roughness = rough, p.mat.metalness = metal;
                 p.mat.clearcoat = cc;
                 p.mat.clearcoatRoughness = ccRough;
                 p.mat.normalStrength = 0.0f;
@@ -212,7 +215,7 @@ gfx::TextureSet* CarRender::paintSet(Color c) {
     UnloadImage(img);
     GenTextureMipmaps(&t);
     SetTextureFilter(t, TEXTURE_FILTER_ANISOTROPIC_16X);
-    auto* set = new gfx::TextureSet(gfx::flatTextureSet(t, 0.3f, 0.3f));
+    auto* set = new gfx::TextureSet(gfx::flatTextureSet(t, 1.0f, 1.0f));
     paintSets_[key] = set;
     return set;
 }
@@ -223,6 +226,15 @@ void CarRender::setPaint(Color c) {
     for (auto* list : {&body_parts_, &drs_parts_})
         for (Part& p : *list)
             if (p.livery) p.mat.layer[0] = s;
+}
+
+void CarRender::setFinish(const Finish& f) {
+    for (auto* list : {&body_parts_, &drs_parts_})
+        for (Part& p : *list)
+            if (p.livery) {
+                p.mat.roughness = f.roughness, p.mat.metalness = f.metalness;
+                p.mat.clearcoat = f.clearcoat, p.mat.clearcoatRoughness = f.clearcoatRoughness;
+            }
 }
 
 void CarRender::clearPaint() {
