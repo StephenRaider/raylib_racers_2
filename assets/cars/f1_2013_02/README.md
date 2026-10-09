@@ -63,3 +63,6 @@ over to the next view.
 material and the DRS flap, rebakes the old paint, and points `body.glb` and `drs_flap.glb` at
 `livery_default.png`. `--size 4096` gives 1.6 mm a texel. The same files are in each of the other ten
 cars of the 2013 pack (`D:\RR2 assets\f1_2013_split`).
+
+`liveries/solid_*.png`: ten plain single-colour liveries (red, orange, yellow, green, teal, blue, navy,
+purple, white, black). Copy one to `livery.png` to use it.
