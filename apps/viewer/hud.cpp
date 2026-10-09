@@ -526,7 +526,15 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
     pa.car.set(st.focus);
     pa.car.update(dt_, 0.35f);
     const float carIn = anim::easeOutCubic(pa.car.t);
-    // No boxes: everything carries its own shadow so it reads on sky, grass or tarmac.
+    // No boxes: everything carries its own shadow, over a subtle shade that deepens into the corner.
+    if (atX < 0) {
+        const float sx0 = x - 160, sy0 = y - 100;
+        const float sw = GetScreenWidth() - sx0, sh = GetScreenHeight() - sy0;
+        for (float yy = 0; yy < sh; yy += 4) {  // strips, each fading in from the left: no hard edges
+            const float v = anim::easeInOutCubic(yy / sh);
+            DrawRectangleGradientH((int)sx0, (int)(sy0 + yy), (int)sw, 4, Fade(BLACK, 0.0f), Fade(BLACK, 0.6f * v));
+        }
+    }
     DrawRectangleRec({x, y + 4, 4, 32}, teamColor(st.focus));
     textS(c.name.c_str(), x + 12 + (1 - carIn) * 12, y + 2, 20, anim::alpha(kText, carIn), true);
     const auto& lt = liveryTable();
