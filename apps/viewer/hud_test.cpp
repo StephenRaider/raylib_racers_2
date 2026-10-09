@@ -875,6 +875,7 @@ void Hud::drawTrackWindow(const TestView& tv, Rectangle area, std::vector<TestHi
 void Hud::drawTest(const rr::Race& race, const HudState& st, const TestView& tv, std::vector<TestHit>& hits) {
     hits.clear();
     if (!tv.rec) return;
+    animate(race);
     const float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
     if (st.showHud) {
         if (tv.window == 0) {

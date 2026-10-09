@@ -15,7 +15,13 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   cascaded sun shadows, 4x MSAA, instanced trees with levels of detail and
   baked terrain occlusion; 2013 F1 cars with clear-coat paint, steering front
   wheels, a turning steering wheel and a suspension that rolls, pitches and squats.
-  The menu, HUD, testing screens and director are Raylib Racers 1's, unchanged.
+  The menu, testing screens and director are Raylib Racers 1's, unchanged.
+- **A new race HUD**: an F1-style timing tower with three-letter driver codes
+  (`assets/short_names.json`) whose rows slide when cars swap places, a
+  see-through track map with DRS zones and the followed car ringed in yellow and
+  black, and a car panel of graphics: rev gauge, tyre and brake temperatures on
+  a top view of the car, pedal bars, a turning steering wheel, KERS battery, and
+  DRS and zone lettering that glows yellow when active.
 - **A 2013 car** (`specs/f1_2013.json`): 642 kg, a 2.4 l V8 (560 kW at 18,000 rpm),
   about 3 g of downforce, no refuelling (a fixed start load, tyre-only stops) and
   305 km races, KERS (2014-style: 120 kW, 4 MJ a lap, a 4 MJ store, with conversion
@@ -309,7 +315,7 @@ free in every zone in practice and qualifying, and closes on a touch of the brak
 Details are in [docs/ROBOTS.md](docs/ROBOTS.md).
 
 The timing tower shows each car's compound, its age in laps and its number of
-stops. When the focused car's algorithm publishes its plan, the car panel shows
+stops (one pip per stop). When the focused car's algorithm publishes its plan, the car panel shows
 the window of its next stop and the tyres it will fit, and warns when the
 two-compound rule still wants a second compound.
 

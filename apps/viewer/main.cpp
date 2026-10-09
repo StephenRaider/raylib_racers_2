@@ -406,6 +406,7 @@ int main(int argc, char** argv) {
         if (renderer) renderer->shutdown();
         renderer = std::make_unique<Renderer>();
         hud = std::make_unique<Hud>();
+        hud->settle = shotMode;
         if (!renderer->init(race->track(), (unsigned)cfg.seed, paths.assets, &err)) return false;
         hud->init(race->track(), paths.assets);
         sceneTrack = race->config().track;

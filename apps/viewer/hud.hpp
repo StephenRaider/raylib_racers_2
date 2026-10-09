@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "raylib.h"
+#include "anim.hpp"
 #include "menu.hpp"
 #include "race.hpp"
 #include "renderer.hpp"
@@ -93,12 +94,22 @@ public:
     int resultsCarAt(Vector2 p, bool* inside) const;
     // The race setup screen; fills `hits` with its clickable areas.
     void drawMenu(const MenuState& m, std::vector<MenuHit>& hits);
+    // Screenshots: show every animation at its end state (lights lit, rows in place).
+    bool settle = false;
 
 private:
     void text(const char* s, float x, float y, float size, Color c, bool bold = false, bool mono = false);
     float width(const char* s, float size, bool bold = false, bool mono = false);
     void textRight(const char* s, float right, float y, float size, Color c, bool bold = false, bool mono = false);
     void panel(Rectangle r, float alpha = 0.62f);
+    // text with a soft drop shadow, for text drawn straight over the 3D view
+    void textS(const char* s, float x, float y, float size, Color c, bool bold = false, bool mono = false);
+    // the race HUD's building blocks: a slanted band, a tyre compound badge
+    void band(Rectangle r, Color c, float slant = 8);
+    void compoundBadge(Vector2 c, float r, int compound, float alpha = 1);
+    void towerHeader(float x, float w, const char* top, const char* line2, const char* clock, const char* corner);
+    // readies 2D drawing and advances the HUD's animations; resets them when a new race starts
+    void animate(const rr::Race& race);
 
     void drawTower(const rr::Race& race, const HudState& st);
     void drawMinimap(const rr::Race& race, const HudState& st);
@@ -161,6 +172,28 @@ private:
     struct RowHit { Rectangle r; int car; };
     std::vector<RowHit> resultRows_;     // the race-end window's driver rows, as last drawn
     Rectangle resultsBox_{};             // the race-end window, as last drawn (empty when hidden)
+
+    // animation state of the race HUD (anim.hpp)
+    struct RowAnim {
+        anim::Tween y;          // row the car is drawn at, easing to its position
+        int lastRow = -1;
+        float changed = 99;     // seconds since the car gained or lost a place
+        int delta = 0;          // + gained, - lost
+        anim::Light focus, hover;
+    };
+    anim::Keyed<int, RowAnim> towerRows_;
+    anim::Keyed<std::string, RowAnim> qualiRows_;
+    struct PanelAnim {
+        float drs = 0, zone = 0, shift = 0;          // DRS and zone lettering, the rev limit glow
+        anim::Light blue, yellow, penalty, pit;      // banners above the panel
+        std::string blueMsg, yellowMsg, penaltyMsg, pitMsg;  // kept while a banner fades out
+        anim::Crossfade<int> pos, gear, car;
+        float rpm = 0;
+        bool started = false;
+    } panelAnim_;
+    float dt_ = 0, clock_ = 0;
+    const rr::Race* animRace_ = nullptr;
+    double animTime_ = 0;
 
     Font regular_{}, bold_{}, mono_{};
     bool ownFonts_ = false;

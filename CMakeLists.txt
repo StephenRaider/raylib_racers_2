@@ -117,7 +117,7 @@ if(RR_BUILD_VIEWER)
     apps/viewer/menu.cpp
     apps/viewer/hud_test.cpp apps/viewer/hud_results.cpp apps/viewer/hud_menu.cpp
     apps/viewer/test_figures.cpp
-    apps/viewer/liveries.cpp
+    apps/viewer/liveries.cpp apps/viewer/short_names.cpp apps/viewer/hud_icons.cpp
     apps/viewer/scenery.cpp)
   target_link_libraries(rr_viewer PRIVATE rr_core raylib)
   target_compile_options(rr_viewer PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)
@@ -151,6 +151,7 @@ if(RR_BUILD_VIEWER)
     apps/viewer/director.cpp
     apps/viewer/hud.cpp apps/viewer/hud_results.cpp apps/viewer/hud_menu.cpp apps/viewer/hud_test.cpp
     apps/viewer/menu.cpp apps/viewer/test_figures.cpp apps/viewer/liveries.cpp
+    apps/viewer/short_names.cpp apps/viewer/hud_icons.cpp
     apps/viewer/engine_sound.cpp apps/viewer/surface_sound.cpp apps/viewer/race_audio.cpp
     apps/viewer2/renderer2.cpp
     apps/viewer2/car_render.cpp)
