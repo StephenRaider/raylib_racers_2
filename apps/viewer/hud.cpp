@@ -91,7 +91,10 @@ void Hud::panel(Rectangle r, float alpha) {
 }
 
 void Hud::textS(const char* s, float x, float y, float size, Color c, bool bold, bool mono) {
-    text(s, x + 1, y + 1.5f, size, Fade(BLACK, 0.55f * c.a / 255.0f), bold, mono);
+    const float a = c.a / 255.0f;  // a soft halo, heavier below-right
+    text(s, x - 0.8f, y, size, Fade(BLACK, 0.35f * a), bold, mono);
+    text(s, x + 0.8f, y + 0.8f, size, Fade(BLACK, 0.35f * a), bold, mono);
+    text(s, x + 1.2f, y + 1.8f, size, Fade(BLACK, 0.6f * a), bold, mono);
     text(s, x, y, size, c, bold, mono);
 }
 
@@ -523,12 +526,7 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
     pa.car.set(st.focus);
     pa.car.update(dt_, 0.35f);
     const float carIn = anim::easeOutCubic(pa.car.t);
-    // No boxes: a soft shade towards the screen corner keeps the light text readable.
-    if (atX < 0) {  // docked in the corner
-        const float sx0 = x - 60, sy0 = y - 40;
-        DrawRectangleGradientEx({sx0, sy0, GetScreenWidth() - sx0, GetScreenHeight() - sy0}, Fade(BLACK, 0.0f), Fade(BLACK, 0.0f),
-                                Fade(BLACK, 0.0f), Fade(BLACK, 0.5f));
-    }
+    // No boxes: everything carries its own shadow so it reads on sky, grass or tarmac.
     DrawRectangleRec({x, y + 4, 4, 32}, teamColor(st.focus));
     textS(c.name.c_str(), x + 12 + (1 - carIn) * 12, y + 2, 20, anim::alpha(kText, carIn), true);
     const auto& lt = liveryTable();
