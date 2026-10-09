@@ -336,25 +336,27 @@ Car numbers are data: `specs/f1_2006.json` lists every physics parameter of
 the built-in car (any field left out keeps the default), and
 `--spec FILE|NAME` gives a car another spec.
 
-On top of the spec, each team rates its car in eight stats from 0 to 10, where
-5 is the stock car and a team has 40 points in all, so raising one stat means
+On top of the spec, each team rates its car in ten stats from 0 to 10, where
+5 is the stock car and a team has 50 points in all, so raising one stat means
 lowering another. `specs/development.json` defines them. Each point away from
 5 changes the car linearly:
 
 | Stat | Per point | 0 to 10 is worth |
 |---|---|---|
-| Tyre management | wear -5%, sliding heat -2% | tyre wear from +25% to -25% |
-| Top speed | drag -0.8% | about 0.3 s a lap |
-| Acceleration | engine torque +0.9% | about 0.25 s a lap |
+| Top speed | drag -0.8%, final drive -0.5% (a higher speed limit, slower off the line) | about 0.2 s a lap |
+| Engine power | engine torque +0.9% | about 0.25 s a lap |
 | Downforce | downforce +0.6%, drag +0.2% | about 0.25 s a lap |
 | Handling | mechanical grip +0.15%, yaw inertia -0.4% | about 0.3 s a lap |
-| Pit stop speed | service time -4% | stops 20% longer to 20% shorter |
-| Fuel efficiency | fuel per lap -1.6% | fuel use from +8% to -8% |
-| Brakes | brake force +3% | little on Circuit Raylib, which has few big stops |
+| Tyre | wear -5%, sliding heat -2% | tyre wear from +25% to -25% |
+| Brakes | brake force +3%, disc cooling +4% | stopping distance and fade |
+| Pit crew | service time -5.7% | a stop of 3.6 s at 0, 2.8 s at 5, 2.0 s at 10 |
+| KERS | power +3%, store and energy a lap +5%, efficiency +1% | 3 to 5 MJ a lap |
+| DRS | drag cut when open +4%, flap speed +4% | stronger behind another car |
+| Gearbox | shift time -15% (2013 car: 20 ms), transmission loss -0.2% | about 0.1 s a lap |
 
-The lap times are on Circuit Raylib, so a full 0-to-10 swing in one stat is a
-few tenths a lap, the gap between neighbouring top teams.
-`--dev "top_speed=8,downforce=3"` sets one car's stats (stats left out stay at
+Lap times are measured on Highmoor Ridge and Circuit Raylib, where a full swing
+of one stat is a few tenths a lap. The `fuel_efficiency` stat of older lineups is
+ignored. `--dev "top_speed=8,downforce=3"` sets one car's stats (stats left out stay at
 5); over 40 points, outside 0-10 or an unknown stat is an error. The car's
 spec reaches its robot through `RRCarSpec`, so planners adapt to it.
 

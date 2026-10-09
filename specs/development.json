@@ -1,76 +1,77 @@
 {
-  "about": "Team stats. Each car is rated 0-10 in every stat; 5 is the stock car. Each point away from 5 changes the listed CarParams fields linearly: value *= 1 + per_point * (points - 5). A team spends at most the budget over all stats (8 stats x 5 = 40: raising one stat means lowering another). A full 0-10 swing in a lap-time stat is worth a few tenths a lap.",
-  "budget": 40,
+  "about": "Team stats. Each car is rated 0-10 in every stat; 5 is the stock car. Each point away from 5 changes the listed CarParams fields linearly: value *= 1 + per_point * (points - 5); an effect written as {\"deficit\": k} instead scales how far a value is below 1 (a DRS cut): value = 1 - (1 - value) * (1 + k * (points - 5)). A team spends at most the budget over all stats (10 stats x 5 = 50: raising one stat means lowering another). A full 0-10 swing in a lap-time stat is worth a few tenths a lap.",
+  "budget": 50,
   "min": 0,
   "max": 10,
   "neutral": 5,
+  "retired": ["fuel_efficiency"],
   "categories": [
-    {
-      "key": "tire_management",
-      "label": "Tyre management",
-      "about": "Kinder suspension and cooling: tyres wear more slowly and run cooler.",
-      "effects": {
-        "wearPerJoule": -0.05,
-        "tireSlideHeat": -0.02
-      }
-    },
     {
       "key": "top_speed",
       "label": "Top speed",
-      "about": "Lower drag: faster on the straights.",
-      "effects": {
-        "dragCoeff": -0.008
-      }
+      "about": "Less drag and longer gearing: faster on the straights and a higher speed limit, slower off the line.",
+      "effects": { "dragCoeff": -0.008, "finalDrive": -0.005 }
     },
     {
       "key": "acceleration",
-      "label": "Acceleration",
+      "label": "Engine power",
       "about": "More engine torque: quicker out of corners (and a little faster at the top).",
-      "effects": {
-        "torqueScale": 0.009
-      }
+      "effects": { "torqueScale": 0.009 }
     },
     {
       "key": "downforce",
       "label": "Downforce",
       "about": "More aero grip in fast corners, at a small cost in drag.",
-      "effects": {
-        "downforceCoeff": 0.006,
-        "dragCoeff": 0.002
-      }
+      "effects": { "downforceCoeff": 0.006, "dragCoeff": 0.002 }
     },
     {
       "key": "handling",
       "label": "Handling",
       "about": "Mechanical grip and a more agile chassis: slow corners and traction.",
-      "effects": {
-        "tireMu": 0.0015,
-        "yawInertia": -0.004
-      }
+      "effects": { "tireMu": 0.0015, "yawInertia": -0.004 }
     },
     {
-      "key": "pit_stop",
-      "label": "Pit stop speed",
-      "about": "A quicker pit crew: shorter service time.",
-      "effects": {
-        "pitServiceScale": -0.04
-      }
-    },
-    {
-      "key": "fuel_efficiency",
-      "label": "Fuel efficiency",
-      "about": "Burns less fuel per lap: lighter cars or longer stints.",
-      "effects": {
-        "fuelPerJoule": -0.016
-      }
+      "key": "tire_management",
+      "label": "Tyre",
+      "about": "Kinder suspension and cooling: tyres wear more slowly and run cooler.",
+      "effects": { "wearPerJoule": -0.05, "tireSlideHeat": -0.02 }
     },
     {
       "key": "brakes",
       "label": "Brakes",
-      "about": "More braking force: later braking from high speed, where downforce lets the tyres take it.",
+      "about": "More braking force and better disc cooling: later braking from high speed, less fade.",
+      "effects": { "maxBrakeForce": 0.03, "brakeCoolSpeed": 0.04 }
+    },
+    {
+      "key": "pit_stop",
+      "label": "Pit crew",
+      "about": "A quicker pit crew: a stop takes 3.6 s at 0, 2.8 s at 5 and 2.0 s at 10.",
+      "effects": { "pitServiceScale": -0.0571 }
+    },
+    {
+      "key": "kers",
+      "label": "KERS",
+      "about": "A stronger motor-generator and a bigger store: more power and more energy each lap.",
       "effects": {
-        "maxBrakeForce": 0.03
+        "kersPower": 0.03,
+        "kersMaxTorque": 0.03,
+        "kersEnergy": 0.05,
+        "kersStore": 0.05,
+        "kersHarvest": 0.05,
+        "kersEfficiency": 0.01
       }
+    },
+    {
+      "key": "drs",
+      "label": "DRS",
+      "about": "A bigger drag cut when the flap is open, and a quicker flap: stronger on the straights behind another car.",
+      "effects": { "drsDragScale": { "deficit": 0.04 }, "drsFlapOpenTime": -0.04, "drsFlapCloseTime": -0.04 }
+    },
+    {
+      "key": "gearbox",
+      "label": "Gearbox",
+      "about": "Faster shifts: less time without drive at each gear change, and a little less transmission loss.",
+      "effects": { "shiftTime": -0.15, "drivetrainEff": 0.002 }
     }
   ]
 }

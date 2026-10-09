@@ -49,11 +49,11 @@ std::unique_ptr<rr::Race> makeRace(const rr::RaceConfig& cfg, const Paths& paths
 std::vector<Algorithm> listAlgorithms(const Paths& paths) {
     std::vector<Algorithm> algos = {
         // The racingline family first: the default grid uses these four. Each has
-        // the team stats that suit its style (40 points over 8 stats), applied with
+        // the team stats that suit its style (50 points over 10 stats), applied with
         // the menu's style button: Spongebob needs tyre management, Granny Doris can
         // spend on speed.
         {"John F One", "racingline", "", ""},
-        {"Spongebob", "spongebob", "", "tire_management=8,pit_stop=4,fuel_efficiency=4,brakes=4"},
+        {"Spongebob", "spongebob", "", "tire_management=8,pit_stop=4,brakes=3"},
         {"Dave", "dave", "", ""},
         {"Granny Doris", "granny", "", "tire_management=3,top_speed=6,acceleration=6"},
         {"gapfollow", "gapfollow", ""},
@@ -1086,9 +1086,7 @@ int main(int argc, char** argv) {
             if (!wasInMenu) menuQuietUntil = GetTime() + 0.4;
             wasInMenu = true;
             MenuAction act = GetTime() < menuQuietUntil ? MenuAction::None : updateMenu(menu, menuHits);
-            if (menu.rr2) {  // stock cars, and a grand prix distance for weekends
-                for (auto& s : menu.teamStats) s.assign(s.size(), menu.statRules.neutral);
-                menu.testStats.assign(menu.testStats.size(), menu.statRules.neutral);
+            if (menu.rr2) {  // a grand prix distance for weekends
                 if (menu.weekend()) menu.laps = menu.gpLaps();
             }
             if (menu.testing()) refreshTesting();

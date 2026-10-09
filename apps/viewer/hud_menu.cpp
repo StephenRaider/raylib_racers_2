@@ -207,12 +207,12 @@ void Hud::drawGridCard(const MenuState& m, std::vector<MenuHit>& hits, Rectangle
     const float lw = r.width - 40;
     const float cw = 190;  // control width
     int row = m.rowOf(Row::Teams);
-    field(r.x + 20, y + 4, lw - cw - 10, "Teams", m.teamSlots.empty() || m.rr2 ? "" : "each with its own stats", m.row == row);
+    field(r.x + 20, y + 4, lw - cw - 10, "Teams", m.teamSlots.empty() ? "" : "each with its own stats", m.row == row);
     std::snprintf(buf, sizeof buf, "%d", m.teamSlots.empty() ? m.cars : m.teams);
     stepper({r.x + r.width - 20 - cw, y, cw, 42}, buf, m.row == row, row, hits);
     y += 58;
     row = m.rowOf(Row::Drivers);
-    field(r.x + 20, y + 4, lw - cw - 10, "Drivers per team", m.rr2 ? "" : m.drivers == 2 ? "teammates share stats" : "one car each",
+    field(r.x + 20, y + 4, lw - cw - 10, "Drivers per team", m.drivers == 2 ? "teammates share stats" : "one car each",
           m.row == row);
     segmented({r.x + r.width - 20 - cw, y, cw, 42}, {"1", "2"}, m.drivers - 1, m.row == row, row, hits);
     y += 62;
@@ -250,7 +250,7 @@ void Hud::drawGridCard(const MenuState& m, std::vector<MenuHit>& hits, Rectangle
     // buttons
     const float by = r.y + r.height - 116, bw = (lw - 12) / 2;
     row = m.rowOf(Row::Grid);
-    button({r.x + 20, by, m.rr2 ? lw : bw, 44}, "Edit grid", 1, m.row == row, row, hits);
+    button({r.x + 20, by, bw, 44}, "Edit grid", 1, m.row == row, row, hits);
     row = m.rowOf(Row::Stats);
     if (row >= 0) button({r.x + 32 + bw, by, bw, 44}, "Team stats", 1, m.row == row, row, hits);
     row = m.rowOf(Row::SaveLineup);
@@ -590,8 +590,7 @@ void Hud::drawTestSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectangl
     card(s, "CAR STATS");
     y = s.y + 50;
     const StatRules& rules = m.statRules;
-    if (m.rr2) text("Stock 2013 car: stats come later.", s.x + 22, y, 15, kDim);
-    for (size_t k = 0; !m.rr2 && k < rules.keys.size() && k < m.testStats.size(); ++k, y += 34) {
+    for (size_t k = 0; k < rules.keys.size() && k < m.testStats.size(); ++k, y += 34) {
         text(rules.labels[k].c_str(), s.x + 22, y, 15, kText);
         const int v = m.testStats[k];
         const Color vc = v > rules.neutral ? kGood : v < rules.neutral ? kBad : kText;
@@ -851,9 +850,9 @@ void Hud::drawGridPage(const MenuState& m, std::vector<MenuHit>& hits) {
         }
     }
     // buttons
-    const int pending = m.rr2 ? 0 : m.stylesPending();
+    const int pending = m.stylesPending();
     Rectangle sb = {mx, sh - 82, 300, 52};
-    if (!m.rr2) button(sb, "Apply style stats (A)", pending ? 1 : 2, false, 94, hits);
+    button(sb, "Apply style stats (A)", pending ? 1 : 2, false, 94, hits);
     if (pending) DrawRectangleRoundedLinesEx(sb, rnd(sb, 10), 8, 2.0f, kAccent);
     char buf[128];
     if (pending) std::snprintf(buf, sizeof buf, "%d team%s changed algorithm: their stats are not applied yet", pending,
