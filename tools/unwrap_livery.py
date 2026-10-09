@@ -15,8 +15,8 @@ For assets/cars/<id> (after tools/rig_drs.py) it writes:
                             the centre line, to put on top of the painting as a layer
     livery_guide.png        the same on solid colours, one hue per view. Save a copy as livery.png
                             to see where each view lands on the car (and how it stretches)
-    livery_mask.png         white where a team colour replaces the paint, black where a part keeps
-                            its (dark) colours; the game tints with it
+    livery_mask.png         red: a team colour replaces the paint; green: the part is plain black
+                            (cockpit housing, shoulder covers, floor ...); the game paints with it
     livery_views.json       the layout: each view's panel on the sheet
 
 To use a livery in the game, paint on livery_default.png (keep it opaque) and save it as
@@ -134,8 +134,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("car_dirs", nargs="+", metavar="car_dir")
     ap.add_argument("--size", type=int, default=2048, help="the livery sheet's side in texels")
-    ap.add_argument("--mask-threshold", type=float, default=0.22,
-                    help="a triangle whose paint is darker than this (0..1 brightness) is not recoloured")
+    ap.add_argument("--mask-threshold", type=float, default=0.2,
+                    help="a surface whose original paint is darker than this (0..1 brightness, the middle value) is plain black")
     a = ap.parse_args()
     for car_dir in a.car_dirs:
         unwrap(car_dir, a.size, a.mask_threshold)
@@ -244,18 +244,57 @@ def unwrap(d, size, a_thr):
     default_png.save(os.path.join(d, "livery_default.png"))
     print(f"{100 * hit.mean():.1f}% of the sheet is paint surface")
 
-    # the paint mask: white where a flat team colour replaces the paint, black where the part stays as
-    # it was (a triangle whose original colours are dark on average: floor, diffuser, carbon, tyre-black bits)
+    # the paint mask, two channels: red = a flat team colour replaces the paint, green = the part is
+    # plain black (the cockpit's inner housing, shoulder covers, floor, diffuser ...); neither = as it was.
+    # A surface is dark when the middle of its original colours is (so a logo does not make it dark or
+    # light), then dark and light are voted over each surface's neighbours so there are no patches.
     lum = (0.299 * baked[..., 0] + 0.587 * baked[..., 1] + 0.114 * baked[..., 2]) / 255.0
     ids = owner[hit]
-    mean = np.bincount(ids, weights=lum[hit], minlength=T) / np.maximum(1, np.bincount(ids, minlength=T))
-    flag = (mean > a_thr).astype(np.float64)
+    tri_of = order[ids]                                            # triangle that painted each texel
+    srt = np.argsort(tri_of, kind="stable")
+    cut = np.searchsorted(tri_of[srt], np.arange(T + 1))
+    lv = lum[hit][srt]
+    median = np.full(T, np.nan)
+    for t in range(T):
+        if cut[t + 1] > cut[t]:
+            median[t] = np.median(lv[cut[t]:cut[t + 1]])
+    dark = np.where(np.isnan(median), 0.0, (median < a_thr).astype(float))
+    # neighbours across shared edges (vertices welded by position)
+    flatp = cpos.reshape(-1, 3)
+    _, wid = np.unique(np.round(flatp / 1e-4).astype(np.int64), axis=0, return_inverse=True)
+    wf = wid.ravel().reshape(-1, 3)
+    edges = {}
+    for t in range(T):
+        for c in range(3):
+            u, v = int(wf[t, c]), int(wf[t, (c + 1) % 3])
+            if u != v:
+                edges.setdefault((min(u, v), max(u, v)), []).append(t)
+    nb = [[] for _ in range(T)]
+    for lst in edges.values():
+        for x in lst:
+            nb[x].extend(y for y in lst if y != x)
+    weight = np.maximum(0.5 * nlen, 1e-9)
+    state = dark.copy()
+    for _ in range(6):
+        nxt = state.copy()
+        for t in range(T):
+            if not nb[t]:
+                continue
+            tot = weight[t] * 1.5 + sum(weight[y] for y in nb[t])
+            blk = weight[t] * 1.5 * state[t] + sum(weight[y] * state[y] for y in nb[t])
+            nxt[t] = 1.0 if blk > 0.5 * tot else 0.0
+        state = nxt
     mask = np.zeros((size, size, 4))
-    mask[hit, 0] = flag[ids]
+    mask[hit, 0] = 1.0 - state[tri_of]
+    mask[hit, 1] = state[tri_of]
     mask_p, got_m = pad(mask, hit, 24)
-    mimg = np.where(got_m, mask_p[..., 0], 0.0)
-    Image.fromarray(np.clip(mimg * 255 + 0.5, 0, 255).astype(np.uint8), "L").save(os.path.join(d, "livery_mask.png"))
-    print(f"{100 * float(flag[ids].mean()):.1f}% of the paint surface takes a team colour")
+    rgb = np.zeros((size, size, 3), np.uint8)
+    rgb[..., 0] = (mask_p[..., 0] > 0.5) & got_m
+    rgb[..., 1] = (mask_p[..., 1] > 0.5) & got_m
+    rgb *= 255
+    Image.fromarray(rgb, "RGB").save(os.path.join(d, "livery_mask.png"))
+    pt = state[tri_of]
+    print(f"{100 * float(1 - pt.mean()):.1f}% of the paint surface takes a team colour, {100 * float(pt.mean()):.1f}% is plain black")
 
     # the template and the guide
     sc = 2

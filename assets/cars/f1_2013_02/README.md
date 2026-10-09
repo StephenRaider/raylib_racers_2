@@ -43,7 +43,7 @@ view. Nothing is baked in but the colours: sponsor logos are just paint.
 | `livery_default.png` | the car's original Mercedes paint on this layout: start from this |
 | `livery_template.png` | transparent: panel frames and names, a 0.5 m grid, the wheel circles, the centre line; keep it on a layer above the painting and hide it when you save |
 | `livery_guide.png` | the same on a solid colour per view; save a copy as `livery.png` to see where each view lands on the car |
-| `livery_mask.png` | white where a team colour replaces the paint, black where a part keeps its colours (made by the tool from how dark each surface is in the default paint; `--mask-threshold` changes the cut) |
+| `livery_mask.png` | red: a team colour replaces the paint; green: plain black (cockpit housing, shoulder covers, floor, diffuser). Made by the tool from the middle colour of each surface in the default paint, smoothed over neighbouring surfaces; `--mask-threshold` changes the cut |
 | `livery_views.json` | where each view's panel is on the sheet, in texels, and its size in metres |
 | `livery.png` | **your livery**, if you make one (not in the repo) |
 
@@ -69,7 +69,7 @@ cars of the 2013 pack (`D:\RR2 assets\f1_2013_split`).
 
 In the game each team has a colour, picked in the setup menu (click a team on the GRID card: a hue /
 saturation / value picker, with the ten preset colours: red, blue, orange, green, yellow, purple, teal,
-white, navy, black). Viewer v2 paints the car with it: `livery_mask.png` is white where the body takes
-the colour (a flat fill) and black where a part keeps its own paint, so the floor, diffuser and the dark
-carbon bits stay dark. Wheels, tyres and the suspension are other materials and are never touched.
+white, navy, black). Viewer v2 paints the car with it: `livery_mask.png` is red where the body takes
+the colour (a flat fill, logos and all) and green where a part is plain black, so the cockpit's inner
+housing, the shoulder covers, the floor and the diffuser stay black. Wheels, tyres and the suspension are other materials and are never touched.
 If the folder has a `livery.png` of its own, it is used as it is and the team colours do nothing.

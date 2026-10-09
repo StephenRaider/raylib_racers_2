@@ -145,7 +145,7 @@ bool CarRender::load(const std::string& dir, const Finish& paint, std::string* e
         paintMask_ = LoadImage((dir + "/livery_mask.png").c_str());
         if (paintBase_.data && paintMask_.data && paintBase_.width == paintMask_.width && paintBase_.height == paintMask_.height) {
             ImageFormat(&paintBase_, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
-            ImageFormat(&paintMask_, PIXELFORMAT_UNCOMPRESSED_GRAYSCALE);
+            ImageFormat(&paintMask_, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
         } else {
             UnloadImage(paintBase_);
             UnloadImage(paintMask_);
@@ -194,10 +194,14 @@ gfx::TextureSet* CarRender::paintSet(Color c) {
     unsigned char* px = (unsigned char*)img.data;
     const unsigned char* mk = (const unsigned char*)paintMask_.data;
     const unsigned char col[3] = {c.r, c.g, c.b};
+    const unsigned char black[3] = {18, 18, 20};
     for (int i = 0, n = img.width * img.height; i < n; ++i) {
-        const int a = mk[i];
-        if (a == 0) continue;
-        for (int k = 0; k < 3; ++k) px[3 * i + k] = (unsigned char)((px[3 * i + k] * (255 - a) + col[k] * a + 127) / 255);
+        const int team = mk[3 * i], plain = mk[3 * i + 1];   // red: the team colour; green: plain black
+        if (!team && !plain) continue;
+        for (int k = 0; k < 3; ++k) {
+            const int to = plain ? black[k] : col[k];
+            px[3 * i + k] = (unsigned char)(to);
+        }
     }
     Texture2D t = LoadTextureFromImage(img);
     UnloadImage(img);

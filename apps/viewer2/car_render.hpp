@@ -32,7 +32,7 @@ public:
     void setDrsOpen(float open) { drsOpen_ = open < 0 ? 0 : open > 1 ? 1 : open; }
     bool hasDrs() const { return !drs_parts_.empty(); }
     // The team colour: the body's paint in this colour, parts that are dark in the model's own paint
-    // (floor, diffuser, carbon) as they were (livery_default.png and livery_mask.png in the model's
+    // (floor, diffuser, cockpit housing, shoulder covers) plain black (livery_default.png and livery_mask.png in the model's
     // folder). Does nothing without them, or when the folder has a livery.png of its own.
     void setPaint(Color c);
     // The tyre compound fitted (RR_TIRE_*, update() follows the car's): the lettering on the sidewall is
