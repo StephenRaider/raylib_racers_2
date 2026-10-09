@@ -391,12 +391,13 @@ void stepCar(CarState& c, const CarParams& p, const RRControl& in, bool autoGear
     const float fxr = fxW[2] + fxW[3], fyr = fyW[2] + fyW[3];
 
     // Tyre wear from sliding work: lateral slip speed times lateral force,
-    // plus longitudinal work (more when the rear is spinning or locking).
+    // plus longitudinal work (more when an axle is past its grip: spinning or locking).
     {
         const float v = std::fabs(c.vx);
-        const float latF = std::fabs(fyf) * std::fabs(wfLat), lonF = std::fabs(fxf) * 0.03f * v;
+        const float overF = clampf(c.gripUse[0] - 1.0f, 0.0f, 1.0f), overR = clampf(c.gripUse[1] - 1.0f, 0.0f, 1.0f);
+        const float latF = std::fabs(fyf) * std::fabs(wfLat), lonF = std::fabs(fxf) * (0.03f + 0.3f * overF) * v;
         const float latR = std::fabs(fyr) * std::fabs(vrLat);
-        const float lonR = std::fabs(fxr) * (0.03f + 0.3f * std::min(1.0f, c.wheelSpin)) * v;
+        const float lonR = std::fabs(fxr) * (0.03f + 0.3f * overR) * v;
         const float workF = latF + lonF, workR = latR + lonR;
         const float k = p.wearPerJoule * compoundWear(c.compound) * rates.tire * dt;
         c.tireWear[0] = std::min(1.0f, c.tireWear[0] + workF * k * tempWear(c.compound, c.tireTemp[0]));

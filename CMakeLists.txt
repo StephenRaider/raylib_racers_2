@@ -169,6 +169,10 @@ add_executable(test_surfaces tests/surfaces/main.cpp)
 target_link_libraries(test_surfaces PRIVATE rr_core)
 target_compile_options(test_surfaces PRIVATE ${RR_WARNINGS})
 add_test(NAME surfaces COMMAND test_surfaces WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_executable(test_tyres tests/tyres/main.cpp)
+target_link_libraries(test_tyres PRIVATE rr_core)
+target_compile_options(test_tyres PRIVATE ${RR_WARNINGS})
+add_test(NAME tyres COMMAND test_tyres)
 if(RR_BUILD_BOTS)
   add_test(NAME race_smoke
     COMMAND rr_race --laps 1 --quiet --car simple --car gapfollow --car racingline
