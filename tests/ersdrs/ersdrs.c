@@ -7,7 +7,7 @@
  * params: wet=1  the race is run with --wet: DRS must never be offered
  *
  * Checks:
- *   - the 2013 car reports KERS (60 kW, 400 kJ, 2 MJ, 4 MJ) and DRS (drag < 1, downforce < 1)
+ *   - the 2013 car reports KERS (120 kW, 4 MJ a lap each way, 4 MJ store) and DRS (drag < 1, downforce < 1)
  *   - KERS releases power (+) on the throttle and recovers (-) under braking, never more than
  *     kers_power, and kers_deploy_left never goes up inside a lap or below zero
  *   - races (the car is alone, so it never earns the flap): drs_state is NONE on laps 1-2, wet
@@ -22,11 +22,11 @@
 #include "rr/robot_api.h"
 
 typedef struct {
-    float max_steer, kers_power, kers_energy;
+    float max_steer, kers_power, kers_energy, length;
     int wet, session, calls;
     int saw_dep, saw_harv, saw_available, saw_open, saw_zones;
     float last_brake, last_left;
-    int last_lap;
+    int last_lap, prev_lap;
     char fail[160];
 } Bot;
 
@@ -41,11 +41,12 @@ static void* create(const RRTrackInfo* track, const RRCarSpec* car, int car_inde
     b->max_steer = car->max_steer;
     b->kers_power = car->kers_power;
     b->kers_energy = car->kers_energy;
+    b->length = track->length;
     b->wet = params && strstr(params, "wet=1") != NULL;
     b->session = config->session;
     b->saw_zones = track->num_drs_zones;
     b->last_left = car->kers_energy;
-    if (car->kers_power != 60000.0f || car->kers_energy != 400000.0f || car->kers_harvest != 2000000.0f ||
+    if (car->kers_power != 120000.0f || car->kers_energy != 4000000.0f || car->kers_harvest != 4000000.0f ||
         car->kers_store != 4000000.0f || !(car->drs_drag_scale < 1.0f) || !(car->drs_downforce_scale < 1.0f))
         fail(b, "the car spec does not describe KERS and DRS");
     if (track->num_drs_zones <= 0) fail(b, "the track has no DRS zones");
@@ -84,13 +85,16 @@ static void drive(void* self, const RRSensors* in, RRControl* out) {
     if (in->drs_state == RR_DRS_OPEN) b->saw_open = 1;
     if (in->session == RR_SESSION_RACE) {
         if ((b->wet || in->lap < RR_DRS_FIRST_LAP) && in->drs_state != RR_DRS_NONE) fail(b, "DRS offered when it is not allowed");
-        if (!b->wet && in->lap >= RR_DRS_FIRST_LAP && b->calls > 2 && in->drs_state == RR_DRS_NONE && in->pit_state == RR_PIT_NONE)
+        if (!b->wet && in->lap >= RR_DRS_FIRST_LAP && b->prev_lap >= RR_DRS_FIRST_LAP && b->calls > 2 && in->drs_state == RR_DRS_NONE && in->pit_state == RR_PIT_NONE &&
+            in->dist_raced < in->race_laps * b->length - 5.0f)
             fail(b, "DRS not allowed after the first laps");
         if (in->drs_state >= RR_DRS_ARMED) fail(b, "a car alone on track earned the flap");
-    } else if (b->calls > 2 && in->drs_state == RR_DRS_NONE && in->pit_state == RR_PIT_NONE && !b->wet) {
+    } else if (b->calls > 2 && in->drs_state == RR_DRS_NONE && in->pit_state == RR_PIT_NONE && !b->wet &&
+               in->dist_raced < in->race_laps * b->length - 5.0f) {
         fail(b, "DRS not allowed in practice");
     }
     b->last_brake = out->brake;
+    b->prev_lap = in->lap;  /* the state shown lags the lap counter by one step */
 }
 
 static void session_end(void* self, const RRSessionSummary* s) {

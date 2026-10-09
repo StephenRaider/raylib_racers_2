@@ -209,10 +209,10 @@ typedef struct RRCarSpec {
     float pit_service_scale; /* pit crew time multiplier (1 = baseline, < 1 = faster crew) */
 
     /* --- ABI 10 --- 0 when the car has no KERS / DRS */
-    float kers_power;        /* W, most the motor-generator deploys or recovers (2013: 60 kW) */
-    float kers_energy;       /* J the store may release per lap (2013: 400 kJ) */
-    float kers_harvest;      /* J the motor-generator may recover per lap (2013: 2 MJ) */
-    float kers_store;        /* J, capacity of the store (2013: 4 MJ) */
+    float kers_power;        /* W, most the motor-generator deploys or recovers (spec: 120 kW) */
+    float kers_energy;       /* J the store may release per lap (spec: 4 MJ) */
+    float kers_harvest;      /* J the motor-generator may recover per lap (spec: 4 MJ) */
+    float kers_store;        /* J, capacity of the store (spec: 4 MJ) */
     float drs_drag_scale;    /* drag coefficient with the flap open (1 = no DRS) */
     float drs_downforce_scale; /* downforce with the flap open; the loss is all at the rear axle */
 } RRCarSpec;
@@ -392,7 +392,7 @@ typedef struct RRSensors {
     float grade;               /* along the track, + = uphill */
     float bank;                /* rad, + = left edge higher */
 
-    /* --- ABI 10 --- KERS: a 60 kW motor-generator on the crankshaft. It
+    /* --- ABI 10 --- KERS: a motor-generator on the crankshaft (kers_power). It
      * recovers energy under braking (a part of the braking is done by it) and
      * adds kers_power W to the engine while RRControl.kers is set at full
      * throttle, up to kers_energy J per lap. All zero without KERS. */

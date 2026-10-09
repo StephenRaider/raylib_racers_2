@@ -171,9 +171,9 @@ KERS and DRS (ABI 10), on the 2013 car only (`specs/f1_2013.json`; all zero or
 
 | Field | Meaning |
 |---|---|
-| `kers_store` | J in the store. The car starts with one lap's worth (400 kJ) |
-| `kers_deploy_left` | J the store may still release this lap (400 kJ a lap, then it starts again at the line) |
-| `kers_harvest_left` | J the motor-generator may still recover this lap (2 MJ a lap) |
+| `kers_store` | J in the store. The car starts with a full store (4 MJ) |
+| `kers_deploy_left` | J the store may still release this lap (4 MJ a lap, then it starts again at the line) |
+| `kers_harvest_left` | J the motor-generator may still recover this lap (4 MJ a lap) |
 | `kers_power` | W now: positive while deploying, negative while recovering |
 | `drs_state` | `RR_DRS_NONE` (no DRS, or not allowed: wet track, first two laps of a race, pit lane), `RR_DRS_OFF` (allowed, not earned), `RR_DRS_ARMED` (earned, the zone is ahead), `RR_DRS_AVAILABLE` (in the zone: request it), `RR_DRS_OPEN` |
 | `drs_open`, `drs_zone`, `drs_next_zone`, `drs_next_ds` | the flap is open; the zone index we are in (-1 outside); the next zone and the metres to its start (0 inside it) |
@@ -184,12 +184,12 @@ KERS and DRS (ABI 10), on the 2013 car only (`specs/f1_2013.json`; all zero or
 `drs <detect> <start> <end>` lines; without any, the longest straights of 450 m or
 more (at most three) get one, starting 40 m after the corner and ending 130 m before the next.
 
-- **KERS** is a 60 kW motor-generator on the crankshaft (`RRCarSpec.kers_power`).
+- **KERS** is a 120 kW motor-generator on the crankshaft (the 2014 ERS-K figure, not 2013's 60 kW) (`RRCarSpec.kers_power`).
   `RRControl.kers` (0 .. 1) is the share of that power to add to the engine, scaled by the
-  throttle, as torque (at most 200 N m at the crank). It stops at 400 kJ a lap
-  (6.67 s at full power) and when the store is empty. Braking recovers energy
-  automatically: the motor-generator takes up to 60 kW of the rear braking force (the
-  total braking is what the pedal asks for), 2 MJ a lap at most, and 85% of that reaches the
+  throttle, as torque (at most 200 N m at the crank). It stops at 4 MJ a lap
+  (33 s at full power) and when the store is empty. Braking recovers energy
+  automatically: the motor-generator takes up to 120 kW of the rear braking force (the
+  total braking is what the pedal asks for), 4 MJ a lap at most, and 85% of that reaches the
   4 MJ store. Its weight is in the car's 642 kg. Fuel use is the engine's alone.
 - **DRS** opens the rear-wing flap: drag x0.78 and downforce x0.90 (all lost at the rear axle,
   so the balance moves forward), over about 0.25 s (closing takes 0.15 s). In a race, a car

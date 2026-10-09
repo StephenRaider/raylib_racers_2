@@ -18,7 +18,7 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   The menu, HUD, testing screens and director are Raylib Racers 1's, unchanged.
 - **A 2013 car** (`specs/f1_2013.json`): 642 kg, a 2.4 l V8 (560 kW at 18,000 rpm),
   about 3 g of downforce, no refuelling (a fixed start load, tyre-only stops) and
-  305 km races, KERS (60 kW, 400 kJ a lap) and DRS (detection zones, 1 s rule).
+  305 km races, KERS (2014-style: 120 kW, 4 MJ a lap) and DRS (detection zones, 1 s rule).
 - **A V8 sound**: eight firings a cycle through a recorded F1 exhaust response, with
   gearshift effects and the odd pop.
 
