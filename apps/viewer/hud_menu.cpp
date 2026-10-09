@@ -535,6 +535,19 @@ void Hud::drawTestSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectangl
         field(r.x + 20, y + 12, lw, "Car", "", m.row == row);
         dropdown({r.x + r.width - 20 - ctl - 40, y, ctl + 40, 44}, val, m.row == row, row, hits, slotColor(slot));
         y += 62;
+    } else if (m.rr2 && !m.slotTeam.empty()) {  // one stock car: its colour is the player's to pick
+        const int slot = std::clamp(m.testLivery, 0, (int)m.slotTeam.size() - 1);
+        const int team = m.slotTeam[slot];
+        const auto& table = liveryTable();
+        const Rectangle b = {r.x + r.width - 20 - ctl - 40, y, ctl + 40, 44};
+        field(r.x + 20, y + 12, lw, "Car colour", "", false);
+        DrawRectangleRounded(b, rnd(b, 10), 8, hover(b) ? kWellHi : kWell);
+        DrawRectangleRounded({b.x + 10, b.y + 9, 36, 26}, 0.35f, 4, slotColor(slot));
+        DrawRectangleRoundedLinesEx({b.x + 10, b.y + 9, 36, 26}, 0.35f, 4, 1.0f, Fade(WHITE, 0.5f));
+        text(slot < (int)table.size() ? table[slot].team.c_str() : "Team", b.x + 58, b.y + 13, 17, kText, true);
+        textRight("click to change", b.x + b.width - 14, b.y + 15, 13, kDim);
+        if (team >= 0) hits.push_back({b.x, b.y, b.width, b.height, 8000 + team, 0});
+        y += 62;
     }
     row = m.rowOf(Row::TestTyres);
     static const char* names[] = {"Auto", "Soft", "Medium", "Hard"};
