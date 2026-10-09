@@ -55,6 +55,10 @@ view. Nothing is baked in but the colours: sponsor logos are just paint.
 3. Hide the template layer and save as `assets/cars/f1_2013_02/livery.png`, opaque, same size.
    Viewer v2 loads it in place of the default the next time it starts. Delete it to go back.
 
+The parts that are plain black in the game (cockpit inner housing, shoulder covers, the T-cam, floor, diffuser) are
+not in the six views: they share a small panel of their own, "BLACK PARTS", at a fifth of the scale. Painting
+there does nothing in the game while team colours are on.
+
 Where two surfaces overlap in a view (a sidepod's outer face over the floor's edge, say), they share
 paint: paint what shows from that side and the hidden one comes along unseen. Surfaces that bend
 away from a view stretch (up to about 1.7x); that is where the colour on `livery_guide.png` changes

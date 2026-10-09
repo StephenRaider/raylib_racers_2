@@ -49,8 +49,9 @@ VIEWS = {
     "bottom": ((0, -1, 0), lambda p: (p[..., 0], p[..., 2]), "BOTTOM"),
     "front":  ((0, 0, 1),  lambda p: (p[..., 0], p[..., 1]), "FRONT"),
     "rear":   ((0, 0, -1), lambda p: (-p[..., 0], p[..., 1]), "REAR"),
+    "dark":   ((0, 0, 0), None, "BLACK PARTS"),
 }
-NAMES = list(VIEWS)
+NAMES = [n for n in VIEWS if n != "dark"]
 GUTTER = 0.08      # m between panels
 PAD = 0.03         # m around a panel's triangles
 
@@ -175,24 +176,69 @@ def unwrap(d, size, a_thr):
     dirs = np.array([VIEWS[n][0] for n in NAMES], float)
     view = np.argmax(facing @ dirs.T, axis=1)                         # each triangle's view
 
+    # Which surfaces are plain black (cockpit inner housing, shoulder covers, floor, diffuser ...): a surface
+    # is dark when the middle of its original colours is, sampled inside the triangle (so a logo does not
+    # make it dark or light); then dark and light are voted over each surface's neighbours (shared edges,
+    # vertices welded by position, weighted by area) so there are no patches.
+    bary = np.array([(1 / 3, 1 / 3, 1 / 3), (.6, .2, .2), (.2, .6, .2), (.2, .2, .6), (.8, .1, .1), (.1, .8, .1),
+                     (.1, .1, .8), (.45, .45, .1), (.1, .45, .45), (.45, .1, .45)])
+    lums = np.zeros((T, len(bary)))
+    for k, w in enumerate(bary):
+        c = sample(old_tex, (cold * w[None, :, None]).sum(1))
+        lums[:, k] = (0.299 * c[:, 0] + 0.587 * c[:, 1] + 0.114 * c[:, 2]) / 255.0
+    dark0 = (np.median(lums, axis=1) < a_thr).astype(float)
+    _, wid = np.unique(np.round(cpos.reshape(-1, 3) / 1e-4).astype(np.int64), axis=0, return_inverse=True)
+    wf = wid.ravel().reshape(-1, 3)
+    edges = {}
+    for t in range(T):
+        for c in range(3):
+            u, v = int(wf[t, c]), int(wf[t, (c + 1) % 3])
+            if u != v:
+                edges.setdefault((min(u, v), max(u, v)), []).append(t)
+    nb = [[] for _ in range(T)]
+    for lst in edges.values():
+        for x in lst:
+            nb[x].extend(y for y in lst if y != x)
+    weight = np.maximum(0.5 * nlen, 1e-9)
+    state = dark0.copy()
+    for _ in range(6):
+        nxt = state.copy()
+        for t in range(T):
+            if not nb[t]:
+                continue
+            tot = weight[t] * 1.5 + sum(weight[y] for y in nb[t])
+            blk = weight[t] * 1.5 * state[t] + sum(weight[y] * state[y] for y in nb[t])
+            nxt[t] = 1.0 if blk > 0.5 * tot else 0.0
+        state = nxt
+    isdark = state > 0.5
+
     # view coordinates (metres) of every corner, in the triangle's own view
     ab = np.zeros((T, 3, 2))
     for vi, n in enumerate(NAMES):
         m = view == vi
         pa, pb = VIEWS[n][1](cpos[m])
         ab[m, :, 0], ab[m, :, 1] = pa, pb
+    # the plain-black surfaces leave their views (so they cannot cover paint that lies under them, like the
+    # T-cam over the airbox) and share one small panel of their own, at a fifth of the scale
+    ab[isdark] *= 0.2
     panel = {}
     for vi, n in enumerate(NAMES):
-        m = view == vi
+        m = (view == vi) & ~isdark
         if not m.any():
             continue
         lo, hi = ab[m].reshape(-1, 2).min(0) - PAD, ab[m].reshape(-1, 2).max(0) + PAD
         panel[n] = dict(lo=lo, size=hi - lo, tris=int(m.sum()))
+    if isdark.any():
+        lo, hi = ab[isdark].reshape(-1, 2).min(0) - PAD, ab[isdark].reshape(-1, 2).max(0) + PAD
+        panel["dark"] = dict(lo=lo, size=hi - lo, tris=int(isdark.sum()))
+
+    def members(n):
+        return np.where(isdark)[0] if n == "dark" else np.where((view == NAMES.index(n)) & ~isdark)[0]
 
     # layout: the long views stand on end (sides and top and bottom, side by side), front and rear lie below them
     row1 = [n for n in ("left", "right", "top", "bottom") if n in panel]
-    row2 = [n for n in ("front", "rear") if n in panel]
-    for n in NAMES:
+    row2 = [n for n in ("front", "rear", "dark") if n in panel]
+    for n in list(NAMES) + ["dark"]:
         if n in panel:
             panel[n]["turned"] = n in ("left", "right")      # turned: the car's up points right, a points down
 
@@ -225,9 +271,9 @@ def unwrap(d, size, a_thr):
         return edge + x * s, edge + y * s
 
     new = np.zeros((T, 3, 2))
-    for vi, n in enumerate(NAMES):
-        m = view == vi
-        if m.any():
+    for n in panel:
+        m = members(n)
+        if len(m):
             x, y = to_px(n, ab[m, :, 0], ab[m, :, 1])
             new[m, :, 0], new[m, :, 1] = x / size, y / size
     print(f"{T} paint triangles, {s / 1000:.3f} texels per mm ({1000 / s:.1f} mm a texel); "
@@ -244,46 +290,10 @@ def unwrap(d, size, a_thr):
     default_png.save(os.path.join(d, "livery_default.png"))
     print(f"{100 * hit.mean():.1f}% of the sheet is paint surface")
 
-    # the paint mask, two channels: red = a flat team colour replaces the paint, green = the part is
-    # plain black (the cockpit's inner housing, shoulder covers, floor, diffuser ...); neither = as it was.
-    # A surface is dark when the middle of its original colours is (so a logo does not make it dark or
-    # light), then dark and light are voted over each surface's neighbours so there are no patches.
-    lum = (0.299 * baked[..., 0] + 0.587 * baked[..., 1] + 0.114 * baked[..., 2]) / 255.0
+    # the paint mask, two channels: red = a flat team colour replaces the paint, green = the part is plain
+    # black (the surfaces classified above); neither = as it was (only texels no surface reaches)
     ids = owner[hit]
     tri_of = order[ids]                                            # triangle that painted each texel
-    srt = np.argsort(tri_of, kind="stable")
-    cut = np.searchsorted(tri_of[srt], np.arange(T + 1))
-    lv = lum[hit][srt]
-    median = np.full(T, np.nan)
-    for t in range(T):
-        if cut[t + 1] > cut[t]:
-            median[t] = np.median(lv[cut[t]:cut[t + 1]])
-    dark = np.where(np.isnan(median), 0.0, (median < a_thr).astype(float))
-    # neighbours across shared edges (vertices welded by position)
-    flatp = cpos.reshape(-1, 3)
-    _, wid = np.unique(np.round(flatp / 1e-4).astype(np.int64), axis=0, return_inverse=True)
-    wf = wid.ravel().reshape(-1, 3)
-    edges = {}
-    for t in range(T):
-        for c in range(3):
-            u, v = int(wf[t, c]), int(wf[t, (c + 1) % 3])
-            if u != v:
-                edges.setdefault((min(u, v), max(u, v)), []).append(t)
-    nb = [[] for _ in range(T)]
-    for lst in edges.values():
-        for x in lst:
-            nb[x].extend(y for y in lst if y != x)
-    weight = np.maximum(0.5 * nlen, 1e-9)
-    state = dark.copy()
-    for _ in range(6):
-        nxt = state.copy()
-        for t in range(T):
-            if not nb[t]:
-                continue
-            tot = weight[t] * 1.5 + sum(weight[y] for y in nb[t])
-            blk = weight[t] * 1.5 * state[t] + sum(weight[y] * state[y] for y in nb[t])
-            nxt[t] = 1.0 if blk > 0.5 * tot else 0.0
-        state = nxt
     mask = np.zeros((size, size, 4))
     mask[hit, 0] = 1.0 - state[tri_of]
     mask[hit, 1] = state[tri_of]
@@ -301,6 +311,7 @@ def unwrap(d, size, a_thr):
     font = ImageFont.truetype("arialbd.ttf", 34) if os.path.exists("C:/Windows/Fonts/arialbd.ttf") else ImageFont.load_default()
     small = ImageFont.truetype("arial.ttf", 18) if os.path.exists("C:/Windows/Fonts/arial.ttf") else ImageFont.load_default()
     hue = {n: tuple(int(255 * c) for c in colorsys.hsv_to_rgb(i / 6, 0.45, 0.97)) for i, n in enumerate(NAMES)}
+    hue["dark"] = (150, 150, 150)
     tpl = Image.new("RGBA", (size * sc, size * sc), (0, 0, 0, 0))
     gde = Image.new("RGBA", (size * sc, size * sc), (28, 28, 32, 255))
     dt, dg = ImageDraw.Draw(tpl), ImageDraw.Draw(gde)
@@ -316,7 +327,7 @@ def unwrap(d, size, a_thr):
         corners = [P(n, lo[0], lo[1]), P(n, hi[0], lo[1]), P(n, hi[0], hi[1]), P(n, lo[0], hi[1])]
         dg.polygon(corners, fill=hue[n] + (255,))
         # the surfaces
-        for t in np.where(view == NAMES.index(n))[0]:
+        for t in members(n):
             poly = [(float(x) * size * sc, float(y) * size * sc) for x, y in new[t]]
             dt.polygon(poly, fill=(255, 255, 255, 38))
             dg.polygon(poly, fill=tuple(int(c * 0.82) for c in hue[n]) + (255,))
@@ -349,7 +360,8 @@ def unwrap(d, size, a_thr):
             dr.line(corners + [corners[0]], fill=col, width=4)
         note = {"left": ("nose at the top,", "car's top to the right"), "right": ("nose at the top,", "car's top to the right"),
                 "top": ("nose up,", "car's right on the right"), "bottom": ("nose up,", "car's left on the right"),
-                "front": ("car's left on the right,", ""), "rear": ("car's right on the right,", "")}[n]
+                "front": ("car's left on the right,", ""), "rear": ("car's right on the right,", ""),
+                "dark": ("plain black in game,", "a fifth of the scale")}[n]
         tx, ty = min(c[0] for c in corners) + 14, min(c[1] for c in corners) + 12
         for dr, fc, sk in ((dt, (255, 255, 255, 255), (0, 0, 0, 255)), (dg, (0, 0, 0, 255), (255, 255, 255, 255))):
             dr.text((tx, ty), VIEWS[n][2], font=font, fill=fc, stroke_width=3, stroke_fill=sk)
