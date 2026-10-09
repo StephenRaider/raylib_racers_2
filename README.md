@@ -9,7 +9,7 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
 
 - **Hills and banking.** Tracks carry a height and a bank angle per control point;
   the car feels grade, banking, crests and compressions, and robots get the 3D
-  track (robot API version 9). The new test track, **Highmoor Ridge** (4.6 km,
+  track (robot API version 9; the current version is 11). The new test track, **Highmoor Ridge** (4.6 km,
   37 m of climb and drop, a banked summit hairpin, a corkscrew), is built on it.
 - **A new renderer** (`rr_viewer2`): physically based materials, HDRI sky lighting,
   cascaded sun shadows, 4x MSAA, instanced trees with levels of detail and
@@ -18,7 +18,10 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   The menu, HUD, testing screens and director are Raylib Racers 1's, unchanged.
 - **A 2013 car** (`specs/f1_2013.json`): 642 kg, a 2.4 l V8 (560 kW at 18,000 rpm),
   about 3 g of downforce, no refuelling (a fixed start load, tyre-only stops) and
-  305 km races, KERS (2014-style: 120 kW, 4 MJ a lap) and DRS (detection zones, 1 s rule).
+  305 km races, KERS (2014-style: 120 kW, 4 MJ a lap, a 4 MJ store, with conversion
+  losses) and DRS (detection zones, 1 s rule, off in the first two laps and when wet).
+- **Surfaces as data.** Tarmac, kerb, grass, gravel, dirt, pit lane and run-off each
+  have their own grip and drag, set per track; robots read the one under the car.
 - **A V8 sound**: eight firings a cycle through a recorded F1 exhaust response, with
   gearshift effects and the odd pop.
 
@@ -27,19 +30,24 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
 ## What is in the box
 
 - **Simulation core** (`src/core`, no graphics dependency): spline tracks, a
-  planar dynamic-bicycle car model (load transfer, aero drag and downforce,
-  tyre load sensitivity, friction circle, engine torque curve and gearbox),
+  planar car model (2D position and heading, with per-wheel load transfer, aero
+  drag and downforce, tyre load sensitivity, friction circle, engine torque curve
+  and gearbox, slope gravity, banking and crest and compression loads, surface
+  grip and drag, KERS and DRS),
   barrier and car-to-car collisions, lap timing and classification. Fixed 500 Hz
   physics, robots called at 50 Hz, fully deterministic.
 - **Race mechanics**: fuel load and consumption, tyre wear with grip loss
-  (soft, medium and hard compounds, each with a temperature window), dirty air, damage that costs downforce, power and grip, slipstream,
-  and a pit lane with a speed limiter, a box per car and timed service (fuel,
+  (soft, medium and hard compounds, each with a temperature window), tyre, brake
+  and rim temperatures, dirty air, slipstream, damage that costs downforce,
+  power and grip, KERS and DRS on the 2013 car, and a pit lane with a speed limiter, a box per car and timed service (fuel,
   tyres, repairs). After the flag each car runs a slow lap into the pit lane
   and parks behind its box.
 - **Robot API** (`include/rr/robot_api.h`): one C header. Sensors follow the
   TORCS SCR championship (angle, track position, 19 range finders, 36 opponent
-  sectors) plus the full track geometry and the car's pose, as TORCS robots get,
-  the car's fuel, tyre and pit state, and the nearest cars for racecraft.
+  sectors) plus the full track geometry (with height and banking) and the car's pose, as
+  TORCS robots get, the car's fuel, tyre, brake, KERS, DRS, surface and pit state,
+  and the nearest cars for racecraft (ABI version 11; robots built for versions 2
+  to 10 still load).
   Robots can take parameters from the command line, print status text, log
   debug values to telemetry and draw a path in the viewer.
 - **Example robots** (`bots/`): `simple` (C, sensors only), `gapfollow`
@@ -220,13 +228,17 @@ the lineup, and later grids follow the standings. Races stay deterministic, so
 the same season gives the same results.
 
 The engine sound is synthesised from each car's revs and throttle (a V10 with
-overrun pops and a rev limiter), for the cars nearest the camera. `M` mutes it;
+overrun pops and a rev limiter for the 2006 car, a V8 for the 2013 car), for the
+cars nearest the camera. `M` mutes it;
 `rr_viewer --sound-test out.wav --at 20` writes 25 s of it to a file.
 
 Click a car in the timing tower to watch it. Viewer keys: `Tab`/arrows change car, `1`-`9` focus by position, `L` goes back
 to following the leader (the default), `C` / `Shift+C` cycle the cameras and
 `F2`-`F8` pick one: follow, cinematic (eases between framings around the car),
-TV, helicopter, top down, orbit, overview. The mouse wheel zooms the orbit,
+TV, helicopter, top down, orbit, overview (`F9` is the director; in `rr_viewer2`
+`T` is the roll-hoop camera and `B` the nose camera, both also in the `C` cycle,
+and `K` picks the next sky, `;` and `'` turn the sun, `,` and `.` change the
+exposure). The mouse wheel zooms the orbit,
 helicopter and top-down cameras. `Space` pauses, `+`/`-` change speed
 (up to 64x), `N` single-steps while paused, `R` restarts, `P` toggles robot
 paths, `S` shows the focused car's range finders, `M` mutes, `Esc` returns to
@@ -241,31 +253,60 @@ opens a menu page.
 
 ## Car physics
 
-A planar car with per-wheel loads: weight and downforce per axle, longitudinal
-load transfer between the axles and lateral transfer between left and right,
-split by the roll stiffness (56% front), lagging the accelerations like a
-sprung car. Each wheel has its own load-sensitive tyre (a magic-formula curve
-peaking around 6° of slip) and friction circle, so a lightly loaded inside
-rear spins first and the limited-slip diff hands some of its drive to the
-outside wheel. Downforce has a balance that moves forward under braking and
-fades when the car slides sideways. On tracks with hills (Highmoor Ridge),
-gravity slows the car uphill and speeds it downhill, banking holds it into a
-turn and adds load, and the tyre load follows the road's vertical curvature:
-grip builds in a compression and drops over a crest. Robots see `grip_use` and `slip_angle`
-per axle, so under- and oversteer show up in telemetry
-(`--telemetry DIR` writes them per car).
+The car is a planar model: a position and heading in 2D, with a body-frame
+velocity and yaw rate. There is no vertical motion (no bouncing, no air time), no
+ride-height aero (downforce depends on speed, sideslip, braking pitch and damage
+only), no camber or tyre pressure and no weather. The suspension is a first-order
+lag on the load transfer.
 
-Tyres have a temperature per axle and a working window per compound (soft
+Each wheel has its own load: weight and downforce per axle, longitudinal load
+transfer between the axles and lateral transfer between left and right, split by
+the roll stiffness (55-56% front), lagging the accelerations like a sprung car.
+Each wheel has its own load-sensitive tyre (a magic-formula curve peaking around
+6° of slip) and friction circle, so a lightly loaded inside rear spins first and
+the limited-slip diff hands some of its drive to the outside wheel. Downforce
+has a balance that moves forward under braking and fades when the car slides
+sideways. Robots see `grip_use` and `slip_angle` per axle, so under- and oversteer
+show up in telemetry (`--telemetry DIR` writes them per car).
+
+The road's shape comes from the track's heights and banks. Gravity slows the car
+uphill, speeds it downhill and pulls it towards the low side of a banked road;
+banking also presses the tyres into the road in a turn, and the load follows the
+road's vertical curvature (v² times the curvature): grip builds in a compression
+and drops over a crest, and a fast enough crest unloads them almost completely.
+
+Tyres have a temperature per wheel and a working window per compound (soft
 85-105 °C, medium 95-115, hard 105-125). Sliding and rolling heat them, the
-airflow cools them; cold tyres lose grip and grain, overheated ones lose grip
-and wear several times faster, so driving hard costs tyre life. They leave the
-warmers at 80 °C, so the first lap and the out lap after a stop are slower.
-Fuel weight costs about a second a lap from a full tank to an empty one (tyre
-load sensitivity is measured against the dry car). A car within 40 m behind
-another loses up to 10% of its downforce in the dirty air, mostly at the
-front, while the slipstream (up to 60 m back) cuts its drag. The car panel in
-the viewer shows each axle's tyre temperature: blue cold, green in the
-window, amber and red hot.
+airflow cools them, and the brake discs (carbon, a 350-1000 °C window: cold
+discs bite less, past it they fade) soak heat through the wheel rims into the
+tyres with a lag of a minute or so. Cold tyres lose grip and grain, overheated
+ones lose grip and wear several times faster, so driving hard costs tyre life.
+They leave the warmers at 80 °C, so the first lap and the out lap after a stop are
+slower. Fuel weight costs about a second a lap from a full tank to an empty one
+on the 2006 car (tyre load sensitivity is measured against the dry car).
+
+A car 3 to 60 m behind another, within 3.5 m sideways and above 15 m/s, is in its
+slipstream: up to 45% less drag, most right behind it. Within 40 m (and 3 m
+sideways) it is also in dirty air: up to 10% less downforce, taken mostly from the
+front. The car panel in the viewer shows each axle's tyre temperature: blue cold,
+green in the window, amber and red hot.
+
+**Surfaces.** The surface under the car's centre sets its grip and drag: tarmac
+(1.0), kerb (0.97, no extra drag), grass (0.70), gravel (0.55, the most drag), dirt
+(0.65), pit lane (1.0) and paved run-off (0.95).
+
+**KERS and DRS** (the 2013 car only; the 2006 car has neither). The KERS
+motor-generator is 120 kW on the crankshaft (at most 200 N m). Braking recovers
+energy: it takes part of the rear braking force (the total stays what the pedal
+asks for), up to 4 MJ a lap, and 85% of that reaches the 4 MJ store. A robot
+deploys it with `RRControl.kers`, scaled by the throttle, up to 4 MJ a lap (33 s at
+full power) and until the store is empty; 90% of what leaves the store reaches the
+crank, so a round trip returns about 77%. DRS opens the rear flap (0.25 s to open,
+0.15 s to close): drag x0.78, downforce x0.90, all lost at the rear axle. A car
+earns it for a zone by being within 1 s of the car ahead at the zone's detection
+point; it works from lap 3 of a race, is off on a wet track and in the pit lane, is
+free in every zone in practice and qualifying, and closes on a touch of the brakes.
+Details are in [docs/ROBOTS.md](docs/ROBOTS.md).
 
 The timing tower shows each car's compound, its age in laps and its number of
 stops. When the focused car's algorithm publishes its plan, the car panel shows
@@ -342,6 +383,8 @@ runoff 7
 pit left 20 80 420 500   # side, entry, lane start, lane end, exit (metres along the track)
 pitspeed 22              # pit lane speed limit, m/s
 gravel auto              # gravel traps outside the faster corners (auto, the default, or none)
+drs 3900 4000 4300       # optional DRS zone: detection, start, end (metres along the track); drs none for no zones
+                         # without any, the longest straights (450 m or more, at most three) get one
 offtrack grass           # what lies beyond the kerbs: grass (default), gravel, dirt, ...
 surface gravel right 800 900 1.2 20   # type, side (left/right/both), from s, to s, metres out from the edge (optional)
 p 0 0
@@ -351,11 +394,11 @@ p 400 120 16     # wider here
 ```
 
 Surfaces (tarmac, kerb, grass, gravel, dirt, pit, runoff) each have their own grip and drag
-(`surfaceProps` in `track.cpp`: kerbs keep 97% of the tarmac grip and add no bumps, grass 70%, gravel 55% with
-more drag). Robots read the one under the car in `surface` (ABI 11). The viewer plays kerb rumble, grass and
+(`surfaceProps` in `track.cpp`: kerbs keep 97% of the tarmac grip and add no drag, grass 70%, dirt 65%, gravel 55%
+with the most drag, run-off 95%). Robots read the one under the car in `surface` (ABI 11). The viewer plays kerb rumble, grass and
 gravel sounds, generated in `apps/viewer/surface_sound.cpp`.
 
-Besides Circuit Raylib and the oval there are seven circuits inspired by real
+Besides Circuit Raylib, the oval and Highmoor Ridge there are seven circuits inspired by real
 ones (shape kept, details changed): Autodromo Monzetta (Monza), Ardennes Ring
 (Spa), Silverfield (Silverstone), Magyar Park (Hungaroring), Brands Lane (Brands
 Hatch), Dunes of Zandhoek (Zandvoort) and Kuala Speedway (Sepang).
@@ -421,7 +464,9 @@ apps/viewer/             rr_viewer (renderer, HUD, menu, testing screens; also r
 apps/viewer2/            rr_viewer2's renderer, and its car (clear coat, suspension)
 apps/trackview/          the PBR renderer and the 3D track; rr_trackview
 bots/                    example robots and shared helpers
-tracks/                  circuit, oval and seven real-inspired circuits (.trk)
+tracks/                  circuit, oval, Highmoor Ridge and seven real-inspired circuits (.trk)
+tests/                   surface checks and test robots (ctest)
+docs/                    robot guide, competition rules, to-do list
 specs/                   car specs and development rules (JSON)
 assets/fonts/            DejaVu fonts for the HUD (see DEJAVU_LICENSE.txt)
 assets/materials/        PBR texture sets (albedo, normal, ORM); assets/sky/: HDRI skies
@@ -430,9 +475,12 @@ assets/cars/f1_gearari/  F1 car: body and wheel glTF, car.json, liveries (see it
 
 ## Current limits and next steps
 
-- Hills and banking are simulated (grade, bank, crests and compressions), but
-  `rr_viewer` still draws every track flat; `rr_viewer2` and `rr_trackview` draw the
-  3D track. Only the Mercedes model is bundled, so every team wears it.
+- The car stays planar: hills and banking change its loads and gravity, but there
+  is no vertical motion, ride-height aero, camber or weather. `rr_viewer` still draws
+  every track flat; `rr_viewer2` and `rr_trackview` draw the 3D track. Only the
+  Mercedes model is bundled, so every team wears it. Air and track temperature,
+  track evolution and an engine temperature model are on the
+  [to-do list](docs/TODO.md).
 - Overtaking between closely matched cars is still rare. `gapfollow` and
   `simple` never pit, so in long races they run out of fuel or tyres.
 - Possible next steps: a track editor, per-team car setups, parameter sweeps
