@@ -11,6 +11,7 @@
 #include <cstdio>
 
 #include "../common/rr_awareness.h"
+#include "../common/rr_safety.h"
 #include "../common/rr_params.h"
 #include "../common/rr_recovery.h"
 #include "rr/robot_api.h"
@@ -44,6 +45,10 @@ void* create(const RRTrackInfo*, const RRCarSpec* car, int, const char* params, 
 
 void drive(void* self, const RRSensors* in, RRControl* out) {
     auto* g = static_cast<GapFollow*>(self);
+    if (rr_held(in, out)) {
+        std::snprintf(out->status, sizeof out->status, "held by the marshals");
+        return;
+    }
     if (rr_recover(&g->recovery, in, out, g->maxSteer)) {
         std::snprintf(out->status, sizeof out->status, "recovering");
         return;
@@ -118,6 +123,7 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     vTarget *= 1.0f - 0.35f * std::fabs(out->steer);
     vTarget = std::min(vTarget * blue, rr_follow_speed(in, myLat, myLat, in->speed_x, 7.0f));
     vTarget = std::min(vTarget, rr_hazard_speed(in, myLat, myLat, in->speed_x, 14.0f * rr_stopping_factor(in)));
+    vTarget = std::min(vTarget, rr_flag_speed(in));
 
     float err = vTarget - in->speed_x;
     if (err > 0) {

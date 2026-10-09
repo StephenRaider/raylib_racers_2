@@ -30,6 +30,7 @@ add_library(rr_core STATIC
   src/core/track.cpp
   src/core/car.cpp
   src/core/race.cpp
+  src/core/neutral.cpp
   src/core/robot_loader.cpp
   src/core/config.cpp
   src/core/spec.cpp
@@ -212,6 +213,23 @@ if(RR_BUILD_BOTS)
            --car racingline --car dave --rounds oval,circuit --distance 6.4)
   set_tests_properties(champ_distance PROPERTIES DEPENDS champ_clean RESOURCE_LOCK season PASS_REGULAR_EXPRESSION "Round 1 of 2: [^\n]*, 3 laps")
   set_tests_properties(champ_lineup champ_clean champ_round1 champ_round2 PROPERTIES RESOURCE_LOCK season)
+  # Incidents, yellow flags and the VSC (ABI 14): a robot that stops on the track is held, the field runs under
+  # the VSC, then the car is released and, still stuck, taken off. incident13 is the same robot as ABI 13.
+  rr_add_robot(incident tests/incident/incident.c)
+  rr_output(incident "${RR_OUT}/test_bots")
+  rr_add_robot(incident13 tests/incident/incident.c)
+  target_compile_definitions(incident13 PRIVATE TEST_ABI=13)
+  rr_output(incident13 "${RR_OUT}/test_bots")
+  add_test(NAME vsc_incident COMMAND rr_race --track oval --laps 3 --car $<TARGET_FILE:incident> --params pos=-0.6,stop=10
+           --car $<TARGET_FILE:incident> --params pos=0.5,v=45,heed=1,check=1)
+  set_tests_properties(vsc_incident PROPERTIES PASS_REGULAR_EXPRESSION "VSC from lap 1[^\n]*\n[^\n]*stopped\n[^\n]*released\n[^\n]*removed")
+  add_test(NAME vsc_off COMMAND rr_race --vsc off --track oval --laps 3 --car $<TARGET_FILE:incident> --params pos=-0.6,stop=10
+           --car $<TARGET_FILE:incident> --params pos=0.5,v=45,heed=1,check=1)
+  set_tests_properties(vsc_off PROPERTIES FAIL_REGULAR_EXPRESSION "VSC from")
+  # a robot of ABI 13 knows nothing of the cap: the host holds it to it
+  add_test(NAME vsc_legacy_cap COMMAND rr_race --track oval --laps 3 --car $<TARGET_FILE:incident> --params pos=-0.6,stop=10
+           --car $<TARGET_FILE:incident13> --params pos=0.5,v=55,check=1)
+  set_tests_properties(vsc_legacy_cap PROPERTIES PASS_REGULAR_EXPRESSION "VSC from lap 1")
   # Weekends: memcheck refuses to start unless the weekend memory carried the
   # earlier sessions (practice, then qualifying) into the race.
   rr_add_robot(memcheck tests/memcheck/memcheck.c)

@@ -61,6 +61,7 @@
 #include <vector>
 
 #include "../common/rr_awareness.h"
+#include "../common/rr_safety.h"
 #include "../common/rr_params.h"
 #include "../common/rr_recovery.h"
 #include "rr/robot_api.h"
@@ -1138,6 +1139,10 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
         r->mode = PIT_OUT;
     }
 
+    if (rr_held(in, out)) {
+        std::snprintf(out->status, sizeof out->status, "held by the marshals");
+        return;
+    }
     if (in->pit_state == RR_PIT_SERVICE) {
         out->brake = 1;
         std::snprintf(out->status, sizeof out->status, "in the box  %.1f s", in->service_time_left);
@@ -1285,7 +1290,7 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     }
     // Speed control against the profile, looking a little ahead for actuator lag.
     int si = r->wrap(idx + (int)(v * 0.15f / r->ds) + 1);
-    float vTarget = std::min(r->speed[si] * std::sqrt(r->tyreNow), speedCap);
+    float vTarget = std::min(r->speed[si] * std::sqrt(r->tyreNow), std::min(speedCap, rr_flag_speed(in)));
     // A crawling, stopped or rejoining car ahead: brake to pass it safely (rr_awareness.h).
     {
         const float hzLat = in->track_pos * r->tp[idx].half_width;

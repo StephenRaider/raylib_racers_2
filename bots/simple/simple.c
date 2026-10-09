@@ -14,6 +14,7 @@
 #include <stdlib.h>
 
 #include "../common/rr_awareness.h"
+#include "../common/rr_safety.h"
 #include "../common/rr_params.h"
 #include "../common/rr_recovery.h"
 #include "rr/robot_api.h"
@@ -37,6 +38,10 @@ static void* create(const RRTrackInfo* track, const RRCarSpec* car, int car_inde
 
 static void drive(void* self, const RRSensors* in, RRControl* out) {
     Simple* s = (Simple*)self;
+    if (rr_held(in, out)) {
+        snprintf(out->status, sizeof out->status, "held by the marshals");
+        return;
+    }
     if (rr_recover(&s->recovery, in, out, s->max_steer)) {
         snprintf(out->status, sizeof out->status, "recovering");
         return;
@@ -69,6 +74,8 @@ static void drive(void* self, const RRSensors* in, RRControl* out) {
         float follow = rr_follow_speed(in, myLat, want, in->speed_x, 6.0f);
         if (follow < target) target = follow;
         follow = rr_hazard_speed(in, myLat, want, in->speed_x, 10.0f * rr_stopping_factor(in));
+        if (follow < target) target = follow;
+        follow = rr_flag_speed(in);
         if (follow < target) target = follow;
     }
 

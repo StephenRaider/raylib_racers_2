@@ -29,8 +29,8 @@
 extern "C" {
 #endif
 
-#define RR_ABI_VERSION 13
-/* Robots built for ABI 2 to 12 still load: later versions only appended
+#define RR_ABI_VERSION 14
+/* Robots built for ABI 2 to 13 still load: later versions only appended
  * fields to RRTrackInfo, RRCarSpec, RRRobotConfig, RRSensors and RRControl. */
 #define RR_ABI_MIN_VERSION 2
 
@@ -437,6 +437,13 @@ typedef struct RRSensors {
     float pit_speeding;        /* m/s over the limit right now, 0 if not over */
     float penalty_owed;        /* s of penalties still to serve in a stop (or to be added to the race time) */
     float service_penalty_left;/* s the car is held still for a penalty, while RR_PIT_SERVICE (before the crew starts) */
+
+    /* --- ABI 14 --- yellow flags, the virtual safety car and incident holds (see RR_FLAG_*) */
+    int flag_state;            /* RR_FLAG_*: the flag in the marshal sector the car is in or about to enter */
+    int vsc_state;             /* RR_VSC_*: the virtual safety car, for the whole track */
+    float speed_cap;           /* m/s, 0 if none: the speed the host holds this car to now (yellow, VSC, rejoin) */
+    float incident_ds;         /* m ahead to the nearest flagged incident (the car in trouble), -1 if none */
+    int held;                  /* 1: the host holds this car after an incident; controls are ignored until released */
 } RRSensors;
 
 #define RR_TRACK_LIMIT_WARNINGS 2
@@ -485,6 +492,48 @@ typedef struct RRSensors {
 #define RR_SURF_PIT 5      /* pit lane and the paved pit area */
 #define RR_SURF_RUNOFF 6   /* paved run-off area */
 #define RR_NUM_SURFACES 7
+
+/* --- ABI 14: yellow flags, VSC, incident holds ---
+ * A car that crashes hard (a wall hit over RR_INCIDENT_WALL_SPEED m/s, or car contact over
+ * RR_INCIDENT_CAR_SPEED m/s), stops on the track for RR_INCIDENT_STOP_TIME s, or sits across the track
+ * (angle over RR_INCIDENT_ANGLE rad for RR_INCIDENT_WRONG_TIME s) is an incident. The host holds it still
+ * (brakes on, controls ignored: RRSensors.held) so it cannot drive back into traffic, and releases it once
+ * the track behind it is clear. Meanwhile:
+ *  - the track from RR_YELLOW_BEHIND m before the car to RR_YELLOW_AFTER m past it is yellow (double
+ *    yellow if the car is on the racing surface): cars in it are held to RR_YELLOW_SPEED (RR_DYELLOW_SPEED);
+ *  - the virtual safety car runs for the whole track: every car is held to RR_VSC_SPEED, and nobody may
+ *    overtake. It lasts at least one lap and until no car is held, then RR_VSC_ENDING_TIME s of "VSC ending"
+ *    (no cap, overtaking allowed again) before green.
+ * Overtaking in a yellow zone or under the VSC is a RR_PEN_NEUTRAL_PASS s penalty (served in the pits).
+ * The speed caps are enforced by the host for every robot; robots of ABI 14 and later get RR_CAP_GRACE m/s
+ * over the cap before the host steps in, so they can slow down smoothly by themselves with speed_cap.
+ * A car held for over RR_HOLD_MAX_TIME s, released and stuck or crashing again within RR_REJOIN_WATCH s (stuck is judged after RR_REJOIN_GRACE s), or
+ * held a third time, is taken off the track (retired: "removed after incident"). */
+#define RR_FLAG_GREEN 0
+#define RR_FLAG_YELLOW 1
+#define RR_FLAG_DOUBLE_YELLOW 2
+#define RR_VSC_NONE 0
+#define RR_VSC_ACTIVE 1
+#define RR_VSC_ENDING 2
+#define RR_INCIDENT_WALL_SPEED 8.0f   /* m/s, normal speed into a barrier */
+#define RR_INCIDENT_CAR_SPEED 6.0f    /* m/s, closing speed in a car-to-car impact */
+#define RR_INCIDENT_STOP_TIME 3.0f    /* s standing still on the track */
+#define RR_INCIDENT_ANGLE 1.9f        /* rad: more than this across the track ... */
+#define RR_INCIDENT_WRONG_TIME 1.0f   /* ... for this long, below RR_INCIDENT_MAX_SPEED, is a spin */
+#define RR_INCIDENT_MAX_SPEED 25.0f   /* m/s */
+#define RR_YELLOW_BEHIND 250.0f       /* m of track before the incident that is flagged */
+#define RR_YELLOW_AFTER 30.0f         /* m after it */
+#define RR_YELLOW_SPEED 55.0f         /* m/s cap in a yellow zone */
+#define RR_DYELLOW_SPEED 35.0f        /* m/s cap in a double yellow zone */
+#define RR_VSC_SPEED 40.0f            /* m/s cap under the VSC (about 145 km/h) */
+#define RR_VSC_ENDING_TIME 5.0f       /* s */
+#define RR_REJOIN_SPEED 25.0f         /* m/s cap for RR_REJOIN_WATCH s after a release */
+#define RR_REJOIN_WATCH 10.0f         /* s */
+#define RR_REJOIN_GRACE 6.0f          /* s after a release before a car counts as stuck again */
+#define RR_HOLD_MAX_TIME 45.0f        /* s held before the car is taken off the track */
+#define RR_CAP_GRACE 1.0f             /* m/s over the cap before the host acts, ABI 14 robots */
+#define RR_NEUTRAL_SETTLE 3.0f        /* s under a cap before passing is a penalty (the field is still slowing down) */
+#define RR_PEN_NEUTRAL_PASS 5.0f      /* s, served in the pits */
 
 #define RR_BLUE_FLAG_RANGE 60.0f   /* m behind us (or 1.2 s, whichever is more) */
 #define RR_BLUE_FLAG_LIMIT 8.0f    /* s of holding a lapping car up before a penalty */
