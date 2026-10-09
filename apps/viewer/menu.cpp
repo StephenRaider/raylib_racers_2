@@ -669,7 +669,7 @@ namespace {
 void applyPick(MenuState& m) {
     const Color c = ColorFromHSV(m.pickH, m.pickS, m.pickV);
     if (m.pickTeam >= 0 && m.pickTeam < (int)m.teamSlots.size())
-        for (int slot : m.teamSlots[m.pickTeam]) setSlotColor(slot, c);
+        for (int slot : m.teamSlots[m.pickTeam]) setSlotCar(slot, 0, c);   // the Mercedes in this colour
 }
 
 void openPicker(MenuState& m, int team) {
@@ -683,6 +683,13 @@ void openPicker(MenuState& m, int team) {
     m.pickS = hsv.y;
     m.pickV = hsv.z;
     m.pickDrag = 0;
+}
+
+void chooseStock(MenuState& m, int model) {
+    if (!stockPresent(model) || m.pickTeam < 0 || m.pickTeam >= (int)m.teamSlots.size()) return;
+    for (int slot : m.teamSlots[m.pickTeam]) setSlotCar(slot, model, stockColour(model));
+    const Vector3 hsv = ColorToHSV(stockColour(model));   // the picker starts from it if the colour is changed next
+    m.pickH = hsv.x, m.pickS = hsv.y, m.pickV = hsv.z;
 }
 
 // The colour picker is modal: drag in the square (saturation across, value up) and on the hue bar,
@@ -703,6 +710,7 @@ MenuAction updatePicker(MenuState& m, const std::vector<MenuHit>& hits) {
             if (h.row == 8200) m.pickDrag = 1;
             else if (h.row == 8201) m.pickDrag = 2;
             else if (h.row == 8399) { m.pickTeam = -1; return MenuAction::None; }
+            else if (h.row >= 8400 && h.row < 8400 + kStockCars + 1) chooseStock(m, h.row - 8400);
             else if (h.row >= 8300 && h.row < 8398) {
                 const Vector3 hsv = ColorToHSV(presetColor(h.row - 8300));
                 m.pickH = hsv.x, m.pickS = hsv.y, m.pickV = hsv.z;

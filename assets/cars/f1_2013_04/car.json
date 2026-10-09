@@ -1,0 +1,92 @@
+{
+    "id": "f1_2013_04",
+    "source": "2013 F1.glb (free-2013-f1-pack, Dave Love, CC BY 4.0)",
+    "source_material": "Meshpart25Mtl.001",
+    "livery_of": "Sahara Force India F1 Team",
+    "scale": 0.245,
+    "convention": "metres; +Y up; +Z forward (nose); +X = car's left; origin on the ground at the centre of the wheelbase",
+    "dimensions": {
+        "length": 5.194,
+        "width": 1.852,
+        "height": 1.101,
+        "wheelbase": 3.449
+    },
+    "wheels": {
+        "RR": {
+            "hub": [
+                -0.7105,
+                0.3837,
+                -1.7242
+            ],
+            "radius": 0.3835,
+            "width": 0.4362,
+            "file": "wheel_rear.glb",
+            "mirrored": true
+        },
+        "FR": {
+            "hub": [
+                -0.7289,
+                0.3646,
+                1.7244
+            ],
+            "radius": 0.3644,
+            "width": 0.3406,
+            "file": "wheel_front.glb",
+            "mirrored": true
+        },
+        "RL": {
+            "hub": [
+                0.7252,
+                0.3837,
+                -1.7245
+            ],
+            "radius": 0.3835,
+            "width": 0.436,
+            "file": "wheel_rear.glb",
+            "mirrored": false
+        },
+        "FL": {
+            "hub": [
+                0.7142,
+                0.3644,
+                1.7244
+            ],
+            "radius": 0.3644,
+            "width": 0.3405,
+            "file": "wheel_front.glb",
+            "mirrored": false
+        }
+    },
+    "materials": [
+        "Meshpart4Mtl.003",
+        "Wheel1Mtl.002",
+        "Meshpart25Mtl.001"
+    ],
+    "drs": {
+        "file": "drs_flap.glb",
+        "node": "drs_flap",
+        "pivot": [
+            -0.0257,
+            1.005,
+            -2.0932
+        ],
+        "axis": [
+            -1.0,
+            0.0,
+            0.0
+        ],
+        "max_angle_deg": 41.02,
+        "chord": 0.0983,
+        "rule_angle_deg": 31.02,
+        "slot_gap_closed_mm": 15.0,
+        "slot_gap_open_mm": 59.9,
+        "materials": [
+            "Meshpart25Mtl.001"
+        ]
+    },
+    "team_colour": [
+        255,
+        77,
+        0
+    ]
+}

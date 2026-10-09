@@ -142,6 +142,31 @@ def main():
         unwrap(car_dir, a.size, a.mask_threshold)
 
 
+def team_colour(d):
+    """The livery's main colour, for the HUD: the commonest saturated colour of the paint (the
+    team colour rather than the silver or white around it), else the commonest bright one."""
+    paint = np.array(Image.open(os.path.join(d, "livery_default.png")).convert("RGB"), np.int32)
+    m3 = np.array(Image.open(os.path.join(d, "livery_mask.png")).convert("RGB"))
+    mask = (m3[..., 0] > 127) | (m3[..., 1] > 127)     # all the paint, plain-black parts included
+    px = paint[mask]
+    mx, mn = px.max(1), px.min(1)
+    sat = (mx - mn) / np.maximum(mx, 1)
+    use = (sat > 0.4) & (mx > 50)
+    if use.sum() < 0.02 * len(px):
+        use = mx > 60
+    px = px[use]
+    key = (px[:, 0] // 24) * 100 + (px[:, 1] // 24) * 10 + (px[:, 2] // 24)
+    best = np.bincount(key).argmax()
+    col = px[key == best].mean(0)
+    meta_path = os.path.join(d, "car.json")
+    meta = json.load(open(meta_path, encoding="utf-8-sig"))
+    meta["team_colour"] = [int(round(float(c))) for c in col]
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=4)
+        f.write("\n")
+    return meta["team_colour"]
+
+
 def unwrap(d, size, a_thr):
     meta = json.load(open(os.path.join(d, "car.json"), encoding="utf-8-sig"))
     assert "drs" in meta, "run tools/rig_drs.py first (the flap shares the livery sheet)"
@@ -398,7 +423,8 @@ def unwrap(d, size, a_thr):
     assert mats_b == meta["materials"], f"body materials changed: {mats_b}"
     R.write_glb(os.path.join(d, meta["drs"]["file"]), jf, bf, [fp], "drs_flap", translation=pivot,
                 animation=(meta["drs"]["axis"], math.radians(meta["drs"]["max_angle_deg"])), textures=tex)
-    print("wrote body.glb, drs_flap.glb, livery_default.png, livery_template.png, livery_guide.png, livery_views.json")
+    print("wrote body.glb, drs_flap.glb, livery_default.png, livery_template.png, livery_guide.png, livery_views.json,"
+          " team colour", team_colour(d))
 
 
 if __name__ == "__main__":

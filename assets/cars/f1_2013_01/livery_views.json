@@ -1,0 +1,108 @@
+{
+ "size": 2048,
+ "texels_per_metre": 315.73,
+ "views": {
+  "left": {
+   "outward": [
+    1,
+    0,
+    0
+   ],
+   "origin_texels": [
+    6.0,
+    6.0
+   ],
+   "size_m": [
+    5.264,
+    1.092
+   ],
+   "turned": true,
+   "triangles": 4274
+  },
+  "right": {
+   "outward": [
+    -1,
+    0,
+    0
+   ],
+   "origin_texels": [
+    376.0,
+    6.0
+   ],
+   "size_m": [
+    5.264,
+    1.092
+   ],
+   "turned": true,
+   "triangles": 4150
+  },
+  "top": {
+   "outward": [
+    0,
+    1,
+    0
+   ],
+   "origin_texels": [
+    746.0,
+    6.0
+   ],
+   "size_m": [
+    1.812,
+    5.287
+   ],
+   "turned": false,
+   "triangles": 5530
+  },
+  "bottom": {
+   "outward": [
+    0,
+    -1,
+    0
+   ],
+   "origin_texels": [
+    1343.3,
+    6.0
+   ],
+   "size_m": [
+    1.814,
+    5.289
+   ],
+   "turned": false,
+   "triangles": 2590
+  },
+  "front": {
+   "outward": [
+    0,
+    0,
+    1
+   ],
+   "origin_texels": [
+    6.0,
+    1701.1
+   ],
+   "size_m": [
+    1.819,
+    1.08
+   ],
+   "turned": false,
+   "triangles": 2065
+  },
+  "rear": {
+   "outward": [
+    0,
+    0,
+    -1
+   ],
+   "origin_texels": [
+    605.6,
+    1701.1
+   ],
+   "size_m": [
+    1.819,
+    1.079
+   ],
+   "turned": false,
+   "triangles": 1477
+  }
+ }
+}

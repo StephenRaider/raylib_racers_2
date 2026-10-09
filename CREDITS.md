@@ -35,11 +35,13 @@ replaced by lit grass, and prefiltered for reflections, by `tools/import_assets.
 | `mud_road` | [Mud Road (Pure Sky)](https://polyhaven.com/a/mud_road_puresky) |
 | `overcast_soil` | [Overcast Soil (Pure Sky)](https://polyhaven.com/a/overcast_soil_puresky) |
 
-## assets/cars/f1_2013_02
+## assets/cars/f1_2013_01 .. 11
 
-The Mercedes from "[FREE!] 2013 F1 Pack" (https://skfb.ly/pCRIA) by Dave Love, licensed
+The eleven cars of "[FREE!] 2013 F1 Pack" (https://skfb.ly/pCRIA) by Dave Love, licensed
 CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Changes: the pack's single model
-split into one car (body and wheels, metres, RR layout; see its `car.json`).
+split into one folder per car (body and wheels, metres, RR layout; see each `car.json`), the rear
+wing's DRS flap cut out and hinged (`tools/rig_drs.py`), and the paint re-mapped as a livery sheet
+(`tools/unwrap_livery.py`). Only `f1_2013_02` carries the wheels; the others use its.
 
 ## assets/sound
 

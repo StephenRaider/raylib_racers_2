@@ -35,6 +35,7 @@ public:
     // (floor, diffuser, cockpit housing, shoulder covers) plain black (livery_default.png and livery_mask.png in the model's
     // folder). Does nothing without them, or when the folder has a livery.png of its own.
     void setPaint(Color c);
+    void clearPaint();   // back to the model's own livery
     // The tyre compound fitted (RR_TIRE_*, update() follows the car's): the lettering on the sidewall is
     // red on the softs, yellow on the mediums, white on the hards, green on intermediates (4) and blue
     // on wets (5), which also have a grooved tread.

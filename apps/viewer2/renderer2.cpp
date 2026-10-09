@@ -62,7 +62,7 @@ struct Renderer::Impl {
     std::string assets;
     std::vector<std::unique_ptr<CarRender>> cars;
     std::vector<int> carModel;
-    std::vector<Color> carPaint;   // the team colour each car was painted with
+    std::vector<Color> carPaint;   // the team colour each car was painted with (model 0 only)
     std::vector<const rr::Car*> carPtrs;
     bool synced = false;
     double lastTime = -1;
@@ -80,6 +80,18 @@ struct Renderer::Impl {
     float cineClock = 0;
     Vector3 cineOff{};
 
+    // The model car i drives: its team's stock car, or the Mercedes (also the stand-in for a car the
+    // installation does not have) when the team asked for it in its own colour.
+    static int modelOf(int i) {
+        const auto& t = liveryTable();
+        const int m = t.empty() ? 0 : t[carLivery(i)].model;
+        return m >= 1 && m <= kCarModels ? m : 2;
+    }
+    static bool ownColour(int i) {
+        const auto& t = liveryTable();
+        return t.empty() || t[carLivery(i)].model == 0 || !stockPresent(t[carLivery(i)].model);
+    }
+
     CarRender* car(int i) { return i >= 0 && i < (int)cars.size() ? cars[i].get() : nullptr; }
 
     void ensureCars(const rr::Race& race) {
@@ -87,12 +99,13 @@ struct Renderer::Impl {
         if ((int)cars.size() == n) {
             bool same = true;
             for (int i = 0; i < n; ++i)
-                if (carModel[i] != carLivery(i) % kCarModels + 1) same = false;
+                if (carModel[i] != modelOf(i)) same = false;
             if (same) {
                 for (int i = 0; i < n; ++i) {
-                    const Color c = teamColor(i);
-                    if (cars[i] && (c.r != carPaint[i].r || c.g != carPaint[i].g || c.b != carPaint[i].b)) {
-                        cars[i]->setPaint(c);
+                    const Color c = ownColour(i) ? teamColor(i) : Color{0, 0, 0, 0};
+                    if (cars[i] && (c.r != carPaint[i].r || c.g != carPaint[i].g || c.b != carPaint[i].b || c.a != carPaint[i].a)) {
+                        if (c.a) cars[i]->setPaint(c);
+                        else cars[i]->clearPaint();
                         carPaint[i] = c;
                     }
                 }
@@ -104,7 +117,7 @@ struct Renderer::Impl {
         carPaint.assign(n, Color{0, 0, 0, 0});
         std::vector<CarRender*> loaded(kCarModels + 1, nullptr);  // by model: the car that owns its meshes
         for (int i = 0; i < n; ++i) {
-            const int want = carLivery(i) % kCarModels + 1;
+            const int want = modelOf(i);
             carModel[i] = want;
             // the models bundled with the game; any other team's car wears the Mercedes
             int m = want;
@@ -134,8 +147,8 @@ struct Renderer::Impl {
         }
         for (int i = 0; i < n; ++i)
             if (cars[i]) {
-                carPaint[i] = teamColor(i);
-                cars[i]->setPaint(carPaint[i]);
+                carPaint[i] = ownColour(i) ? teamColor(i) : Color{0, 0, 0, 0};
+                if (carPaint[i].a) cars[i]->setPaint(carPaint[i]);
             }
     }
 

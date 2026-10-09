@@ -13,6 +13,7 @@ struct CarLivery {
     std::string file;   // full path of the numbered livery PNG
     int number = 0;
     Color color{200, 200, 200, 255};  // for the HUD: the team's most recognisable colour
+    int model = 0;   // RR2: 0 the Mercedes in the team's own colour, 1..11 that stock 2013 car in its livery
 };
 
 // Reads teams.json, or without it one slot per liveries/*.png. Empty if neither exists.
@@ -33,3 +34,12 @@ const char* presetName(int i);
 void neutralTeams(std::vector<CarLivery>& table);
 // A livery slot's team colour: the HUD, minimap and the car's paint.
 void setSlotColor(int slot, Color c);
+
+// Raylib Racers 2's stock cars: assets/cars/f1_2013_01 .. 11, each in its own livery (car.json has the
+// livery's main colour). A team drives one of them, or the Mercedes (model 2) in any colour (model 0).
+constexpr int kStockCars = 11;
+void loadStockCars(const std::string& assetsDir);
+bool stockPresent(int model);   // 1..kStockCars: the car is in assets/cars
+Color stockColour(int model);   // the livery's main colour
+void setSlotCar(int slot, int model, Color colour);   // the team colour of the HUD goes with it
+int slotModel(int slot);

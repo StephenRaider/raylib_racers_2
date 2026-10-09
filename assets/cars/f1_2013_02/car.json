@@ -83,5 +83,10 @@
         "materials": [
             "Meshpart7Mtl.002"
         ]
-    }
+    },
+    "team_colour": [
+        3,
+        139,
+        125
+    ]
 }

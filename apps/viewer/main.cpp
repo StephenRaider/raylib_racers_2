@@ -217,6 +217,7 @@ int main(int argc, char** argv) {
         std::vector<CarLivery> liveries = loadLiveries(paths.assets);
 #ifdef RR2_RENDERER
         neutralTeams(liveries);  // Team 1, Team 2 ...: the teams' colours are the player's to pick
+        loadStockCars(paths.assets);
 #endif
         setLiveryTable(liveries);
     }

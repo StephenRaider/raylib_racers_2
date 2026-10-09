@@ -136,9 +136,14 @@ bool CarRender::load(const std::string& dir, const Finish& paint, std::string* e
     for (size_t k = 0; k < mats.size(); ++k)
         if (mats[k].str().rfind("Wheel1Mtl", 0) == 0) steerMat = (int)k + 1;
     liveryFile_ = FileExists((dir + "/livery.png").c_str()) ? dir + "/livery.png" : std::string();
+    // every model of the pack has the same wheels, so only the Mercedes' folder carries them
+    const auto wheelFile = [&](const char* name) {
+        const std::string own = dir + "/" + name;
+        return FileExists(own.c_str()) ? own : dir + "/../f1_2013_02/" + name;
+    };
     if (!loadPart(dir + "/body.glb", paint, livery, &body_parts_, false, 0, err, &steer_parts_, steerMat) ||
-        !loadPart(dir + "/wheel_front.glb", paint, -1, &wheel_parts_[0], true, wheels_[0].radius, err) ||
-        !loadPart(dir + "/wheel_rear.glb", paint, -1, &wheel_parts_[1], true, wheels_[2].radius, err))
+        !loadPart(wheelFile("wheel_front.glb"), paint, -1, &wheel_parts_[0], true, wheels_[0].radius, err) ||
+        !loadPart(wheelFile("wheel_rear.glb"), paint, -1, &wheel_parts_[1], true, wheels_[2].radius, err))
         return false;
     if (liveryFile_.empty() && FileExists((dir + "/livery_default.png").c_str()) && FileExists((dir + "/livery_mask.png").c_str())) {
         paintBase_ = LoadImage((dir + "/livery_default.png").c_str());
@@ -217,10 +222,13 @@ void CarRender::setPaint(Color c) {
     if (!s) return;
     for (auto* list : {&body_parts_, &drs_parts_})
         for (Part& p : *list)
-            if (p.livery) {
-                p.set = s;
-                p.mat.layer[0] = s;
-            }
+            if (p.livery) p.mat.layer[0] = s;
+}
+
+void CarRender::clearPaint() {
+    for (auto* list : {&body_parts_, &drs_parts_})
+        for (Part& p : *list)
+            if (p.livery) p.mat.layer[0] = p.set;
 }
 
 namespace {

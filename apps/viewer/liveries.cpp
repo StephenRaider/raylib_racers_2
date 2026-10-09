@@ -117,3 +117,34 @@ void neutralTeams(std::vector<CarLivery>& table) {
 void setSlotColor(int slot, Color c) {
     if (slot >= 0 && slot < (int)gTable.size()) gTable[slot].color = c;
 }
+
+namespace {
+bool gStockPresent[kStockCars + 1] = {};
+Color gStockColour[kStockCars + 1] = {};
+}  // namespace
+
+void loadStockCars(const std::string& assetsDir) {
+    for (int k = 1; k <= kStockCars; ++k) {
+        char dir[64];
+        std::snprintf(dir, sizeof dir, "/cars/f1_2013_%02d", k);
+        const std::string text = readFile(assetsDir + dir + "/car.json");
+        gStockPresent[k] = !text.empty() && std::filesystem::exists(assetsDir + dir + "/body.glb");
+        gStockColour[k] = {200, 200, 200, 255};
+        if (gStockPresent[k]) {
+            const mjson::Value c = mjson::parse(text)["team_colour"];
+            if (c.size() == 3)
+                gStockColour[k] = {(unsigned char)c[0].num(200), (unsigned char)c[1].num(200), (unsigned char)c[2].num(200), 255};
+        }
+    }
+}
+
+bool stockPresent(int model) { return model >= 1 && model <= kStockCars && gStockPresent[model]; }
+Color stockColour(int model) { return model >= 1 && model <= kStockCars ? gStockColour[model] : Color{200, 200, 200, 255}; }
+
+void setSlotCar(int slot, int model, Color colour) {
+    if (slot < 0 || slot >= (int)gTable.size()) return;
+    gTable[slot].model = model;
+    gTable[slot].color = colour;
+}
+
+int slotModel(int slot) { return slot >= 0 && slot < (int)gTable.size() ? gTable[slot].model : 0; }

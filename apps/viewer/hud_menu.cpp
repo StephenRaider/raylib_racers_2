@@ -656,15 +656,34 @@ void Hud::drawMenu(const MenuState& m, std::vector<MenuHit>& hits) {
 void Hud::drawColourPicker(const MenuState& m, std::vector<MenuHit>& hits) {
     const float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
     DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.55f));
-    const float W = 640, H = 420;
+    const float W = 640, H = 520;
     const Rectangle r = {(sw - W) / 2, (sh - H) / 2, W, H};
-    card(r, "TEAM COLOUR");
+    card(r, "TEAM CAR");
     hits.push_back({r.x, r.y, r.width, r.height, 8398, 0});
     const auto& table = liveryTable();
     const int slot = m.pickTeam < (int)m.teamSlots.size() && !m.teamSlots[m.pickTeam].empty() ? m.teamSlots[m.pickTeam][0] : -1;
+    const int model = slotModel(slot);
     text(slot >= 0 && slot < (int)table.size() ? table[slot].team.c_str() : "Team", r.x + 22, r.y + 40, 24, kText, true);
+    // the stock cars, each in its own livery
+    text("STOCK CARS, IN THEIR OWN LIVERY", r.x + 22, r.y + 78, 11, kDim, true);
+    const float cw = (W - 44 - 10 * 8) / 11.0f;
+    for (int k = 1; k <= kStockCars; ++k) {
+        const Rectangle c = {r.x + 22 + (k - 1) * (cw + 8), r.y + 98, cw, 40};
+        const bool ok = stockPresent(k);
+        DrawRectangleRounded(c, 0.25f, 6, ok ? stockColour(k) : Fade(WHITE, 0.06f));
+        DrawRectangleRoundedLinesEx(c, 0.25f, 6, model == k ? 3.0f : (ok && hover(c) ? 2.0f : 1.0f),
+                                    model == k ? kAccent : Fade(WHITE, ok ? 0.45f : 0.15f));
+        char num[8];
+        std::snprintf(num, sizeof num, "%d", k);
+        const Color ink = stockColour(k).r + stockColour(k).g + stockColour(k).b > 390 ? kInk : kText;
+        text(num, c.x + (c.width - width(num, 15, true)) / 2, c.y + 12, 15, ok ? ink : kFaint, true);
+        if (ok) hits.push_back({c.x, c.y, c.width, c.height, 8400 + k, 0});
+    }
+    text("OR THE MERCEDES IN ANY COLOUR", r.x + 22, r.y + 156, 11, kDim, true);
+    if (model == 0) DrawRectangleRounded({r.x + 14, r.y + 150, 6, 22}, 0.5f, 4, kAccent);
+    const float top = r.y + 180;
     // saturation (across) and value (up) for the current hue
-    const Rectangle sv = {r.x + 22, r.y + 84, 280, 280};
+    const Rectangle sv = {r.x + 22, top, 280, 280};
     const Color hueCol = ColorFromHSV(m.pickH, 1, 1);
     DrawRectangleGradientH((int)sv.x, (int)sv.y, (int)sv.width, (int)sv.height, WHITE, hueCol);
     DrawRectangleGradientV((int)sv.x, (int)sv.y, (int)sv.width, (int)sv.height, BLANK, BLACK);
@@ -684,8 +703,10 @@ void Hud::drawColourPicker(const MenuState& m, std::vector<MenuHit>& hits) {
     DrawRectangle((int)hb.x - 4, (int)hy - 2, (int)hb.width + 8, 4, BLACK);
     DrawRectangle((int)hb.x - 3, (int)hy - 1, (int)hb.width + 6, 2, WHITE);
     hits.push_back({hb.x - 6, hb.y - 4, hb.width + 12, hb.height + 8, 8201, 0});
+    if (model != 0)   // a stock car is chosen: dragging here switches to the Mercedes in that colour
+        for (const Rectangle& q : {sv, hb}) DrawRectangle((int)q.x, (int)q.y, (int)q.width, (int)q.height, Fade(BLACK, 0.5f));
     // the colour, and the presets
-    const Color cur = ColorFromHSV(m.pickH, m.pickS, m.pickV);
+    const Color cur = model == 0 ? ColorFromHSV(m.pickH, m.pickS, m.pickV) : stockColour(model);
     const float px = hb.x + hb.width + 28, pw = r.x + r.width - 22 - px;
     DrawRectangleRounded({px, sv.y, pw, 70}, 0.15f, 6, cur);
     DrawRectangleRoundedLinesEx({px, sv.y, pw, 70}, 0.15f, 6, 1.0f, Fade(WHITE, 0.5f));
@@ -700,7 +721,7 @@ void Hud::drawColourPicker(const MenuState& m, std::vector<MenuHit>& hits) {
         DrawRectangleRoundedLinesEx(k, 0.25f, 6, hover(k) ? 2.5f : 1.0f, hover(k) ? kAccent : Fade(WHITE, 0.4f));
         hits.push_back({k.x, k.y, k.width, k.height, 8300 + i, 0});
     }
-    text("Drag in the square and on the bar, or click a preset", r.x + 22, r.y + H - 40, 13, kDim);
+    text("Pick a car, or drag in the square and on the bar, or click a preset", r.x + 22, r.y + H - 40, 13, kDim);
     button({r.x + r.width - 22 - 120, r.y + H - 56, 120, 40}, "Done", 0, false, 8399, hits);
 }
 
