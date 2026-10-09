@@ -37,7 +37,8 @@ add_library(rr_core STATIC
   src/core/testlog.cpp
   src/core/championship.cpp
   src/core/weekend.cpp
-  src/core/robot_driver.cpp)
+  src/core/robot_driver.cpp
+  src/core/gc.cpp)
 target_include_directories(rr_core PUBLIC include src/core)
 target_compile_options(rr_core PRIVATE ${RR_WARNINGS})
 target_compile_definitions(rr_core PUBLIC RR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -88,6 +89,47 @@ if(RR_BUILD_BOTS)
     endif()
   endforeach()
   message(STATUS "Robots: ${RR_BOTS}")
+endif()
+
+# ---------------------------------------------------------------- General Championship edition
+# Everything lands in GC/: GC_Race_viewer, rr_gc, rr_bothost and the teams' bots (GC/bots).
+# GC/Build_GC.bat (or .sh) runs the whole sequence: unpack submissions, plan, build.
+option(RR_BUILD_GC "Build the General Championship edition into GC/" ON)
+set(RR_GC_DIR "${CMAKE_SOURCE_DIR}/GC")
+if(RR_BUILD_GC AND EXISTS "${RR_GC_DIR}")
+  add_executable(rr_gc apps/gc/main.cpp)
+  target_link_libraries(rr_gc PRIVATE rr_core)
+  target_compile_options(rr_gc PRIVATE ${RR_WARNINGS})
+  rr_output(rr_gc "${RR_GC_DIR}")
+  add_custom_target(rr_gc_host ALL COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:rr_bothost> "${RR_GC_DIR}/"
+                    DEPENDS rr_bothost)
+  function(rr_gc_bot name)
+    # a plan written before a team folder was deleted must not break the configure: skip missing sources
+    set(srcs "")
+    foreach(f ${ARGN})
+      if(EXISTS "${f}")
+        list(APPEND srcs "${f}")
+      endif()
+    endforeach()
+    if(NOT srcs)
+      return()
+    endif()
+    add_library(${name} MODULE ${srcs})
+    # bots/simple: so that the example bots' "../common/rr_*.h" also resolves from a team folder
+    target_include_directories(${name} PRIVATE include bots/common bots/simple)
+    target_compile_options(${name} PRIVATE ${RR_WARNINGS})
+    set_target_properties(${name} PROPERTIES PREFIX "" C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden)
+    rr_output(${name} "${RR_GC_DIR}/bots")
+    if(NOT MSVC)
+      target_link_libraries(${name} PRIVATE m)
+    endif()
+    add_dependencies(rr_gc_host ${name})
+  endfunction()
+  # written by rr_gc plan: one rr_gc_bot(...) per bot of every accepted team
+  if(EXISTS "${RR_GC_DIR}/build/bots.cmake")
+    include("${RR_GC_DIR}/build/bots.cmake")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${RR_GC_DIR}/build/bots.cmake")
+  endif()
 endif()
 
 # ---------------------------------------------------------------- viewer
@@ -162,6 +204,27 @@ if(RR_BUILD_VIEWER)
   if(APPLE)
     target_link_libraries(rr_viewer2 PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
   endif()
+
+  # The General Championship's viewer: viewer v2 with the GC rules (GC_EDITION), next to the teams.
+  if(RR_BUILD_GC AND EXISTS "${RR_GC_DIR}")
+    add_executable(GC_Race_viewer
+      apps/viewer/main.cpp
+      apps/viewer/director.cpp
+      apps/viewer/hud.cpp apps/viewer/hud_results.cpp apps/viewer/hud_menu.cpp apps/viewer/hud_test.cpp
+      apps/viewer/menu.cpp apps/viewer/test_figures.cpp apps/viewer/liveries.cpp
+      apps/viewer/engine_sound.cpp apps/viewer/surface_sound.cpp apps/viewer/race_audio.cpp
+      apps/viewer2/renderer2.cpp
+      apps/viewer2/car_render.cpp)
+    target_compile_definitions(GC_Race_viewer PRIVATE RR2_RENDERER=1 GC_EDITION=1)
+    target_include_directories(GC_Race_viewer PRIVATE apps/viewer apps/viewer2)
+    target_link_libraries(GC_Race_viewer PRIVATE rr_gfx)
+    target_compile_options(GC_Race_viewer PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)
+    rr_output(GC_Race_viewer "${RR_GC_DIR}")
+    add_dependencies(rr_gc_host GC_Race_viewer)
+    if(APPLE)
+      target_link_libraries(GC_Race_viewer PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
+    endif()
+  endif()
 endif()
 
 # ---------------------------------------------------------------- tests
@@ -170,6 +233,10 @@ add_executable(test_surfaces tests/surfaces/main.cpp)
 target_link_libraries(test_surfaces PRIVATE rr_core)
 target_compile_options(test_surfaces PRIVATE ${RR_WARNINGS})
 add_test(NAME surfaces COMMAND test_surfaces WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_executable(test_gc tests/gc/main.cpp)
+target_link_libraries(test_gc PRIVATE rr_core)
+target_compile_options(test_gc PRIVATE ${RR_WARNINGS})
+add_test(NAME gc_teams COMMAND test_gc ${CMAKE_BINARY_DIR}/ctest_gc)
 add_executable(test_tyres tests/tyres/main.cpp)
 target_link_libraries(test_tyres PRIVATE rr_core)
 target_compile_options(test_tyres PRIVATE ${RR_WARNINGS})

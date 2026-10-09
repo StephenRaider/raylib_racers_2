@@ -1,0 +1,11 @@
+{
+  "gc_version": 1,
+  "team": "Example Engineering",
+  "short": "EXA",
+  "model": "ferrari",
+  "stats": "",
+  "drivers": [
+    { "number": 7,  "livery": "livery_1.png", "bot": "bots/example_bot" },
+    { "number": 77, "livery": "livery_2.png", "bot": "bots/example_bot" }
+  ]
+}

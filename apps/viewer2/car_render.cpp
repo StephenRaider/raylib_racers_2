@@ -225,6 +225,28 @@ void CarRender::setPaint(Color c) {
             if (p.livery) p.mat.layer[0] = s;
 }
 
+gfx::TextureSet* CarRender::fileSet(const std::string& file) {
+    auto it = fileSets_.find(file);
+    if (it != fileSets_.end()) return it->second;
+    Image img = LoadImage(file.c_str());
+    if (!img.data) return fileSets_[file] = nullptr;
+    ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8);  // paint is opaque
+    Texture2D t = LoadTextureFromImage(img);
+    UnloadImage(img);
+    GenTextureMipmaps(&t);
+    SetTextureFilter(t, TEXTURE_FILTER_ANISOTROPIC_16X);
+    return fileSets_[file] = new gfx::TextureSet(gfx::flatTextureSet(t, 0.3f, 0.3f));
+}
+
+bool CarRender::setLiveryFile(const std::string& file) {
+    gfx::TextureSet* s = origin_->fileSet(file);
+    if (!s) return false;
+    for (auto* list : {&body_parts_, &drs_parts_})
+        for (Part& p : *list)
+            if (p.livery) p.mat.layer[0] = s;
+    return true;
+}
+
 void CarRender::clearPaint() {
     for (auto* list : {&body_parts_, &drs_parts_})
         for (Part& p : *list)
@@ -376,6 +398,12 @@ void CarRender::unload() {
         delete kv.second;
     }
     paintSets_.clear();
+    for (auto& kv : fileSets_)
+        if (kv.second) {
+            gfx::unloadTextureSet(*kv.second);
+            delete kv.second;
+        }
+    fileSets_.clear();
     UnloadImage(paintBase_);
     UnloadImage(paintMask_);
     paintBase_ = paintMask_ = {};

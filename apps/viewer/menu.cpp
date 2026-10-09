@@ -25,9 +25,12 @@ void MenuState::setWearRate(float rate) {
 
 std::vector<MenuState::Row> MenuState::rows() const {
     std::vector<Row> all = allRows();
-    if (!rr2) return all;
+    if (!rr2 && !gc) return all;
     std::vector<Row> out;
     for (Row x : all) {
+        if (gc && (x == Row::Teams || x == Row::Drivers || x == Row::Grid || x == Row::Stats || x == Row::SaveLineup ||
+                   x == Row::LoadLineup))
+            continue;
         if (x == Row::TyreLife || x == Row::TestLivery || x == Row::TestStats || x == Row::Stats || x == Row::ChampWear ||
             x == Row::ChampDistance)
             continue;
@@ -425,9 +428,10 @@ void change(MenuState& m, MenuState::Row row, int dir, bool big, MenuAction& act
         case Row::Stats: m.teamsPage = true; break;
         case Row::Session: {
             static const int order[] = {0, 1, 3, 2};  // as the tabs show them
+            const int n = m.gc ? 3 : 4;   // the GC edition has no Testing tab
             int k = 0;
-            while (k < 3 && order[k] != m.session) ++k;
-            m.session = order[(k + dir + 4) % 4];
+            while (k < n - 1 && order[k] != m.session) ++k;
+            m.session = order[(k + dir + n) % n];
             m.row = m.rowOf(Row::Session);
             if (m.champ()) act = MenuAction::ChampTab;
             break;
@@ -617,7 +621,7 @@ MenuAction updateLineupList(MenuState& m, const std::vector<MenuHit>& hits) {
 
 MenuAction updateSeason(MenuState& m, const std::vector<MenuHit>& hits) {
     MenuAction act = MenuAction::None;
-    const bool over = !m.season || m.season->over();
+    const bool over = !m.season || m.season->over() || m.season->gcInvalid;
     if ((IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) && !over) act = MenuAction::StartRound;
     if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_BACKSPACE)) act = MenuAction::LeaveSeason;
     if (IsKeyPressed(KEY_TAB) || IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_RIGHT)) m.seasonTab = 1 - m.seasonTab;

@@ -149,7 +149,9 @@ void Hud::trackShape(const std::vector<rr::Vec2>& pts, Rectangle box, Color c, f
 void Hud::drawTopBar(const MenuState& m, std::vector<MenuHit>& hits, float& top) {
     const float sw = (float)GetScreenWidth();
     const float mx = std::max(24.0f, sw * 0.03f);
-#ifdef RR2_RENDERER
+#ifdef GC_EDITION
+    text("GENERAL CHAMPIONSHIP", mx, 26, 15, kAccent, true);
+#elif defined(RR2_RENDERER)
     text("RAYLIB RACERS 2", mx, 26, 15, kAccent, true);
 #else
     text("RAYLIB RACERS", mx, 26, 15, kAccent, true);
@@ -160,9 +162,10 @@ void Hud::drawTopBar(const MenuState& m, std::vector<MenuHit>& hits, float& top)
     const int row = m.rowOf(MenuState::Row::Session);
     const float tw = std::min(620.0f, sw - 2 * mx - 320);
     Rectangle r = {sw - mx - tw, 34, tw, 46};
-    std::vector<const char*> names(kTabName, kTabName + 4);
+    const int tabs = m.gc ? 3 : 4;
+    std::vector<const char*> names(kTabName, kTabName + tabs);
     int sel = 0;
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < tabs; ++i)
         if (kTabSession[i] == m.session) sel = i;
     const size_t before = hits.size();
     segmented(r, names, sel, m.row == row, row, hits);
@@ -201,6 +204,26 @@ void Hud::drawTrackCard(const MenuState& m, std::vector<MenuHit>& hits, Rectangl
 void Hud::drawGridCard(const MenuState& m, std::vector<MenuHit>& hits, Rectangle r, bool teamList) {
     using Row = MenuState::Row;
     char buf[160];
+    if (m.gc) {   // the submitted teams, read only
+        std::snprintf(buf, sizeof buf, "%d teams, %d cars", (int)m.raceTeams().size(), m.cars);
+        card(r, "TEAMS", buf);
+        const auto& tbl = liveryTable();
+        const std::vector<int> teams = m.raceTeams();
+        const float rowH = std::min(40.0f, (r.height - 64) / std::max<size_t>(1, teams.size()));
+        float yy = r.y + 52;
+        for (int t : teams) {
+            const int slot = m.teamSlots[t].empty() ? -1 : m.teamSlots[t][0];
+            if (slot < 0 || slot >= (int)tbl.size()) continue;
+            DrawRectangleRounded({r.x + 22, yy + 5, 6, rowH - 10}, 0.5f, 4, slotColor(slot));
+            text(tbl[slot].key.c_str(), r.x + 40, yy + (rowH - 16) / 2 - 1, 16, kAccent, true);
+            text(tbl[slot].team.c_str(), r.x + 100, yy + (rowH - 16) / 2 - 1, 16, kText, true);
+            std::string who;
+            for (int s : m.teamSlots[t]) who += (who.empty() ? "" : "  ") + std::string("#") + std::to_string(tbl[s].number);
+            textRight(who.c_str(), r.x + r.width - 20, yy + (rowH - 14) / 2, 14, kDim);
+            yy += rowH;
+        }
+        return;
+    }
     std::snprintf(buf, sizeof buf, m.rr2 && teamList ? "%d cars   click a team to pick its colour" : "%d cars", m.cars);
     card(r, "GRID", buf);
     float y = r.y + 50;
@@ -500,6 +523,7 @@ void Hud::drawChampSetup(const MenuState& m, std::vector<MenuHit>& hits, Rectang
         textRight(buf, box.x + box.width - 16, box.y + 15, 14, over ? kGood : kAccent, true);
         std::snprintf(note, sizeof note, "%s%s", l.leader.empty() ? "" : (over ? "Champion: " : "Leader: "), l.leader.c_str());
         text(note[0] ? note : "No races yet", box.x + 16, box.y + 40, 14, kDim);
+        if (l.invalid) text("INVALID: team files changed", box.x + 16, box.y + 62, 14, kBad, true);
         if (!over && !l.next.empty()) {
             std::snprintf(note, sizeof note, "Next: %s", l.next.c_str());
             text(note, box.x + 16, box.y + 62, 14, kDim);
@@ -1077,9 +1101,15 @@ void Hud::drawSeasonPage(const MenuState& m, std::vector<MenuHit>& hits) {
                           driverLabel(L.driver(d[0].id).livery, L.driver(d[0].id).name).c_str(), L.teams[cs[0].id].name.c_str());
             textRight(buf, sw - mx, sh - 66, 22, kAccent, true);
         }
+    } else if (c->gcInvalid) {
+        textRight("INVALID: this championship cannot continue", sw - mx, sh - 66, 22, kBad, true);
     } else {
         std::snprintf(buf, sizeof buf, "START ROUND %d: %s", c->roundsDone() + 1, trackTitle(c->roundsDone()).c_str());
         button({sw - mx - 460, sh - 82, 460, 60}, buf, 0, true, 7000, hits);
+    }
+    if (c->gcInvalid) {
+        DrawRectangle(0, (int)sh - 150, (int)sw, 52, Fade(kBad, 0.22f));
+        text(("INVALID CHAMPIONSHIP: " + c->gcInvalidWhy).c_str(), mx, sh - 134, 18, kBad, true);
     }
     text("Enter start round   Tab drivers / constructors   Esc back", mx + 240, sh - 62, 14, kDim);
 }

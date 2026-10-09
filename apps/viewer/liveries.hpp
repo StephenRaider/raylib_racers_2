@@ -13,6 +13,7 @@ struct CarLivery {
     std::string file;   // full path of the numbered livery PNG
     int number = 0;
     Color color{200, 200, 200, 255};  // for the HUD: the team's most recognisable colour
+    std::string sheet;   // General Championship: the team's painted livery sheet (2048 x 2048 PNG), "" = none
     int model = 0;   // RR2: 0 the Mercedes in the team's own colour, 1..11 that stock 2013 car in its livery
 };
 

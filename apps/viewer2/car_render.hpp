@@ -36,6 +36,9 @@ public:
     // folder). Does nothing without them, or when the folder has a livery.png of its own.
     void setPaint(Color c);
     void clearPaint();   // back to the model's own livery
+    // A painted livery sheet (an opaque 2048 x 2048 PNG on the model's UV layout) in place of the model's
+    // paint. The textures are cached by file in the car that owns the meshes. False if the file won't load.
+    bool setLiveryFile(const std::string& file);
     // The tyre compound fitted (RR_TIRE_*, update() follows the car's): the lettering on the sidewall is
     // red on the softs, yellow on the mediums, white on the hards, green on intermediates (4) and blue
     // on wets (5), which also have a grooved tread.
@@ -80,6 +83,8 @@ private:
     Image paintBase_{}, paintMask_{};
     std::map<uint32_t, gfx::TextureSet*> paintSets_;
     gfx::TextureSet* paintSet(Color c);
+    std::map<std::string, gfx::TextureSet*> fileSets_;   // livery sheets by file
+    gfx::TextureSet* fileSet(const std::string& file);
     // tyre looks: 0 as modelled (yellow lettering), 1 soft, 2 hard, 3 inter, 4 wet
     int look_ = -1;
     Image sideImg_[2]{};                // each wheel model's sidewall texture, read back once (owner)

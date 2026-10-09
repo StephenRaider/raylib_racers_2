@@ -63,6 +63,7 @@ struct Renderer::Impl {
     std::vector<std::unique_ptr<CarRender>> cars;
     std::vector<int> carModel;
     std::vector<Color> carPaint;   // the team colour each car was painted with (model 0 only)
+    std::vector<std::string> carSheet;   // the painted livery sheet each car wears (General Championship)
     std::vector<const rr::Car*> carPtrs;
     bool synced = false;
     double lastTime = -1;
@@ -92,6 +93,15 @@ struct Renderer::Impl {
         return t.empty() || t[carLivery(i)].model == 0 || !stockPresent(t[carLivery(i)].model);
     }
 
+    // A team's own painted sheet (CarLivery::sheet) for car i, if its slot has one.
+    void applySheet(int i) {
+        const auto& t = liveryTable();
+        if (t.empty() || i >= (int)cars.size() || !cars[i] || i >= (int)carSheet.size()) return;
+        const std::string& f = t[carLivery(i)].sheet;
+        if (f.empty() || f == carSheet[i]) return;
+        if (cars[i]->setLiveryFile(f)) carSheet[i] = f;
+    }
+
     CarRender* car(int i) { return i >= 0 && i < (int)cars.size() ? cars[i].get() : nullptr; }
 
     void ensureCars(const rr::Race& race) {
@@ -102,6 +112,7 @@ struct Renderer::Impl {
                 if (carModel[i] != modelOf(i)) same = false;
             if (same) {
                 for (int i = 0; i < n; ++i) {
+                    applySheet(i);
                     const Color c = ownColour(i) ? teamColor(i) : Color{0, 0, 0, 0};
                     if (cars[i] && (c.r != carPaint[i].r || c.g != carPaint[i].g || c.b != carPaint[i].b || c.a != carPaint[i].a)) {
                         if (c.a) cars[i]->setPaint(c);
@@ -113,6 +124,7 @@ struct Renderer::Impl {
             }
         }
         unloadCars();
+        carSheet.assign(n, std::string());
         carModel.assign(n, 0);
         carPaint.assign(n, Color{0, 0, 0, 0});
         std::vector<CarRender*> loaded(kCarModels + 1, nullptr);  // by model: the car that owns its meshes
@@ -147,6 +159,7 @@ struct Renderer::Impl {
         }
         for (int i = 0; i < n; ++i)
             if (cars[i]) {
+                applySheet(i);
                 carPaint[i] = ownColour(i) ? teamColor(i) : Color{0, 0, 0, 0};
                 if (carPaint[i].a) cars[i]->setPaint(carPaint[i]);
             }

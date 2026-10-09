@@ -368,6 +368,13 @@ bool Championship::save(const std::string& path, std::string* err) const {
                   distanceKm, wearRate, twoCompounds, qualifying ? "true" : "false", practiceLaps,
                   sandbox ? "true" : "false", (double)cpuCapMs, (unsigned long long)seed);
     s += buf;
+    if (!gcLock.empty() || gcInvalid) {
+        s += "  \"gc_lock\": {";
+        for (size_t k = 0; k < gcLock.size(); ++k)
+            s += (k ? ", " : "") + q(gcLock[k].first) + ": " + q(gcLock[k].second);
+        s += std::string("},\n  \"gc_invalid\": ") + (gcInvalid ? "true" : "false") + ",\n  \"gc_invalid_why\": " +
+             q(gcInvalidWhy) + ",\n";
+    }
     s += "  \"lineup\": " + lineup.toJson(2) + ",\n  \"rounds\": [";
     for (size_t k = 0; k < rounds.size(); ++k)
         s += (k ? ", " : "") + std::string("{\"track\": ") + q(rounds[k].track) + ", \"laps\": " +
@@ -414,6 +421,9 @@ bool Championship::load(const std::string& path, Championship& out, std::string*
     c.sandbox = v["sandbox"].b;
     c.cpuCapMs = (float)v["cpu_cap_ms"].num(0);
     c.seed = (uint64_t)v["seed"].num(1);
+    for (const auto& kv : v["gc_lock"].obj) c.gcLock.emplace_back(kv.first, kv.second.str());
+    c.gcInvalid = v["gc_invalid"].b;
+    c.gcInvalidWhy = v["gc_invalid_why"].str();
     if (!lineupFrom(v["lineup"], c.lineup, err)) {
         if (err) *err = path + ": " + *err;
         return false;

@@ -85,6 +85,11 @@ struct Championship {
     bool sandbox = false;     // competition rules: robots in their own locked-down processes
     float cpuCapMs = 0;       // ...and a CPU cap per drive() call (0 = none)
     uint64_t seed = 1;
+    // General Championship: the teams' files are locked when the season starts. gcLock holds
+    // (team id, digest of its files); if any digest changes, gcInvalid is set for good.
+    std::vector<std::pair<std::string, std::string>> gcLock;
+    bool gcInvalid = false;
+    std::string gcInvalidWhy;
 
     static int pointsFor(int position);  // 1-based; 0 outside the top ten
     // Laps that cover about km on a track of this length (m), at least 1.

@@ -9,6 +9,7 @@
 #include <set>
 
 #include "weekend.hpp"
+#include "gc.hpp"
 #include "engine_sound.hpp"
 #include "hud.hpp"
 #include "liveries.hpp"
@@ -33,6 +34,70 @@ struct Paths {
     std::vector<std::string> bots, tracks;
     std::string assets;
 };
+
+#ifdef GC_EDITION
+// The General Championship's livery table: slot 2 * team + seat. The HUD colour is the sheet's most
+// saturated paint, sampled.
+Color sheetColour(const std::string& file) {
+    Image img = LoadImage(file.c_str());
+    if (!img.data) return {200, 200, 200, 255};
+    ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
+    const unsigned char* px = (const unsigned char*)img.data;
+    double r = 0, g = 0, b = 0, wsum = 0;
+    for (int y = 0; y < img.height; y += 8)
+        for (int x = 0; x < img.width; x += 8) {
+            const unsigned char* p = px + 3 * ((size_t)y * img.width + x);
+            const int mx = std::max({(int)p[0], (int)p[1], (int)p[2]}), mn = std::min({(int)p[0], (int)p[1], (int)p[2]});
+            const double w = (mx - mn) / 255.0 * (mx / 255.0);   // saturated and not dark
+            r += w * p[0]; g += w * p[1]; b += w * p[2]; wsum += w;
+        }
+    UnloadImage(img);
+    if (wsum < 1) return {200, 200, 200, 255};
+    return {(unsigned char)(r / wsum), (unsigned char)(g / wsum), (unsigned char)(b / wsum), 255};
+}
+
+std::vector<CarLivery> gcLiveries(const rr::GcEvent& ev) {
+    std::vector<CarLivery> out;
+    for (const rr::GcTeam& t : ev.teams)
+        for (int s = 0; s < 2; ++s) {
+            CarLivery l;
+            l.team = t.name;
+            l.key = t.shortName;
+            l.file = l.sheet = t.drivers[s].livery;
+            l.number = t.drivers[s].number;
+            l.model = t.modelNo;
+            l.color = sheetColour(l.sheet);
+            out.push_back(l);
+        }
+    return out;
+}
+
+// A window listing what is wrong; Enter goes on when `canGo`. Returns false when the program should stop.
+bool gcNotice(const std::vector<std::string>& lines, bool canGo) {
+    for (const std::string& l : lines) std::fprintf(stderr, "%s\n", l.c_str());
+    SetTraceLogLevel(LOG_WARNING);
+    InitWindow(1100, 640, "GC Race Viewer");
+    SetTargetFPS(30);
+    bool go = false;
+    while (!WindowShouldClose() && !go) {
+        if (canGo && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))) go = true;
+        BeginDrawing();
+        ClearBackground({12, 14, 20, 255});
+        DrawText(canGo ? "Some teams were left out" : "No team can race", 40, 30, 34, {240, 110, 70, 255});
+        int y = 90;
+        for (const std::string& l : lines) {
+            DrawText(l.c_str(), 40, y, 17, {225, 228, 235, 255});
+            y += 26;
+            if (y > 560) { DrawText("...", 40, y, 17, GRAY); break; }
+        }
+        DrawText(canGo ? "Press Enter to race with the accepted teams, Esc to quit" : "Fix the teams, run Build_GC again, and start this again. Esc to quit",
+                 40, 596, 18, {150, 160, 175, 255});
+        EndDrawing();
+    }
+    CloseWindow();
+    return go;
+}
+#endif
 
 std::unique_ptr<rr::Race> makeRace(const rr::RaceConfig& cfg, const Paths& paths) {
     auto race = std::make_unique<rr::Race>();
@@ -194,6 +259,11 @@ int main(int argc, char** argv) {
         std::printf("%s", rr::usage(argv[0], true).c_str());
         return 0;
     }
+#ifdef GC_EDITION
+    cfg.entries.clear();   // the grid is the submitted teams, nothing else
+    cfg.sandbox = true;    // competition rules: every bot in its own locked-down process, CPU capped
+    if (cfg.cpuCapMs <= 0) cfg.cpuCapMs = 2;
+#endif
     const std::vector<rr::EntrySpec> cliEntries = cfg.entries;
 #ifdef RR2_RENDERER
     // Raylib Racers 2: the 2013 car, on Highmoor Ridge unless a track is asked for
@@ -213,6 +283,22 @@ int main(int argc, char** argv) {
     for (const std::string& a : {dir + "/assets", std::string(RR_SOURCE_DIR "/assets"), std::string("assets")})
         if (std::filesystem::exists(a + "/fonts")) { paths.assets = a; break; }
 
+#ifdef GC_EDITION
+    rr::GcEvent gcEvent;
+    {
+        rr::DevRules gcRules;
+        std::string gerr;
+        const std::string rp = rr::findDataFile(cfg.devRules, {RR_SOURCE_DIR "/specs", dir + "/specs", "specs"});
+        if (rp.empty() || !rr::loadDevRules(rp, gcRules, &gerr)) std::fprintf(stderr, "warning: no stat rules: %s\n", gerr.c_str());
+        rr::gcLoad(dir, gcRules, true, gcEvent);
+        std::vector<std::string> lines = gcEvent.problems;
+        if (gcEvent.teams.empty() && lines.empty()) lines.push_back("GC/teams is empty: add teams with Build_GC.");
+        if (!lines.empty() && !gcNotice(lines, !gcEvent.teams.empty())) return 1;
+        std::vector<CarLivery> liveries = gcLiveries(gcEvent);
+        loadStockCars(paths.assets);
+        setLiveryTable(liveries);
+    }
+#else
     {
         std::vector<CarLivery> liveries = loadLiveries(paths.assets);
 #ifdef RR2_RENDERER
@@ -221,6 +307,7 @@ int main(int argc, char** argv) {
 #endif
         setLiveryTable(liveries);
     }
+#endif
     const int liveryCount = std::max(1, (int)liveryTable().size());
 
     // The grid: one livery slot and algorithm per car. Without --car, a full field over all the teams.
@@ -229,10 +316,16 @@ int main(int argc, char** argv) {
     menu.rr2 = true;
 #endif
     menu.algos = listAlgorithms(paths);
+#ifdef GC_EDITION
+    menu.gc = true;
+    menu.algos.clear();   // one algorithm per driver, indexed by livery slot
+    for (const rr::GcTeam& t : gcEvent.teams)
+        for (const rr::GcDriver& d : t.drivers) menu.algos.push_back({d.name, d.robot, "", t.stats});
+#endif
     menu.liveryCount = liveryCount;
     if (cliEntries.empty()) {
         const int n = liveryTable().empty() ? 7 : liveryCount;
-        for (int i = 0; i < n; ++i) menu.carAlgo.push_back(i % 4);  // the four racingline presets
+        for (int i = 0; i < n; ++i) menu.carAlgo.push_back(i % std::max(1, std::min(4, (int)menu.algos.size())));  // the four racingline presets
     } else {
         for (const rr::EntrySpec& e : cliEntries) {
             int found = -1;
@@ -247,7 +340,7 @@ int main(int argc, char** argv) {
         }
     }
     menu.maxCars = (int)menu.carAlgo.size();
-    while ((int)menu.carAlgo.size() < liveryCount) menu.carAlgo.push_back((int)menu.carAlgo.size() % 4);
+    while ((int)menu.carAlgo.size() < liveryCount) menu.carAlgo.push_back((int)menu.carAlgo.size() % std::max(1, std::min(4, (int)menu.algos.size())));
     menu.maxCars = std::max(menu.maxCars, liveryCount);
     for (int i = 0; i < menu.maxCars; ++i) menu.carLivery.push_back(i % liveryCount);
     menu.carTires.resize(menu.maxCars, 0);
@@ -296,6 +389,9 @@ int main(int argc, char** argv) {
     } else {
         menu.teams = std::max(1, (menu.cars + 1) / 2);
     }
+#ifdef GC_EDITION
+    for (int i = 0; i < (int)menu.carAlgo.size() && i < (int)menu.carLivery.size(); ++i) menu.carAlgo[i] = menu.carLivery[i];
+#endif
     // Team stats: from --dev on the command line, else the style of each team's last driver.
     for (int i = 0; i < menu.cars; ++i) {
         const int t = menu.teamOfCar(i);
@@ -386,7 +482,11 @@ int main(int argc, char** argv) {
     if (!shotMode) flags |= FLAG_VSYNC_HINT;
     SetConfigFlags(flags);
     #ifdef RR2_RENDERER
+#ifdef GC_EDITION
+    InitWindow(cfg.width, cfg.height, "GC Race Viewer");
+#else
     InitWindow(cfg.width, cfg.height, "Raylib Racers 2");
+#endif
 #else
     InitWindow(cfg.width, cfg.height, "Raylib Racers");
 #endif
@@ -586,6 +686,7 @@ int main(int argc, char** argv) {
             l.name = c.name;
             l.done = c.roundsDone();
             l.total = (int)c.rounds.size();
+            l.invalid = c.gcInvalid;
             if (l.done > 0) l.leader = driverName(c, c.driverStandings()[0].id);
             if (!c.over()) {
                 const TrackStats* t = menu.trackStats(c.rounds[l.done].track);
@@ -594,6 +695,21 @@ int main(int argc, char** argv) {
             menu.seasons.push_back(l);
         }
     };
+#ifdef GC_EDITION
+    // True while the teams' files are exactly as they were when the season started. The first time they
+    // are not, the season is marked invalid in its file, for good.
+    auto gcIntact = [&](rr::Championship& c, const std::string& path) -> bool {
+        std::string why = c.gcInvalid ? c.gcInvalidWhy : c.gcLock.empty() ? "this season was not started with the GC teams" : rr::gcVerify(dir, c);
+        if (why.empty()) return true;
+        if (!c.gcInvalid) {
+            c.gcInvalid = true;
+            c.gcInvalidWhy = why;
+            std::string e2;
+            c.save(path, &e2);
+        }
+        return false;
+    };
+#endif
     auto openSeason = [&]() {
         menu.season = &season;
         menu.seasonPage = true;
@@ -617,6 +733,9 @@ int main(int argc, char** argv) {
         c.sandbox = cfg.sandbox;
         c.cpuCapMs = cfg.cpuCapMs;
         c.seed = cfg.seed;
+#ifdef GC_EDITION
+        c.gcLock = rr::gcLock(gcEvent);   // from now on the teams' files may not change
+#endif
         std::error_code ec;
         std::filesystem::create_directories(seasonDir, ec);
         std::string base = seasonDir + "/" + fileName(c.name), path = base + ".json";
@@ -741,6 +860,12 @@ int main(int argc, char** argv) {
     // A championship round: the season's track, laps, rules and grid (qualifying first if the season has it).
     auto startRound = [&]() -> bool {
         if (season.over()) return false;
+#ifdef GC_EDITION
+        if (!gcIntact(season, seasonPath)) {
+            err = "the teams' files changed, this championship is invalid";
+            return false;
+        }
+#endif
         const rr::ChampRound& r = season.rounds[season.roundsDone()];
         for (int i = 0; i < (int)menu.tracks.size(); ++i)
             if (menu.tracks[i].file == r.track) menu.track = i;
@@ -1056,6 +1181,9 @@ int main(int argc, char** argv) {
         if (cfg.page == "season" && !menu.seasons.empty() &&
             rr::Championship::load(menu.seasons[0].file, season, &err)) {
             seasonPath = menu.seasons[0].file;
+#ifdef GC_EDITION
+            gcIntact(season, seasonPath);
+#endif
             openSeason();
         }
         if (cfg.page == "lineups") {
@@ -1156,6 +1284,9 @@ int main(int argc, char** argv) {
                 const std::string path = menu.seasons[menu.seasonPick].file;
                 if (rr::Championship::load(path, season, &err)) {
                     seasonPath = path;
+#ifdef GC_EDITION
+                    gcIntact(season, seasonPath);   // marks it invalid if a team changed
+#endif
                     openSeason();
                 } else {
                     toast(err);
@@ -1456,6 +1587,12 @@ int main(int argc, char** argv) {
             }
             if (inSeason && phase == Phase::Race && race->isOver() && !seasonRecorded && !shotMode) {
                 seasonRecorded = true;
+#ifdef GC_EDITION
+                if (!gcIntact(season, seasonPath)) {   // a team's files changed during the round: it does not count
+                    st.notice = "INVALID: " + season.gcInvalidWhy + ". This round is not recorded.   Enter: standings";
+                } else
+#endif
+                {
                 season.record(*race, raceIds);
                 const int done = season.roundsDone();
                 if (season.save(seasonPath, &err))
@@ -1463,6 +1600,7 @@ int main(int argc, char** argv) {
                                 " saved to the championship.   Enter: standings";
                 else
                     st.notice = "Could not save the championship: " + err;
+                }
             }
             if (!race->isOver() && loggedRace == race.get()) loggedRace = nullptr;
             if (phase != Phase::Race) st.focus = 0;

@@ -4,3 +4,18 @@ build-*/
 *.csv
 /*.json
 !*.trk
+
+# General Championship: private submissions and everything built or played on the hosting PC
+GC/teams/*
+!GC/teams/.gitkeep
+GC/submissions/*
+!GC/submissions/.gitkeep
+GC/.import/
+GC/bots/
+GC/build/
+GC/championships/
+GC/test_runs/
+GC/lineups/
+GC/GC_Race_viewer*
+GC/rr_gc*
+GC/rr_bothost*

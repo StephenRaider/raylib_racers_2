@@ -114,6 +114,8 @@ struct MenuState {
     // Raylib Racers 2: one car model and stock 2013 cars, so no liveries or stats to pick, tyres
     // that wear like 2013's, and grand prix distance for weekends and championships.
     bool rr2 = false;
+    // General Championship edition: the grid is the submitted teams, fixed; no testing, stats or grid editing.
+    bool gc = false;
     int rowOf(Row r) const;     // index in rows(), -1 if not shown
     int rowIndex(int row) const;  // which Round / Season a row is (rows of the same kind before it)
 
@@ -139,6 +141,7 @@ struct MenuState {
     struct SeasonLine {
         std::string file, name, leader, next;
         int done = 0, total = 0;
+        bool invalid = false;   // GC: the teams' files changed after the start
     };
     std::vector<SeasonLine> seasons;
     int seasonPick = -1;  // the season a ContinueSeason action is for
