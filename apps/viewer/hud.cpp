@@ -581,6 +581,13 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
             if (fh > 1) DrawRectangleRounded({r.x, r.y + r.height - fh, r.width, fh}, 0.18f, 4, tc);
             for (int g = 1; g < 4; ++g)  // tread grooves
                 DrawRectangleRec({r.x + g * tw / 4 - 1, r.y + 3, 2, r.height - 6}, Fade(BLACK, 0.35f));
+            {  // the brake: a slimmer, shorter block inboard of the tyre, coloured by its disc temperature
+                const float bw = 9, bh = th * 0.66f;
+                const Rectangle b = {i % 2 == 0 ? tx + tw + 3 : tx - 3 - bw, ty + (th - bh) / 2, bw, bh};
+                const Color bcol = tempColor(c.state.brakeTemp[i], c.phys.brakeTempLo, c.phys.brakeTempHi, 100);
+                DrawRectangleRounded({b.x + 1, b.y + 2, b.width, b.height}, 0.3f, 4, Fade(BLACK, 0.4f));
+                DrawRectangleRounded(b, 0.3f, 4, bcol);
+            }
             // temperatures: tyre big, brake disc small after a disc mark
             const float bt = c.state.brakeTemp[i];
             const Color bc = tempColor(bt, c.phys.brakeTempLo, c.phys.brakeTempHi, 100);
@@ -592,13 +599,12 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
             const float total = w1 + 8 + 10 + w2, ox = tx + tw / 2 - total / 2;
             const float oy = axle == 0 ? ty - 20 : ty + th + 3;
             textS(t1, ox, oy, 15, tc, true);
-            DrawCircleV({ox + w1 + 13, oy + 8}, 4, bc);
-            DrawCircleV({ox + w1 + 13, oy + 8}, 1.5f, Fade(BLACK, 0.6f));
+            DrawRectangleRounded({ox + w1 + 9, oy + 3, 5, 11}, 0.4f, 3, bc);  // a little brake, as below
             textS(t2, ox + w1 + 18, oy + 3, 11, bc, false, true);
         };
         // axles joining each pair, as in the reference
-        DrawRectangleRec({lx + tw, fy0 + th / 2 - 5, rxx - lx - tw, 10}, Fade(Color{60, 64, 72, 255}, 0.85f));
-        DrawRectangleRec({lx + tw, ry0 + th / 2 - 5, rxx - lx - tw, 10}, Fade(Color{60, 64, 72, 255}, 0.85f));
+        DrawRectangleRec({lx + tw + 12, fy0 + th / 2 - 4, rxx - lx - tw - 24, 8}, Fade(Color{60, 64, 72, 255}, 0.85f));
+        DrawRectangleRec({lx + tw + 12, ry0 + th / 2 - 4, rxx - lx - tw - 24, 8}, Fade(Color{60, 64, 72, 255}, 0.85f));
         tyre(0, lx, fy0);
         tyre(1, rxx, fy0);
         tyre(2, lx, ry0);
