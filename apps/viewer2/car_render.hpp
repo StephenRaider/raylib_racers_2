@@ -35,6 +35,10 @@ public:
     // (floor, diffuser, carbon) as they were (livery_default.png and livery_mask.png in the model's
     // folder). Does nothing without them, or when the folder has a livery.png of its own.
     void setPaint(Color c);
+    // The tyre compound fitted (RR_TIRE_*, update() follows the car's): the lettering on the sidewall is
+    // red on the softs, yellow on the mediums, white on the hards, green on intermediates (4) and blue
+    // on wets (5), which also have a grooved tread.
+    static int tyreLook(int compound);
     void draw(gfx::Renderer& r) const;
     void drawShadow(gfx::Renderer& r) const;
 
@@ -53,6 +57,7 @@ private:
         gfx::Material mat;
         const gfx::TextureSet* set = nullptr;
         bool livery = false;            // wears the team paint
+        unsigned char tyre = 0;         // wheel parts: 1 the sidewall (lettering), 2 the tread
     };
     std::vector<Part> body_parts_;
     std::vector<Part> steer_parts_;     // the steering wheel, turned about its column
@@ -74,6 +79,13 @@ private:
     Image paintBase_{}, paintMask_{};
     std::map<uint32_t, gfx::TextureSet*> paintSets_;
     gfx::TextureSet* paintSet(Color c);
+    // tyre looks: 0 as modelled (yellow lettering), 1 soft, 2 hard, 3 inter, 4 wet
+    int look_ = -1;
+    Image sideImg_[2]{};                // each wheel model's sidewall texture, read back once (owner)
+    std::map<int, gfx::TextureSet*> tyreSets_;
+    std::vector<Texture2D> tyreTex_;    // what those sets own
+    gfx::TextureSet* tyreSet(int kind, int role, int look, const gfx::TextureSet* base);
+    void setLook(int look);
 
     struct Wheel { Vector3 hub; float radius; bool front, mirrored; };
     Wheel wheels_[4]{};                 // FL, FR, RL, RR

@@ -96,6 +96,7 @@ bool CarRender::loadPart(const std::string& file, const Finish& paint, int liver
                 p.mesh = mesh;
                 p.set = set;
                 p.livery = !wheel && mi == liveryMaterial;
+                if (wheel) p.tyre = tex.width == 1024 && tex.height == 1024 ? 1 : tex.width == 1024 && tex.height == 256 ? 2 : 0;
                 p.mat.layer[0] = set;
                 p.mat.clearcoat = cc;
                 p.mat.clearcoatRoughness = ccRough;
@@ -218,6 +219,125 @@ void CarRender::setPaint(Color c) {
             }
 }
 
+namespace {
+
+// The sidewall's yellow (the ring, PIRELLI, P ZERO) in another colour, keeping its shading and edges.
+void recolourLetters(Image& img, Color to) {
+    unsigned char* px = (unsigned char*)img.data;
+    for (int i = 0, n = img.width * img.height; i < n; ++i) {
+        unsigned char* p = px + 4 * i;
+        const int mx = std::max({(int)p[0], (int)p[1], (int)p[2]});
+        if (mx < 40) continue;
+        const int yellow = std::min((int)p[0], (int)p[1]) - p[2];        // r and g high, b low
+        const float w = std::clamp((yellow - 40) / 120.0f, 0.0f, 1.0f);
+        if (w <= 0 || std::abs((int)p[0] - (int)p[1]) > 0.35f * mx) continue;
+        const float k = mx / 255.0f;
+        p[0] = (unsigned char)(p[0] + (to.r * k - p[0]) * w);
+        p[1] = (unsigned char)(p[1] + (to.g * k - p[1]) * w);
+        p[2] = (unsigned char)(p[2] + (to.b * k - p[2]) * w);
+    }
+}
+
+// A grooved tread, one tile = a quarter turn of the tyre by its width: height -> normal map and AO.
+// Wet: five grooves round the tyre cut across by slanted channels; intermediate: three, shallower.
+void treadMaps(int look, Image* normal, Image* orm) {
+    const int N = 1024;
+    const bool wet = look == 4;
+    const int rounds = wet ? 5 : 3;
+    const float depth = wet ? 1.0f : 0.55f;
+    std::vector<float> h(N * N);
+    auto smooth = [](float a, float b, float x) { const float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f); return t * t * (3 - 2 * t); };
+    for (int y = 0; y < N; ++y)
+        for (int x = 0; x < N; ++x) {
+            const float u = (x + 0.5f) / N, v = (y + 0.5f) / N;   // u round the tyre, v across it
+            const float k = v * (rounds + 1);
+            const float d1 = std::abs(k - std::round(k)) / (rounds + 1);   // across-distance to a round groove
+            const float g1 = (k > 0.5f && k < rounds + 0.5f) ? 1 - smooth(0.010f, 0.026f, d1) : 0.0f;
+            // slanted channels, alternating direction either side of the middle
+            const float slant = v < 0.5f ? 1.0f : -1.0f;
+            float t = u * (wet ? 4.0f : 3.0f) + slant * v * 1.6f;
+            t -= std::floor(t);
+            const float d2 = std::min(t, 1 - t) / (wet ? 4.0f : 3.0f);
+            const float g2 = (v > 0.07f && v < 0.93f) ? 1 - smooth(0.006f, 0.017f, d2) : 0.0f;
+            h[y * N + x] = 1.0f - depth * std::max(g1, g2);
+        }
+    *normal = GenImageColor(N, N, Color{128, 128, 255, 255});
+    *orm = GenImageColor(N, N, Color{255, 217, 0, 255});
+    unsigned char* np = (unsigned char*)normal->data;
+    unsigned char* op = (unsigned char*)orm->data;
+    const float strength = 7.0f;
+    for (int y = 0; y < N; ++y)
+        for (int x = 0; x < N; ++x) {
+            const auto H = [&](int xx, int yy) { return h[((yy + N) % N) * N + ((xx + N) % N)]; };
+            const float dx = (H(x + 1, y) - H(x - 1, y)) * strength, dy = (H(x, y + 1) - H(x, y - 1)) * strength;
+            Vector3 n = Vector3Normalize({-dx, -dy, 1});
+            unsigned char* q = np + 4 * (y * N + x);
+            q[0] = (unsigned char)((n.x * 0.5f + 0.5f) * 255);
+            q[1] = (unsigned char)((n.y * 0.5f + 0.5f) * 255);
+            q[2] = (unsigned char)((n.z * 0.5f + 0.5f) * 255);
+            unsigned char* o = op + 4 * (y * N + x);
+            o[0] = (unsigned char)(255 * (0.35f + 0.65f * h[y * N + x]));   // ambient occlusion: dark in the grooves
+        }
+}
+
+}  // namespace
+
+int CarRender::tyreLook(int compound) {
+    switch (compound) {
+        case RR_TIRE_SOFT: return 1;
+        case RR_TIRE_HARD: return 2;
+        case 4: return 3;   // intermediate
+        case 5: return 4;   // wet
+        default: return 0;  // medium
+    }
+}
+
+gfx::TextureSet* CarRender::tyreSet(int kind, int role, int look, const gfx::TextureSet* base) {
+    const int key = (kind << 12) | (role << 8) | look;
+    auto it = tyreSets_.find(key);
+    if (it != tyreSets_.end()) return it->second;
+    auto* set = new gfx::TextureSet(*base);   // shares the base's other textures
+    if (role == 1) {
+        static const Color letters[] = {{0, 0, 0, 0}, {222, 28, 36, 255}, {244, 244, 244, 255}, {30, 175, 75, 255}, {30, 110, 235, 255}};
+        if (!sideImg_[kind].data) sideImg_[kind] = LoadImageFromTexture(base->albedo);
+        Image img = ImageCopy(sideImg_[kind]);
+        recolourLetters(img, letters[look]);
+        Texture2D t = LoadTextureFromImage(img);
+        UnloadImage(img);
+        GenTextureMipmaps(&t);
+        SetTextureFilter(t, TEXTURE_FILTER_ANISOTROPIC_16X);
+        set->albedo = t;
+        tyreTex_.push_back(t);
+    } else if (role == 2 && look >= 3) {
+        Image n, o;
+        treadMaps(look, &n, &o);
+        set->normal = LoadTextureFromImage(n);
+        set->orm = LoadTextureFromImage(o);
+        UnloadImage(n);
+        UnloadImage(o);
+        for (Texture2D* t : {&set->normal, &set->orm}) {
+            GenTextureMipmaps(t);
+            SetTextureFilter(*t, TEXTURE_FILTER_ANISOTROPIC_16X);
+            tyreTex_.push_back(*t);
+        }
+    }
+    tyreSets_[key] = set;
+    return set;
+}
+
+void CarRender::setLook(int look) {
+    if (look == look_) return;
+    look_ = look;
+    for (int kind = 0; kind < 2; ++kind)
+        for (Part& p : wheel_parts_[kind]) {
+            if (!p.tyre) continue;
+            const gfx::TextureSet* s = p.set;
+            if (look != 0 && (p.tyre == 1 || look >= 3)) s = origin_->tyreSet(kind, p.tyre, look, p.set);
+            p.mat.layer[0] = s;
+            p.mat.normalStrength = p.tyre == 2 && look >= 3 ? 1.0f : 0.0f;
+        }
+}
+
 void CarRender::unload() {
     if (!owner_) {
         body_parts_.clear();
@@ -230,6 +350,14 @@ void CarRender::unload() {
     for (auto* list : {&body_parts_, &steer_parts_, &drs_parts_, &wheel_parts_[0], &wheel_parts_[1]}) {
         for (Part& p : *list) UnloadMesh(p.mesh);
         list->clear();
+    }
+    for (auto& kv : tyreSets_) delete kv.second;
+    tyreSets_.clear();
+    for (Texture2D& t : tyreTex_) UnloadTexture(t);
+    tyreTex_.clear();
+    for (Image& i : sideImg_) {
+        UnloadImage(i);
+        i = {};
     }
     for (auto& kv : paintSets_) {
         gfx::unloadTextureSet(*kv.second);
@@ -324,6 +452,7 @@ void CarRender::update(const rr::Car& car, const rr::Track& track, const TrackSc
         drsM_ = MatrixMultiply(MatrixMultiply(MatrixTranslate(-p.x, -p.y, -p.z), MatrixRotate(Vector3Normalize(drsAxis_), drsOpen_ * drsMax_)),
                                MatrixTranslate(p.x, p.y, p.z));
     }
+    setLook(tyreLook(car.state.compound));
     // wheels: on the road, front ones steered, all spinning with the car's speed
     for (int i = 0; i < 4; ++i) {
         const Wheel& wh = wheels_[i];
