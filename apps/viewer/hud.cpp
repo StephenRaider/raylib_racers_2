@@ -274,8 +274,11 @@ void Hud::drawMinimap(const rr::Race& race, const HudState& st) {
 
 void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, float atY) {
     const rr::Car& c = race.cars()[st.focus];
-    const float w = 380, h = 296;
-    const float x = atX >= 0 ? atX : GetScreenWidth() - w - 16, y = atY >= 0 ? atY : GetScreenHeight() - h - 16;
+    // cars with KERS or DRS get one more row, added above so the panel's bottom stays put
+    const bool hasKers = c.phys.kersPower > 0, hasDrs = c.phys.drsDragScale < 1.0f;
+    const float extra = hasKers || hasDrs ? 28.0f : 0.0f;
+    const float w = 380, h = 296 + extra;
+    const float x = atX >= 0 ? atX : GetScreenWidth() - w - 16, y = (atY >= 0 ? atY : GetScreenHeight() - h - 16) - (atY >= 0 ? extra : 0.0f);
     panel({x, y, w, h});
     char buf[128];
 
@@ -415,6 +418,29 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
         textRight("PIT LANE", x + w - 16, y + 46, 14, kAccent, true);
     }
 
+    if (extra > 0) {  // KERS battery and power, DRS: in a zone, and the flap open or not
+        const float ey = y + h - 26;
+        const Color orange{255, 170, 60, 255};
+        DrawLineEx({x + 14, ey - 4}, {x + w - 14, ey - 4}, 1, Fade(WHITE, 0.10f));
+        if (hasKers) {
+            text("KERS", x + 16, ey, 13, kDim);
+            const float frac = std::clamp(c.state.kersCharge / std::max(1.0f, c.phys.kersStore), 0.0f, 1.0f);
+            const Rectangle kb = {x + 56, ey + 3, 80, 9};
+            DrawRectangleRec(kb, Fade(WHITE, 0.12f));
+            DrawRectangleRec({kb.x, kb.y, kb.width * frac, kb.height}, orange);
+            const float kw = c.state.kersPowerNow / 1000.0f;
+            std::snprintf(buf, sizeof buf, "%.1f MJ  %s%.0f kW", c.state.kersCharge / 1e6f, kw > 1 ? "+" : "", kw);
+            text(buf, x + 144, ey - 1, 13, kw > 1 ? orange : kw < -1 ? Color{90, 200, 120, 255} : kText, false, true);
+        }
+        if (hasDrs) {
+            const bool open = c.state.drsOpen, zone = c.drsZone >= 0, ready = c.drsState == RR_DRS_AVAILABLE || c.drsState == RR_DRS_ARMED;
+            const Rectangle zr = {x + w - 134, ey - 2, 56, 20}, dr = {x + w - 72, ey - 2, 56, 20};
+            DrawRectangleRounded(zr, 0.3f, 6, zone ? Color{70, 140, 235, 255} : Fade(WHITE, 0.10f));
+            text("ZONE", zr.x + 9, zr.y + 3, 13, zone ? WHITE : kDim, true);
+            DrawRectangleRounded(dr, 0.3f, 6, open ? Color{80, 210, 110, 255} : ready ? Fade(orange, 0.55f) : Fade(WHITE, 0.10f));
+            text("DRS", dr.x + 13, dr.y + 3, 13, open || ready ? Color{20, 20, 24, 255} : kDim, true);
+        }
+    }
     if (c.state.damage > 0) {
         std::snprintf(buf, sizeof buf, "dmg %.0f", c.state.damage);
         textRight(buf, x + w - 70, y + 20, 13, Color{230, 120, 100, 255});
