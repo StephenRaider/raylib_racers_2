@@ -145,6 +145,11 @@ struct RacingLine {
     // learning the limit: grip multiplier per 20 m bin
     static constexpr float kBin = 20.0f;
     std::vector<float> adj;
+    // First-lap caution: with no notes from an earlier session the corner speeds are planned from the
+    // grip model alone, so the first lap gives up this share on the fast ones; the plan is redone at the line.
+    float firstCaution = 0.05f;
+    bool cautionLap = false;
+    int cautionStartLap = -1;
     float push = 1.2f;
     bool learn = true, adjDirty = false;
     int bin = -1;
@@ -302,6 +307,8 @@ void planSpeed(RacingLine& r, float mass, float tyreGrip) {
     for (int i = 0; i < n; ++i) {
         const float mu = mu0 * r.adj[r.binOf(i)];
         r.speed[i] = cornerSpeed(r.kappaSigned[i], mu, D, m, r.tp3[i], vCap);
+        if (r.cautionLap && r.speed[i] < vCap - 1.0f)  // corner-limited stretches only, not the straights
+            r.speed[i] *= 1.0f - r.firstCaution * std::clamp((r.speed[i] - 45.0f) / 17.0f, 0.0f, 1.0f);
     }
     // Backward pass: v_i^2 <= v_{i+1}^2 + 2 a ds, a from the friction left over after cornering.
     for (int pass = 0; pass < 2; ++pass) {
@@ -497,6 +504,7 @@ void* create(const RRTrackInfo* track, const RRCarSpec* car, int index, const ch
     r->L = track->length;
     r->ds = track->length / track->num_points;
     r->adj.assign((size_t)std::ceil(r->L / RacingLine::kBin), 1.0f);
+    r->firstCaution = std::clamp(param(params, "caution", 0.05f), 0.0f, 0.15f);
     r->session = cfg->session;
     r->memory = cfg->memory;
     r->memorySize = cfg->memory_size;
@@ -1174,6 +1182,14 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
         r->damage = dmg;
         planSpeed(*r, mass, in->tire_grip);
     }
+    if (r->cautionStartLap < 0) {
+        r->cautionStartLap = in->lap;
+        r->cautionLap = r->learn && !r->haveNotes && r->firstCaution > 0;
+        if (r->cautionLap) planSpeed(*r, mass, in->tire_grip);
+    } else if (r->cautionLap && in->lap != r->cautionStartLap) {
+        r->cautionLap = false;  // the lap has shown what the track and tyres have
+        r->adjDirty = true;
+    }
     learnTiming(*r, in, in->lap != r->plannedLap);
     if (in->lap != r->plannedLap) {
         r->plannedLap = in->lap;
@@ -1262,6 +1278,12 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
                 for (int w = 0; w < 4; ++w) hottest = std::max(hottest, in->tire_temp_wheel[w] - 3.0f);
             const float over = hottest - (in->tire_temp_window[1] + r->heat);
             if (over > 0) f *= std::max(0.9f, 1.0f - 0.006f * over);
+            // the coldest single tyre (grip -0.25% per C under the window): the mean hides it on a cold first lap
+            if (in->tire_temp_wheel[0] > 0) {
+                float coldest = 1e9f;
+                for (int w = 0; w < 4; ++w) coldest = std::min(coldest, in->tire_temp_wheel[w]);
+                f = std::min(f, std::max(0.8f, 1.0f - 0.0025f * std::max(0.0f, in->tire_temp_window[0] - coldest)));
+            }
         }
         const float dt = in->dt > 0 ? in->dt : 0.02f;
         r->tyreNow += (f - r->tyreNow) * std::min(1.0f, dt / 1.5f);
