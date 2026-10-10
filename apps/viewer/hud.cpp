@@ -649,12 +649,16 @@ void Hud::drawCarPanel(const rr::Race& race, const HudState& st, float atX, floa
         pa.shift = anim::ramp(pa.shift, rpmFrac > 0.95f ? 1.0f : 0.0f, dt_, 0.12f);
         if (pa.shift > 0) DrawRing(g, R + 2, R + 6, 135, 405, 48, Fade(kHot, 0.8f * anim::easeInOutCubic(pa.shift)));
         DrawRing(g, R - 13, R + 1, 135, 405, 48, Fade(BLACK, 0.3f));  // a dark bed under the segments
-        const int n = 34;
-        const float span = 270.0f / n;
-        for (int i = 0; i < n; ++i) {
-            const float f = (i + 0.5f) / n, a0 = 135 + i * span + 1.2f;
-            const Color lit = f > 0.92f ? kHot : f > 0.8f ? kYellowLit : kGreen;
-            icon::arc(g, R - 11, R, a0, a0 + span - 2.4f, f <= pa.rpm ? lit : Fade(WHITE, 0.16f));
+        // one smooth band: the unlit track, then the lit part in thin slices whose colour runs
+        // green to yellow to red with the revs
+        icon::arc(g, R - 11, R, 135, 405, Fade(WHITE, 0.16f));
+        const float end = 135 + 270 * anim::clamp01(pa.rpm);
+        for (float a0 = 135; a0 < end; a0 += 1.5f) {
+            const float f = (a0 + 0.75f - 135) / 270;
+            const Color col = f < 0.72f ? kGreen
+                            : f < 0.86f ? anim::mix(kGreen, kYellowLit, (f - 0.72f) / 0.14f)
+                                        : anim::mix(kYellowLit, kHot, anim::clamp01((f - 0.86f) / 0.08f));
+            DrawRing(g, R - 11, R, a0, std::min(end, a0 + 1.6f), 2, col);
         }
         std::snprintf(buf, sizeof buf, "%.0f", c.state.rpm);
         const float rw = width(buf, 17, true), uw = width("RPM", 10, true);
