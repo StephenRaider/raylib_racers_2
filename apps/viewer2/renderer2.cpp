@@ -7,6 +7,8 @@
 #include <filesystem>
 
 #include "car_render.hpp"
+#include "decals.hpp"
+#include "effects.hpp"
 #include "gfx.hpp"
 #include "liveries.hpp"
 #include "raymath.h"
@@ -68,6 +70,8 @@ struct Renderer::Impl {
     double lastTime = -1;
     int frame = 0;
     int skyIdx = 0;
+    Effects fx;
+    Decals decals;
 
     // camera state
     Vector3 eye{}, look{};
@@ -218,12 +222,15 @@ Renderer::~Renderer() = default;
 
 bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& assetsDir, std::string* err) {
     p_->assets = assetsDir;
+    p_->fx.setUseHeights(true);
     gImpl = p_.get();
     if (!p_->gr.init(std::max(2, GetScreenWidth()), std::max(2, GetScreenHeight()), err, 4)) return false;
     if (!p_->gr.loadSky(assetsDir + "/sky", "kloofendal_partly_cloudy", err)) return false;
     if (!p_->scene.build(track, assetsDir, seed ? seed : 1, err)) return false;
     return true;
 }
+
+void Renderer::stepEffects(const rr::Race& race, float dt) { p_->fx.update(race, dt); }
 
 void Renderer::adjustLighting(bool nextSky, float turn, float exposureFactor) {
     static const char* skies[] = {"kloofendal_partly_cloudy", "mud_road", "overcast_soil"};
@@ -240,6 +247,7 @@ void Renderer::adjustLighting(bool nextSky, float turn, float exposureFactor) {
 void Renderer::shutdown() {
     if (gImpl == p_.get()) gImpl = nullptr;
     p_->unloadCars();
+    p_->decals.release();
     p_->scene.unload();
     p_->gr.shutdown();
 }
@@ -249,6 +257,7 @@ void Renderer::shutdown() {
 void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float dt) {
     Impl& p = *p_;
     p.sync(race, dt);
+    p.fx.update(race, dt);
 
     focus = std::clamp(focus, 0, std::max(0, (int)race.cars().size() - 1));
     CarRender* cr = p.car(focus);
@@ -421,6 +430,8 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     p.gr.blobs.clear();
     for (auto& c : p.cars)
         if (c) c->draw(p.gr);
+    p.fx.setLevel(opt.quality);
+    p.decals.draw(p.gr, p.fx, race, cam.position);
     p.gr.drawSky();
     p.gr.endScene();
 

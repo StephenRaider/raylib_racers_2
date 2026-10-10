@@ -5,6 +5,7 @@
 // practice, qualifying and the race share it. Cells are 4 m along the track by 0.5 m across.
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 namespace rr {
@@ -20,11 +21,13 @@ public:
         length_ = trackLength;
         cols_ = std::max(1, (int)std::ceil(trackLength / kCellS));
         r_.assign((size_t)cols_ * kLanes, 0.0f);
+        ++version_;
     }
     bool empty() const { return r_.empty(); }
     int cols() const { return cols_; }
     float cell(int col, int lane) const { return r_[(size_t)col * kLanes + lane]; }  // 0 green .. 1 saturated
     float length() const { return length_; }
+    uint32_t version() const { return version_; }  // changes whenever rubber is laid, for a viewer that caches meshes
 
     // The mean over the track of the most rubbered lane in each column: how built up the racing line is.
     float meanLine() const {
@@ -47,7 +50,10 @@ public:
     // `wear` is the tyre wear a wheel has just taken on this spot.
     void add(float s, float lateral, float wear) {
         const int i = index(s, lateral);
-        if (i >= 0) r_[(size_t)i] = std::min(1.0f, r_[(size_t)i] + wear * kPerWear);
+        if (i >= 0 && r_[(size_t)i] < 1.0f) {
+            r_[(size_t)i] = std::min(1.0f, r_[(size_t)i] + wear * kPerWear);
+            ++version_;
+        }
     }
 
 private:
@@ -61,6 +67,7 @@ private:
     }
     float length_ = 0;
     int cols_ = 0;
+    uint32_t version_ = 0;
     std::vector<float> r_;
 };
 

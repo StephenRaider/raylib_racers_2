@@ -152,7 +152,9 @@ if(RR_BUILD_VIEWER)
     apps/viewer/hud.cpp apps/viewer/hud_results.cpp apps/viewer/hud_menu.cpp apps/viewer/hud_test.cpp
     apps/viewer/menu.cpp apps/viewer/test_figures.cpp apps/viewer/liveries.cpp
     apps/viewer/engine_sound.cpp apps/viewer/surface_sound.cpp apps/viewer/race_audio.cpp
+    apps/viewer/effects.cpp
     apps/viewer2/renderer2.cpp
+    apps/viewer2/decals.cpp
     apps/viewer2/car_render.cpp)
   target_compile_definitions(rr_viewer2 PRIVATE RR2_RENDERER=1)
   target_include_directories(rr_viewer2 PRIVATE apps/viewer apps/viewer2)
