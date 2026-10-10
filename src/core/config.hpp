@@ -6,6 +6,8 @@
 
 namespace rr {
 
+class TrackRubber;
+
 constexpr int RR_SESSION_MEMORY_BYTES = 256 * 1024;  // RR_SESSION_MEMORY
 
 struct EntrySpec {
@@ -44,6 +46,10 @@ struct RaceConfig {
     float fuelLimit = 0;       // > 0: no car starts with more fuel than this (qualifying runs)
     bool pitsClosed = false;   // no pit stops (testing sessions)
     bool neutral = true;       // incident holds, yellow flags and the virtual safety car in races (--vsc off)
+    bool rubber = true;        // tyres lay rubber on the track and the racing line gets grippier (--rubber off)
+    // The track's rubber, shared by the sessions of a weekend (whoever runs the weekend makes it once;
+    // a Race given none makes its own, empty or of another length means it starts green).
+    std::shared_ptr<TrackRubber> rubberMap;
     bool wet = false;          // a wet track: DRS is not allowed (there is no rain model yet)
     int session = 0;           // RR_SESSION_*: race, practice (laps is the lap limit), qualifying, test
     // Competition rules: each robot in its own locked-down process (rr_bothost, found

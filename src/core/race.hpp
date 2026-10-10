@@ -9,6 +9,7 @@
 #include "config.hpp"
 #include "robot_driver.hpp"
 #include "robot_loader.hpp"
+#include "rubber.hpp"
 #include "track.hpp"
 
 namespace rr {
@@ -211,6 +212,7 @@ public:
     float dt() const { return cfg_.dt; }
     int laps() const { return cfg_.laps; }
     const Track& track() const { return track_; }
+    const TrackRubber* rubber() const { return cfg_.rubber ? cfg_.rubberMap.get() : nullptr; }  // null when off
     const std::vector<Car>& cars() const { return cars_; }
     // For replays in the viewer only: overwrite a car's pose to show a recorded
     // moment, and restore it before the next step().

@@ -23,6 +23,7 @@ static std::string lapStr(float t) {
 static bool runWeekend(rr::RaceConfig& rc, std::vector<int>& ids, int practiceLaps, bool qualifying,
                        const std::vector<std::string>& bots, const std::vector<std::string>& tracks) {
     rr::startWeekend(rc.entries);
+    if (rc.rubber) rc.rubberMap = std::make_shared<rr::TrackRubber>();  // practice, qualifying and the race share the rubber
     std::string err;
     auto label = [&](size_t i) { return rc.entries[i].name.empty() ? rc.entries[i].robot : rc.entries[i].name; };
     if (practiceLaps > 0) {

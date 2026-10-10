@@ -103,6 +103,11 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
         return false;
     }
     if (!track_.load(trackPath, err)) return false;
+    if (cfg_.rubber) {
+        if (!cfg_.rubberMap) cfg_.rubberMap = std::make_shared<TrackRubber>();
+        if (cfg_.rubberMap->empty() || std::fabs(cfg_.rubberMap->length() - track_.length()) > 1.0f)
+            cfg_.rubberMap->reset(track_.length());
+    }
     if (cfg.entries.empty()) {
         if (err) *err = "no cars: add at least one --car";
         return false;
@@ -1236,6 +1241,7 @@ void Race::step() {
 
     const float dt = cfg_.dt;
     const WearRates rates{cfg_.fuelRate, cfg_.wearRate, cfg_.ambient};
+    TrackRubber* rubber = cfg_.rubber ? cfg_.rubberMap.get() : nullptr;
     for (Car& c : cars_) {
         Surface surf;
         c.surface = track_.surfaceAt(c.trackS, c.lateral, c.halfWidth);
@@ -1244,6 +1250,7 @@ void Race::step() {
         surf.perWheel = true;
         for (int w = 0; w < 4; ++w) {
             surf.wheelMu[w] = surfaceProps(c.wheelSurf[w]).mu;
+            if (rubber && c.wheelSurf[w] == RR_SURF_TARMAC) surf.wheelMu[w] *= rubber->grip(c.trackS, c.wheelLat[w]);
             surf.wheelDrag[w] = 0.25f * surfaceProps(c.wheelSurf[w]).drag;
         }
         wake(c);
@@ -1292,7 +1299,17 @@ void Race::step() {
             in.kers = 0;
             in.drs = 0;
         }
+        const float wearBefore[2] = {c.state.tireWear[0], c.state.tireWear[1]};
         stepCar(c.state, c.phys, in, (c.robotCfg.auto_gear != 0) || c.finished || over_, surf, rates, dt);
+        if (rubber && !c.dnf && c.pitState == RR_PIT_NONE) {
+            // each tyre lays down what it wears, on the tarmac it runs on (the wear rate multiplier is
+            // for pit-stop tests and does not mean more rubber)
+            for (int w = 0; w < 4; ++w) {
+                if (c.wheelSurf[w] != RR_SURF_TARMAC) continue;
+                const float worn = (c.state.tireWear[w / 2] - wearBefore[w / 2]) * 0.5f / std::max(rates.tire, 0.01f);
+                if (worn > 0) rubber->add(c.trackS, c.wheelLat[w], worn);
+            }
+        }
         if (!c.finished && !c.dnf) {
             for (int k = 0; k < 2; ++k) {
                 c.tempSum[k] += c.state.tireTemp[k];
@@ -1382,6 +1399,7 @@ bool Race::writeJson(const std::string& path, double wallSeconds) const {
     if (!f) return false;
     std::fprintf(f, "{\n  \"track\": \"%s\",\n  \"track_length\": %.2f,\n  \"laps\": %d,\n  \"seed\": %llu,\n",
                  jsonEscape(track_.name()).c_str(), track_.length(), cfg_.laps, (unsigned long long)cfg_.seed);
+    if (rubber()) std::fprintf(f, "  \"rubber_on_line\": %.3f,\n", rubber()->meanLine());
     std::fprintf(f, "  \"sim_time\": %.3f,\n  \"wall_time\": %.3f,\n  \"cars\": [\n", time_, wallSeconds);
     for (size_t p = 0; p < order_.size(); ++p) {
         const Car& c = cars_[order_[p]];
