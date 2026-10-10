@@ -34,6 +34,9 @@ struct Material {
     float clearcoatRoughness = 0.05f;
     bool macroVariation = false;  // break up texture tiling over large areas (terrain)
     bool doubleSided = false;
+    // A decal (skid marks, rubber, dust): lit like the rest, but alpha blended over what is behind it, with
+    // the vertex colour's alpha times the albedo texture's alpha as its opacity, and no depth writes.
+    bool decal = false;
     float depthBias = 0.0f;       // pulls the surface towards the camera (decals over the road), ~1e-6 units
     float alphaCut = 0.0f;        // > 0: leaf cut-outs, layer 0's alpha below this is dropped
     float translucency = 0.0f;    // sunlight through leaves seen from the shady side
@@ -90,6 +93,7 @@ public:
     void draw(const Mesh& mesh, const Material& mat, Matrix model);
     void drawInstanced(const Mesh& mesh, const Material& mat, unsigned instances, int count);
     Vector3 cameraPosition() const { return cam_.position; }
+    Vector3 cameraTarget() const { return cam_.target; }
     void drawSky();
     void endScene();
     // Tone map to the current framebuffer (the screen, or a texture for screenshots).
@@ -119,7 +123,7 @@ private:
     Matrix view_{}, proj_{};
     struct Locs {
         int mvp, model, normalMat, viewPos, lightVP, sunDir, sunColor, sh, skyYaw, fog, exposure, specMax;
-        int layerScale, tint, layerTint, depthBias, alphaCut, translucency, vertexTint, roughMul, metalMul, normalStrength, clearcoat, ccRough, macro, layers;
+        int layerScale, tint, layerTint, depthBias, alphaCut, translucency, vertexTint, roughMul, metalMul, normalStrength, clearcoat, ccRough, macro, layers, decal;
         int tex[9], shadow[2], spec, skyMap, blob, blobCount, a2c, fogColor, detile, colorMap, colorMapRect, colorMapRange, useColorMap;
     } L_{}, Li_{};  // plain and instanced
     void lookUp(Shader& s, Locs& l);
