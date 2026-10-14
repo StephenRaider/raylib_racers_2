@@ -261,8 +261,12 @@ void Renderer::adjustLighting(bool nextSky, float turn, float exposureFactor) {
     Impl& p = *p_;
     if (nextSky) {
         std::string err;
-        const int idx = (p.skyIdx + 1) % 3;
-        if (p.gr.loadSky(p.assets + "/sky", skies[idx], &err)) p.skyIdx = idx;
+        // four looks: the three skies, then the partly cloudy sky again as a hazy low-sun look
+        const int look = (p.skyIdx + 1) % 4;
+        if (p.gr.loadSky(p.assets + "/sky", skies[look == 3 ? 0 : look], &err)) {
+            p.skyIdx = look;
+            p.gr.haze = look == 3 ? 1.0f : 0.0f;
+        }
     }
     p.gr.skyYaw += turn;
     p.gr.exposure = std::clamp(p.gr.exposure * exposureFactor, 0.2f, 3.0f);
@@ -436,8 +440,12 @@ void Renderer::Impl::setPost(const Camera3D& cam, const ViewOptions& opt) {
     const bool lens = lastMode == CAM_CINEMATIC || lastMode == CAM_TV;
     const bool ground = lastMode != CAM_TOP && lastMode != CAM_OVERVIEW;
     const float tanHalf = std::tan(cam.fovy * DEG2RAD * 0.5f);
-    P.bloom = 0.35f;
-    P.bloomThreshold = 0.7f;
+    P.bloom = 0.35f + 0.1f * gr.haze;
+    P.ao = full ? 0.7f : 0.5f;
+    P.aoRadius = 0.8f;
+    P.grade = 1.0f;
+    P.bloomThreshold = 0.7f + 0.3f * gr.haze;
+    P.glare = gr.haze;
 
     if (ground) {
         P.hazeCoc = 2.4f;
