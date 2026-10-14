@@ -788,11 +788,12 @@ uniform vec2 texel;   // of the source
 uniform int first;
 uniform float exposure;
 uniform float threshold;
+uniform float cap;    // the most any one pixel may feed the bloom (a blinding glint should not flare)
 out vec4 finalColor;
 vec3 fetch(vec2 uv) {
     vec3 c = texture(texture0, uv).rgb;
     if (first == 0) return c;
-    c = min(c * exposure, vec3(30.0));
+    c = min(c * exposure, vec3(cap));
     float br = max(c.r, max(c.g, c.b));
     float knee = 0.5 * threshold;
     float soft = clamp(br - threshold + knee, 0.0, 2.0 * knee);
@@ -1583,6 +1584,7 @@ void Renderer::present(int x, int y, int width, int height) {
             seti(bloomDownS_, "first", i == 0 ? 1 : 0);
             set1(bloomDownS_, "exposure", exposure);
             set1(bloomDownS_, "threshold", P.bloomThreshold);
+            set1(bloomDownS_, "cap", P.glare > 0 ? 2.2f : 30.0f);
             runPass(bloomDown_[i], bloomDownS_, src);
         }
         for (int i = bloomLevels_ - 1; i >= 0; --i) {
