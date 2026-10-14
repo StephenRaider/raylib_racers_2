@@ -39,6 +39,7 @@ struct Material {
     float alphaCut = 0.0f;        // > 0: leaf cut-outs, layer 0's alpha below this is dropped
     float translucency = 0.0f;    // sunlight through leaves seen from the shady side
     bool detile = false;          // hide the texture's repetition (large flat surfaces: tarmac)
+    float grime = 0.0f;           // 0..1: rubber marks, dust and grit on the surface (kerbs)
     bool vertexTint = false;      // one-layer materials: the vertex colour's rgb multiplies the albedo
     // Far-off ground: a baked colour map (sRGB, over world x/z) replaces the texture layers
     // between colorMapRange.x and .y metres from the camera (terrain).
@@ -161,7 +162,7 @@ private:
     struct Locs {
         int mvp, model, normalMat, viewPos, lightVP, sunDir, sunColor, sh, skyYaw, fog, exposure, specMax;
         int layerScale, tint, layerTint, depthBias, alphaCut, translucency, vertexTint, roughMul, metalMul, normalStrength, clearcoat, ccRough, macro, layers;
-        int tex[9], shadow[2], spec, skyMap, blob, blobCount, a2c, fogColor, detile, colorMap, colorMapRect, colorMapRange, useColorMap;
+        int tex[9], shadow[2], spec, skyMap, blob, blobCount, a2c, fogColor, detile, grime, colorMap, colorMapRect, colorMapRange, useColorMap;
     } L_{}, Li_{};  // plain and instanced
     void lookUp(Shader& s, Locs& l);
     int bindMaterial(const Material& mat, const Locs& l, Matrix model, Matrix mvp);

@@ -169,6 +169,7 @@ uniform float translucency;
 uniform int vertexTint;
 uniform int alphaToCoverage;
 uniform int detile;
+uniform float grime;
 uniform vec3 viewPos;
 uniform mat4 lightVP[2];
 uniform vec3 sunDir;      // towards the sun
@@ -375,9 +376,27 @@ void main() {
         float m = vnoise(fragPos.xz * 0.025) * 0.6 + vnoise(fragPos.xz * 0.11) * 0.4;
         albedo *= 0.82 + 0.36 * m;
     }
+    float grimeDust = 0.0;
+    if (grime > 0.0) {
+        // kerbs: dust and brake dirt over everything, black rubber marks where cars have run over them,
+        // and scattered grit and debris close up
+        vec2 gp = fragPos.xz;
+        float cover = smoothstep(0.25, 0.75, vnoise(gp * 0.35) * 0.6 + vnoise(gp * 1.7) * 0.4);
+        grimeDust = grime * (0.35 + 0.65 * cover);
+        albedo = mix(albedo, albedo * vec3(0.5, 0.47, 0.44) + vec3(0.012, 0.01, 0.008), clamp(grimeDust * 0.95, 0.0, 1.0));
+        float streak = vnoise(vec2(gp.x * 0.5 + gp.y * 0.2, gp.y * 2.2 + gp.x * 0.3) * 1.3) * 0.55 + vnoise(gp * 6.0) * 0.45;
+        float rubber = smoothstep(0.45, 0.75, streak) * smoothstep(0.2, 0.6, vnoise(gp * 0.23 + 7.0)) * grime;
+        albedo *= 1.0 - 0.85 * rubber;
+        if (camDist < 50.0) {
+            vec2 cell = floor(gp * 45.0);
+            float speck = step(0.965, hash(cell)) * step(length(fract(gp * 45.0) - 0.5), 0.34 + 0.12 * hash(cell + 3.0));
+            albedo *= 1.0 - 0.75 * speck * grime * (1.0 - smoothstep(25.0, 50.0, camDist));
+        }
+        grimeDust = max(grimeDust, rubber * 0.5);
+    }
     float carOcc = blobCount > 0 ? carOcclusion() : 1.0;
     float ao = s.orm.r * fragColor.a * carOcc;
-    float rough = clamp(s.orm.g * roughMul, 0.04, 1.0);
+    float rough = clamp(mix(s.orm.g * roughMul, 0.95, grimeDust * 0.6), 0.04, 1.0);
     float metal = clamp(s.orm.b * metalMul, 0.0, 1.0);
 
     vec3 N = normalize(fragNormal);
@@ -793,6 +812,7 @@ void Renderer::lookUp(Shader& s, Locs& l) {
     l.skyYaw = U("skyYaw"); l.fog = U("fogDensity"); l.specMax = U("specScale");
     l.layerScale = U("layerScale"); l.tint = U("tint"); l.layerTint = U("layerTint"); l.roughMul = U("roughMul"); l.metalMul = U("metalMul");
     l.normalStrength = U("normalStrength"); l.clearcoat = U("clearcoat"); l.ccRough = U("ccRough");
+    l.grime = U("grime");
     l.macro = U("macroVariation"); l.layers = U("layers"); l.depthBias = U("depthBias");
     l.alphaCut = U("alphaCut"); l.translucency = U("translucency"); l.vertexTint = U("vertexTint");
     l.a2c = U("alphaToCoverage");
@@ -1173,6 +1193,7 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
     rlSetUniform(L.vertexTint, &vtint, RL_SHADER_UNIFORM_INT, 1);
     int macro = mat.macroVariation ? 1 : 0;
     rlSetUniform(L.macro, &macro, RL_SHADER_UNIFORM_INT, 1);
+    rlSetUniform(L.grime, &mat.grime, RL_SHADER_UNIFORM_FLOAT, 1);
     {
         int n = (int)std::min(blobs.size(), (size_t)kBlobs);
         rlSetUniform(L.blobCount, &n, RL_SHADER_UNIFORM_INT, 1);
