@@ -171,6 +171,7 @@ uniform int alphaToCoverage;
 uniform int decal;
 uniform int detile;
 uniform float grime;
+uniform float shadowDeepen;
 uniform vec3 viewPos;
 uniform mat4 lightVP[2];
 uniform vec3 sunDir;      // towards the sun
@@ -193,12 +194,17 @@ float carOcclusion() {
         vec4 b = blob[i];
         if (fragPos.y > b.w + 0.25) continue;  // the car itself, not the ground
         vec2 d = fragPos.xz - b.xy;
+        if (dot(d, d) > 40.0) continue;
         float c = cos(b.z), s = sin(b.z);
         // into the car's frame: x along the car, y across (world x/z -> sim x/-y)
         vec2 l = vec2(c * d.x - s * d.y, -s * d.x - c * d.y);
         vec2 q = abs(l) - vec2(2.3, 0.75);
         float dist = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
-        occ *= 1.0 - 0.75 * (1.0 - smoothstep(-0.5, 0.9, dist));
+        // a broad soft shade round the car, a darker core under the body, and a patch at each tyre
+        occ *= 1.0 - 0.8 * (1.0 - smoothstep(-0.5, 0.9, dist));
+        occ *= 1.0 - 0.5 * (1.0 - smoothstep(-0.35, 0.25, dist));
+        vec2 w = vec2((abs(l.x) - 1.72) / 0.6, (abs(l.y) - 0.72) / 0.42);
+        occ *= 1.0 - 0.5 * (1.0 - smoothstep(0.0, 1.0, length(w)));
     }
     return occ;
 }
@@ -421,7 +427,7 @@ void main() {
     float NoH = max(dot(n, H), 0.0), VoH = max(dot(V, H), 0.0);
     vec3 col = vec3(0.0);
     float shRaw = (NoL > 0.0 || translucency > 0.0) ? shadow(normalize(fragNormal)) : 0.0;
-    float sh = (NoL > 0.0 ? shRaw : 0.0) * mix(1.0, carOcc, 0.6);
+    float sh = (NoL > 0.0 ? shRaw : 0.0) * mix(1.0, carOcc, 0.9);
     // the shading normal can face the sun when the surface does not: no light there
     sh *= smoothstep(-0.05, 0.05, dot(normalize(fragNormal), L));
     vec3 F = F_Schlick(f0, VoH);
@@ -447,7 +453,12 @@ void main() {
     // and saves the reflection lookup
     vec3 envSpec = (rough > 0.8 ? irradianceSH(R) / PI * specScale : prefiltered(R, rough)) * (f0 * ab.x + ab.y) * horizon * horizon;
     float specAO = clamp(pow(NoV + ao, exp2(-16.0 * a - 1.0)) - 1.0 + ao, 0.0, 1.0);
-    vec3 amb = diffuseColor * E / PI * ao + envSpec * specAO;
+    // deeper, cooler shade: inside a shadow only the sky lights a surface, so on a sunny sky pull that
+    // light down a bit and towards blue (an overcast sky has no sun to contrast with)
+    float sunStrength = clamp((sunColor.g - 0.8) / 2.5, 0.0, 1.0);
+    float inShade = clamp(1.0 - sh, 0.0, 1.0) * sunStrength;
+    vec3 shadeTint = mix(vec3(1.0), vec3(0.86, 0.94, 1.1), inShade);
+    vec3 amb = diffuseColor * E / PI * ao * (1.0 - shadowDeepen * inShade) * shadeTint + envSpec * specAO;
     if (clearcoat > 0.0) {
         float FcV = 0.04 + 0.96 * pow(1.0 - NoV, 5.0);
         vec3 Rc = reflect(-V, normalize(fragNormal));
@@ -530,6 +541,7 @@ uniform sampler2D texture0;
 uniform sampler2D bloomTex;
 uniform float exposure;
 uniform float bloomAmt;
+uniform float grade;
 out vec4 finalColor;
 vec3 aces(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
@@ -540,6 +552,14 @@ void main() {
     if (bloomAmt > 0.0) hdr += texture(bloomTex, fragTexCoord).rgb * bloomAmt;  // (the bloom is already in exposed units)
     vec3 c = aces(hdr);
     c = pow(c, vec3(1.0 / 2.2));
+    if (grade > 0.0) {
+        // a little contrast and colour, cool shade and warm light
+        vec3 g = mix(c, c * c * (3.0 - 2.0 * c), 0.35);
+        float luma = dot(g, vec3(0.2126, 0.7152, 0.0722));
+        g = mix(vec3(luma), g, 1.12);
+        g *= mix(vec3(0.95, 0.98, 1.05), vec3(1.05, 1.01, 0.94), smoothstep(0.12, 0.75, luma));
+        c = mix(c, clamp(g, 0.0, 1.0), grade);
+    }
     vec2 q = fragTexCoord - 0.5;
     c *= 1.0 - dot(q, q) * 0.35;  // a gentle vignette
     finalColor = vec4(c, 1.0);
@@ -553,6 +573,78 @@ uniform float zNear;
 uniform float zFar;
 float linZ(float d) { return 2.0 * zNear * zFar / (zFar + zNear - (d * 2.0 - 1.0) * (zFar - zNear)); }
 float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }  // interleaved gradient noise
+)";
+
+// Screen-space ambient occlusion at half size: for each pixel, taps round it in the depth buffer count
+// how much nearby geometry rises above its surface (angle based, so a flat surface scores nothing).
+// The result is (occlusion, depth in metres) so that applying it can ignore taps from another surface.
+const char* kSsaoFS = R"(#version 330
+in vec2 fragTexCoord;
+uniform vec2 size;      // full-size px
+uniform vec2 tanFov;    // tan of the half field of view across and up
+uniform float radius;   // m
+out vec4 finalColor;
+vec3 viewPos(vec2 uv, float z) { return vec3((uv * 2.0 - 1.0) * tanFov * z, z); }
+void main() {
+    vec2 uv = fragTexCoord;
+    float d0 = texture(depthTex, uv).r;
+    if (d0 >= 0.99999) { finalColor = vec4(1.0, zFar, 0.0, 1.0); return; }
+    float z = linZ(d0);
+    vec3 P = viewPos(uv, z);
+    vec2 px = 1.0 / size;
+    vec3 Pr = viewPos(uv + vec2(px.x, 0.0), linZ(texture(depthTex, uv + vec2(px.x, 0.0)).r));
+    vec3 Pl = viewPos(uv - vec2(px.x, 0.0), linZ(texture(depthTex, uv - vec2(px.x, 0.0)).r));
+    vec3 Pu = viewPos(uv + vec2(0.0, px.y), linZ(texture(depthTex, uv + vec2(0.0, px.y)).r));
+    vec3 Pd = viewPos(uv - vec2(0.0, px.y), linZ(texture(depthTex, uv - vec2(0.0, px.y)).r));
+    vec3 dx = abs(Pr.z - P.z) < abs(P.z - Pl.z) ? Pr - P : P - Pl;
+    vec3 dy = abs(Pu.z - P.z) < abs(P.z - Pd.z) ? Pu - P : P - Pd;
+    vec3 N = normalize(cross(dx, dy));
+    if (dot(N, P) > 0.0) N = -N;
+    float focalPx = 0.5 * size.y / tanFov.y;
+    float rPx = clamp(radius * focalPx / z, 4.0, 60.0);
+    float rot = ign(gl_FragCoord.xy * 2.0) * 6.2831853;
+    float occ = 0.0;
+    const int N_TAPS = 14;
+    for (int i = 0; i < N_TAPS; ++i) {
+        float r = (float(i) + 0.5) / float(N_TAPS);
+        float a = float(i) * 2.3999632 + rot;
+        vec2 suv = uv + vec2(cos(a), sin(a)) * (r * r * 0.7 + 0.3) * rPx * px;
+        float zs = linZ(texture(depthTex, suv).r);
+        vec3 v = viewPos(suv, zs) - P;
+        float len = length(v);
+        float cosA = dot(v, N) / max(len, 1e-4);
+        occ += max(cosA - 0.12, 0.0) * (1.0 - smoothstep(radius * 0.8, radius * 2.0, len));
+    }
+    finalColor = vec4(clamp(1.0 - 1.9 * occ / float(N_TAPS), 0.0, 1.0), z, 0.0, 1.0);
+}
+)";
+
+// Applies the occlusion to the picture: a depth-aware blur of the half-size result (so it does not
+// bleed over silhouettes), fading out with distance.
+const char* kAoApplyFS = R"(#version 330
+in vec2 fragTexCoord;
+uniform sampler2D texture0;   // the picture
+uniform sampler2D aoTex;      // (occlusion, depth)
+uniform vec2 aoTexel;
+uniform float strength;
+out vec4 finalColor;
+void main() {
+    vec2 uv = fragTexCoord;
+    vec3 c = texture(texture0, uv).rgb;
+    float z = linZ(texture(depthTex, uv).r);
+    float fade = (1.0 - smoothstep(50.0, 160.0, z)) * strength;
+    if (fade <= 0.0) { finalColor = vec4(c, 1.0); return; }
+    float sum = 0.0, ws = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            vec2 t = texture(aoTex, uv + vec2(x, y) * aoTexel).rg;
+            float w = exp(-abs(t.y - z) / (0.04 * z + 0.05)) * (x == 0 && y == 0 ? 2.0 : 1.0);
+            sum += t.x * w;
+            ws += w;
+        }
+    float ao = ws > 0.0 ? sum / ws : 1.0;
+    finalColor = vec4(c * mix(1.0, ao, fade), 1.0);
+}
 )";
 
 // Depth of field: a gather over a disc of taps, each weighted by whether its own blur circle reaches
@@ -814,7 +906,7 @@ void Renderer::lookUp(Shader& s, Locs& l) {
     l.skyYaw = U("skyYaw"); l.fog = U("fogDensity"); l.specMax = U("specScale");
     l.layerScale = U("layerScale"); l.tint = U("tint"); l.layerTint = U("layerTint"); l.roughMul = U("roughMul"); l.metalMul = U("metalMul");
     l.normalStrength = U("normalStrength"); l.clearcoat = U("clearcoat"); l.ccRough = U("ccRough");
-    l.grime = U("grime");
+    l.grime = U("grime"); l.shadowDeepen = U("shadowDeepen");
     l.macro = U("macroVariation"); l.layers = U("layers"); l.decal = U("decal"); l.depthBias = U("depthBias");
     l.alphaCut = U("alphaCut"); l.translucency = U("translucency"); l.vertexTint = U("vertexTint");
     l.a2c = U("alphaToCoverage");
@@ -848,7 +940,9 @@ bool Renderer::init(int width, int height, std::string* err, int msaa) {
     bloomDownS_ = LoadShaderFromMemory(nullptr, kBloomDownFS);
     bloomUpS_ = LoadShaderFromMemory(nullptr, kBloomUpFS);
     puff_ = LoadShaderFromMemory(kPuffVS, kPuffFS);
-    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_, &dof_, &mblur_, &bloomDownS_, &bloomUpS_, &puff_})
+    ssao_ = LoadShaderFromMemory(nullptr, withPost(kSsaoFS).c_str());
+    aoApply_ = LoadShaderFromMemory(nullptr, withPost(kAoApplyFS).c_str());
+    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_, &dof_, &mblur_, &bloomDownS_, &bloomUpS_, &puff_, &ssao_, &aoApply_})
         if (s->id == 0 || s->id == rlGetShaderIdDefault()) {
             if (err) *err = "shader compilation failed (OpenGL 3.3 required); see the log above";
             return false;
@@ -1012,7 +1106,7 @@ void Renderer::shutdown() {
     }
     for (Texture2D* t : {&skyTex_, &specTex_})
         if (t->id) UnloadTexture(*t), t->id = 0;
-    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_, &dof_, &mblur_, &bloomDownS_, &bloomUpS_, &puff_})
+    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_, &dof_, &mblur_, &bloomDownS_, &bloomUpS_, &puff_, &ssao_, &aoApply_})
         if (s->id) UnloadShader(*s), s->id = 0;
     if (puffTex_.id) UnloadTexture(puffTex_), puffTex_ = Texture2D{};
     if (cube_.vertexCount) UnloadMesh(cube_), cube_ = Mesh{};
@@ -1203,6 +1297,7 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
     int macro = mat.macroVariation ? 1 : 0;
     rlSetUniform(L.macro, &macro, RL_SHADER_UNIFORM_INT, 1);
     rlSetUniform(L.grime, &mat.grime, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L.shadowDeepen, &shadowDeepen, RL_SHADER_UNIFORM_FLOAT, 1);
     {
         int n = (int)std::min(blobs.size(), (size_t)kBlobs);
         rlSetUniform(L.blobCount, &n, RL_SHADER_UNIFORM_INT, 1);
@@ -1380,6 +1475,20 @@ void Renderer::present(int x, int y, int width, int height) {
     };
     const float pxScale = h_ / 1080.0f;
 
+    if (P.ao > 0 && bloomLevels_ >= 1) {
+        // half-size occlusion into the first bloom level (which the bloom overwrites later), then applied
+        depthTexture(ssao_);
+        set2(ssao_, "size", (float)w_, (float)h_);
+        set2(ssao_, "tanFov", 1.0f / proj_.m0, 1.0f / proj_.m5);
+        set1(ssao_, "radius", P.aoRadius);
+        runPass(bloomDown_[0], ssao_, cur, {{"depthTex", depth_}});
+        Target& dst = nextTarget();
+        depthTexture(aoApply_);
+        set2(aoApply_, "aoTexel", 1.0f / bloomDown_[0].w, 1.0f / bloomDown_[0].h);
+        set1(aoApply_, "strength", P.ao);
+        runPass(dst, aoApply_, cur, {{"depthTex", depth_}, {"aoTex", bloomDown_[0].tex}});
+        cur = dst.tex;
+    }
     if (P.shutter > 0 && !P.cut && havePrev_) {
         Target& dst = nextTarget();
         depthTexture(mblur_);
@@ -1443,6 +1552,7 @@ void Renderer::present(int x, int y, int width, int height) {
     Texture2D t{cur, w_, h_, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16};
     SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "exposure"), &exposure, SHADER_UNIFORM_FLOAT);
     SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "bloomAmt"), &bloomAmt, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "grade"), &P.grade, SHADER_UNIFORM_FLOAT);
     BeginShaderMode(tonemap_);
     SetShaderValueTexture(tonemap_, GetShaderLocation(tonemap_, "bloomTex"), Texture2D{bloomTex, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16});
     // render targets are stored bottom-up

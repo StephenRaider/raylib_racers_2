@@ -70,6 +70,7 @@ public:
     float skyIntensity = 1.0f;  // ambient and reflections
     float sunIntensity = 1.0f;
     float fogDensity = 0.00022f;
+    float shadowDeepen = 0.5f;  // 0..1: how much darker (and cooler) the sky light is inside a shadow, in a sunny sky
     // Contact shadows under cars: up to kBlobs footprints (centre x, z, yaw, ground height),
     // darkening the ground under and just around each car. Set each frame.
     static constexpr int kBlobs = 8;
@@ -116,6 +117,10 @@ public:
         Vector4 keep = {0.5f, 0.5f, 0, 0};  // an ellipse (centre uv, radii uv) round the followed car, kept sharp
         float keepDepth = 0;    // m: anything nearer (the car's own nose) is not blurred
         bool cut = false;       // the camera jumped since the last frame: no smear
+        // screen-space ambient occlusion: contact darkening where surfaces meet (under cars, kerb and barrier feet)
+        float ao = 0;           // strength 0..1; 0 = off
+        float aoRadius = 0.7f;  // m
+        float grade = 0;        // 0..1: filmic colour grade (a little contrast, cool shade, warm light)
         // bloom
         float bloom = 0;        // strength; 0 = off
         float bloomThreshold = 1.0f;
@@ -144,7 +149,7 @@ private:
     static constexpr int kBloomLevels = 6;
     Target ppA_, ppB_, bloomDown_[kBloomLevels], bloomUp_[kBloomLevels];
     int bloomLevels_ = 0;
-    Shader dof_{}, mblur_{}, bloomDownS_{}, bloomUpS_{}, puff_{};
+    Shader dof_{}, mblur_{}, bloomDownS_{}, bloomUpS_{}, puff_{}, ssao_{}, aoApply_{};
     Texture2D puffTex_{};
     Matrix prevViewProj_{};
     bool havePrev_ = false;
@@ -165,7 +170,7 @@ private:
     Matrix view_{}, proj_{};
     struct Locs {
         int mvp, model, normalMat, viewPos, lightVP, sunDir, sunColor, sh, skyYaw, fog, exposure, specMax;
-        int layerScale, tint, layerTint, depthBias, alphaCut, translucency, vertexTint, roughMul, metalMul, normalStrength, clearcoat, ccRough, macro, layers, decal;
+        int layerScale, tint, layerTint, depthBias, alphaCut, translucency, vertexTint, roughMul, metalMul, normalStrength, clearcoat, ccRough, macro, layers, decal, shadowDeepen;
         int tex[9], shadow[2], spec, skyMap, blob, blobCount, a2c, fogColor, detile, grime, colorMap, colorMapRect, colorMapRange, useColorMap;
     } L_{}, Li_{};  // plain and instanced
     void lookUp(Shader& s, Locs& l);

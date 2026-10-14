@@ -437,6 +437,9 @@ void Renderer::Impl::setPost(const Camera3D& cam, const ViewOptions& opt) {
     const bool ground = lastMode != CAM_TOP && lastMode != CAM_OVERVIEW;
     const float tanHalf = std::tan(cam.fovy * DEG2RAD * 0.5f);
     P.bloom = 0.35f;
+    P.ao = full ? 0.7f : 0.5f;
+    P.aoRadius = 0.8f;
+    P.grade = 1.0f;
     P.bloomThreshold = 0.7f;
 
     if (ground) {
