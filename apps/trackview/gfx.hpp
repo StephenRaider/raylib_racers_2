@@ -70,6 +70,7 @@ public:
     float skyIntensity = 1.0f;  // ambient and reflections
     float sunIntensity = 1.0f;
     float fogDensity = 0.00022f;
+    float haze = 0.0f;          // 0..1: the "sunny haze" look: low warm sun, thicker warm fog, a halo round the sun
     float shadowDeepen = 0.5f;  // 0..1: how much darker (and cooler) the sky light is inside a shadow, in a sunny sky
     // Contact shadows under cars: up to kBlobs footprints (centre x, z, yaw, ground height),
     // darkening the ground under and just around each car. Set each frame.
@@ -120,6 +121,7 @@ public:
         // screen-space ambient occlusion: contact darkening where surfaces meet (under cars, kerb and barrier feet)
         float ao = 0;           // strength 0..1; 0 = off
         float aoRadius = 0.7f;  // m
+        float glare = 0;        // 0..1: sun glare, a warm veil when looking towards the sun, and lens ghosts
         float grade = 0;        // 0..1: filmic colour grade (a little contrast, cool shade, warm light)
         // bloom
         float bloom = 0;        // strength; 0 = off

@@ -523,6 +523,7 @@ uniform sampler2D skyTex;
 uniform float skyScale;
 uniform vec3 sunDir;
 uniform vec3 sunColor;
+uniform float halo;
 out vec4 finalColor;
 void main() {
     vec3 d = normalize(dir);
@@ -531,6 +532,7 @@ void main() {
     float cosA = dot(d, normalize(sunDir));
     float disc = smoothstep(0.99996, 0.99999, cosA);
     c += sunColor * disc * 20000.0 + sunColor * pow(max(cosA, 0.0), 600.0) * 2.0;
+    c += sunColor * (pow(max(cosA, 0.0), 14.0) * 0.05 + pow(max(cosA, 0.0), 3.0) * 0.012) * halo;  // a bright, hazy glow round the sun
     finalColor = vec4(c, 1.0);
 }
 )";
@@ -542,6 +544,15 @@ uniform sampler2D bloomTex;
 uniform float exposure;
 uniform float bloomAmt;
 uniform float grade;
+uniform float glare;
+uniform sampler2D depthTex;
+uniform vec3 camFwd;      // the camera's axes, right and up scaled by the tan of the half field of view
+uniform vec3 camRightT;
+uniform vec3 camUpT;
+uniform vec3 sunDirW;
+uniform vec3 sunTint;     // the sun's colour, normalised
+uniform vec3 sunUV;       // where the sun is on screen (uv, 1 when in front of the camera)
+uniform float aspect;
 out vec4 finalColor;
 vec3 aces(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
@@ -550,13 +561,41 @@ vec3 aces(vec3 x) {
 void main() {
     vec3 hdr = texture(texture0, fragTexCoord).rgb * exposure;
     if (bloomAmt > 0.0) hdr += texture(bloomTex, fragTexCoord).rgb * bloomAmt;  // (the bloom is already in exposed units)
+    if (glare > 0.0) {
+        vec2 ndc = fragTexCoord * 2.0 - 1.0;
+        vec3 ray = normalize(camFwd + camRightT * ndc.x + camUpT * ndc.y);
+        float cs = max(dot(ray, normalize(sunDirW)), 0.0);
+        // looking towards the sun: a warm veil over everything (light scattered inside the lens)
+        hdr += sunTint * (pow(cs, 5.0) * 0.16 + pow(cs, 40.0) * 0.28) * glare;
+        if (sunUV.z > 0.5) {
+            // the sun itself, if it is not behind something: a bright core, a bloom and ghosts across the frame
+            float vis = 0.0;
+            for (int i = 0; i < 8; ++i) {
+                float a = float(i) * 0.785398, r = 0.012 + 0.012 * float(i & 1);
+                vec2 u = sunUV.xy + vec2(cos(a) / aspect, sin(a)) * r;
+                vis += (u.x > 0.0 && u.x < 1.0 && u.y > 0.0 && u.y < 1.0 && texture(depthTex, u).r > 0.99999) ? 0.125 : 0.0;
+            }
+            vec2 dv = (fragTexCoord - sunUV.xy) * vec2(aspect, 1.0);
+            float r = length(dv);
+            vec3 g = sunTint * (exp(-r * 9.0) * 0.9 + exp(-r * 2.5) * 0.18);
+            vec2 axis = (vec2(0.5) - sunUV.xy);
+            for (int k = 0; k < 3; ++k) {
+                vec2 gp = sunUV.xy + axis * (0.7 + 0.55 * float(k));
+                float gr = length((fragTexCoord - gp) * vec2(aspect, 1.0));
+                float rad = 0.05 + 0.03 * float(k);
+                g += mix(vec3(1.0, 0.8, 0.5), vec3(0.6, 0.8, 1.0), float(k) / 2.0) * (smoothstep(rad, rad * 0.55, gr) * 0.05 + smoothstep(0.012, 0.0, abs(gr - rad)) * 0.05);
+            }
+            hdr += g * vis * glare;
+        }
+    }
     vec3 c = aces(hdr);
     c = pow(c, vec3(1.0 / 2.2));
+    if (glare > 0.0) c = mix(c, c * 0.88 + vec3(0.06, 0.055, 0.045), 0.7 * glare);  // lifted, hazy blacks
     if (grade > 0.0) {
         // a little contrast and colour, cool shade and warm light
         vec3 g = mix(c, c * c * (3.0 - 2.0 * c), 0.35);
         float luma = dot(g, vec3(0.2126, 0.7152, 0.0722));
-        g = mix(vec3(luma), g, 1.12);
+        g = mix(vec3(luma), g, mix(1.12, 0.74, glare));  // (muted in the sunny haze look)
         g *= mix(vec3(0.95, 0.98, 1.05), vec3(1.05, 1.01, 0.94), smoothstep(0.12, 0.75, luma));
         c = mix(c, clamp(g, 0.0, 1.0), grade);
     }
@@ -1160,6 +1199,14 @@ Sun Renderer::sun() const {
     Vector3 d = s.dir;
     s.dir = Vector3Normalize({c * d.x - sn * d.z, d.y, sn * d.x + c * d.z});
     s.irradiance = Vector3Scale(s.irradiance, sunIntensity);
+    if (haze > 0 && hasSun_) {
+        // lower, stronger and warmer: shadows lengthen and the light comes from ahead
+        const float elev = std::asin(std::clamp(s.dir.y, -1.0f, 1.0f));
+        const float want = elev + (0.43f - elev) * haze;
+        const float hl = std::max(std::sqrt(s.dir.x * s.dir.x + s.dir.z * s.dir.z), 1e-4f);
+        s.dir = {s.dir.x / hl * std::cos(want), std::sin(want), s.dir.z / hl * std::cos(want)};
+        s.irradiance = Vector3Multiply(s.irradiance, Vector3Lerp({1, 1, 1}, {1.2f, 1.08f, 0.88f}, haze));
+    }
     return s;
 }
 
@@ -1267,8 +1314,10 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
     for (int i = 0; i < 9; ++i) sh[i] = Vector3Scale(sh_[i], skyIntensity);
     rlSetUniform(L.sh, sh, RL_SHADER_UNIFORM_VEC3, 9);
     rlSetUniform(L.skyYaw, &skyYaw, RL_SHADER_UNIFORM_FLOAT, 1);
-    rlSetUniform(L.fog, &fogDensity, RL_SHADER_UNIFORM_FLOAT, 1);
+    const float fogD = fogDensity * (1.0f + 0.9f * haze);
+    rlSetUniform(L.fog, &fogD, RL_SHADER_UNIFORM_FLOAT, 1);
     Vector3 fc = Vector3Scale(fogColor_, skyIntensity);
+    if (haze > 0) fc = Vector3Lerp(fc, {fc.x * 1.25f + 0.10f, fc.y * 1.12f + 0.07f, fc.z * 0.98f + 0.03f}, haze);  // pale and warm
     rlSetUniform(L.fogColor, &fc, RL_SHADER_UNIFORM_VEC3, 1);
     rlSetUniform(L.specMax, &skyIntensity, RL_SHADER_UNIFORM_FLOAT, 1);
     int layers = 0;
@@ -1419,6 +1468,7 @@ void Renderer::drawSky() {
     if (!hasSun_) s.irradiance = {0, 0, 0};
     rlSetUniform(GetShaderLocation(sky_, "sunDir"), &s.dir, RL_SHADER_UNIFORM_VEC3, 1);
     rlSetUniform(GetShaderLocation(sky_, "sunColor"), &s.irradiance, RL_SHADER_UNIFORM_VEC3, 1);
+    rlSetUniform(GetShaderLocation(sky_, "halo"), &haze, RL_SHADER_UNIFORM_FLOAT, 1);
     int slot = 0;
     rlActiveTextureSlot(0);
     rlEnableTexture(skyTex_.id);
@@ -1553,7 +1603,38 @@ void Renderer::present(int x, int y, int width, int height) {
     SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "exposure"), &exposure, SHADER_UNIFORM_FLOAT);
     SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "bloomAmt"), &bloomAmt, SHADER_UNIFORM_FLOAT);
     SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "grade"), &P.grade, SHADER_UNIFORM_FLOAT);
+    if (P.glare > 0) {
+        const Sun sn = sun();
+        const Vector3 fwd = Vector3Normalize(Vector3Subtract(cam_.target, cam_.position));
+        const Vector3 right = Vector3Normalize(Vector3CrossProduct(fwd, cam_.up));
+        const Vector3 up = Vector3CrossProduct(right, fwd);
+        const Vector3 rt = Vector3Scale(right, 1.0f / proj_.m0), ut = Vector3Scale(up, 1.0f / proj_.m5);
+        const float mx = std::max(sn.irradiance.x, std::max(sn.irradiance.y, sn.irradiance.z));
+        Vector3 tint = {sn.irradiance.x / mx, sn.irradiance.y / mx, sn.irradiance.z / mx};
+        tint = Vector3Multiply(tint, {1.0f, 0.92f, 0.78f});
+        Vector3 su = {0, 0, 0};
+        const float front = Vector3DotProduct(fwd, sn.dir);
+        if (front > 0.05f) {
+            const float ax = Vector3DotProduct(sn.dir, right) / (front * (1.0f / proj_.m0));
+            const float ay = Vector3DotProduct(sn.dir, up) / (front * (1.0f / proj_.m5));
+            su = {ax * 0.5f + 0.5f, ay * 0.5f + 0.5f, 1.0f};
+        }
+        const Shader& T = tonemap_;
+        SetShaderValue(T, GetShaderLocation(T, "glare"), &P.glare, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(T, GetShaderLocation(T, "camFwd"), &fwd, SHADER_UNIFORM_VEC3);
+        SetShaderValue(T, GetShaderLocation(T, "camRightT"), &rt, SHADER_UNIFORM_VEC3);
+        SetShaderValue(T, GetShaderLocation(T, "camUpT"), &ut, SHADER_UNIFORM_VEC3);
+        SetShaderValue(T, GetShaderLocation(T, "sunDirW"), &sn.dir, SHADER_UNIFORM_VEC3);
+        SetShaderValue(T, GetShaderLocation(T, "sunTint"), &tint, SHADER_UNIFORM_VEC3);
+        SetShaderValue(T, GetShaderLocation(T, "sunUV"), &su, SHADER_UNIFORM_VEC3);
+        const float asp = (float)w_ / h_;
+        SetShaderValue(T, GetShaderLocation(T, "aspect"), &asp, SHADER_UNIFORM_FLOAT);
+    } else {
+        const float zero = 0;
+        SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "glare"), &zero, SHADER_UNIFORM_FLOAT);
+    }
     BeginShaderMode(tonemap_);
+    if (P.glare > 0) SetShaderValueTexture(tonemap_, GetShaderLocation(tonemap_, "depthTex"), Texture2D{depth_, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16});
     SetShaderValueTexture(tonemap_, GetShaderLocation(tonemap_, "bloomTex"), Texture2D{bloomTex, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16});
     // render targets are stored bottom-up
     DrawTexturePro(t, {0, 0, (float)w_, (float)-h_}, {(float)x, (float)y, (float)width, (float)height}, {0, 0}, 0, WHITE);
