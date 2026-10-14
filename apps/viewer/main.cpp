@@ -453,6 +453,7 @@ int main(int argc, char** argv) {
     // Applies the menu's choices and starts a fresh race (or, for a new track, a fresh grid to look at).
     auto applyMenu = [&]() -> bool {
         const TrackStats& ts = menu.stats();
+        cfg.rubberMap.reset();  // a quick race starts green
         cfg.track = ts.file;
         cfg.laps = menu.laps;
         cfg.wearRate = menu.wearRate();
@@ -710,6 +711,7 @@ int main(int argc, char** argv) {
     // Gives each car its weekend memory, then practice (if any) or qualifying.
     auto beginWeekend = [&](int practiceLaps) -> bool {
         rr::startWeekend(weekendEntries);
+        if (cfg.rubber) cfg.rubberMap = std::make_shared<rr::TrackRubber>();  // the weekend shares one track
         weekendPractice = practiceLaps;
         skipRun = skipAll = false;
         if (practiceLaps <= 0) return startQuali();
@@ -742,6 +744,7 @@ int main(int argc, char** argv) {
     // A championship round: the season's track, laps, rules and grid (qualifying first if the season has it).
     auto startRound = [&]() -> bool {
         if (season.over()) return false;
+        cfg.rubberMap.reset();  // a new round starts green
         const rr::ChampRound& r = season.rounds[season.roundsDone()];
         for (int i = 0; i < (int)menu.tracks.size(); ++i)
             if (menu.tracks[i].file == r.track) menu.track = i;
@@ -1391,6 +1394,7 @@ int main(int argc, char** argv) {
                 if (!inSeason) applyMenu();  // back to the grid
             }
             if (IsKeyPressed(KEY_R) && phase == Phase::Race && !inSeason) {
+                cfg.rubberMap.reset();
                 auto fresh = makeRace(cfg, paths);
                 if (fresh) {
                     race = std::move(fresh);

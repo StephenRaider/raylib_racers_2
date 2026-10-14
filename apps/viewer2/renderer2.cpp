@@ -7,6 +7,8 @@
 #include <filesystem>
 
 #include "car_render.hpp"
+#include "decals.hpp"
+#include "effects.hpp"
 #include "gfx.hpp"
 #include "liveries.hpp"
 #include "raymath.h"
@@ -68,6 +70,8 @@ struct Renderer::Impl {
     double lastTime = -1;
     int frame = 0;
     int skyIdx = 0;
+    Effects fx;
+    Decals decals;
 
     // camera state
     Vector3 eye{}, look{};
@@ -218,12 +222,15 @@ Renderer::~Renderer() = default;
 
 bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& assetsDir, std::string* err) {
     p_->assets = assetsDir;
+    p_->fx.setUseHeights(true);
     gImpl = p_.get();
     if (!p_->gr.init(std::max(2, GetScreenWidth()), std::max(2, GetScreenHeight()), err, 4)) return false;
     if (!p_->gr.loadSky(assetsDir + "/sky", "kloofendal_partly_cloudy", err)) return false;
     if (!p_->scene.build(track, assetsDir, seed ? seed : 1, err)) return false;
     return true;
 }
+
+void Renderer::stepEffects(const rr::Race& race, float dt) { p_->fx.update(race, dt); }
 
 void Renderer::adjustLighting(bool nextSky, float turn, float exposureFactor) {
     static const char* skies[] = {"kloofendal_partly_cloudy", "mud_road", "overcast_soil"};
@@ -240,6 +247,7 @@ void Renderer::adjustLighting(bool nextSky, float turn, float exposureFactor) {
 void Renderer::shutdown() {
     if (gImpl == p_.get()) gImpl = nullptr;
     p_->unloadCars();
+    p_->decals.release();
     p_->scene.unload();
     p_->gr.shutdown();
 }
@@ -249,6 +257,7 @@ void Renderer::shutdown() {
 void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float dt) {
     Impl& p = *p_;
     p.sync(race, dt);
+    p.fx.update(race, dt);
 
     focus = std::clamp(focus, 0, std::max(0, (int)race.cars().size() - 1));
     CarRender* cr = p.car(focus);
@@ -389,13 +398,15 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     if (GetScreenWidth() != p.gr.width() || GetScreenHeight() != p.gr.height()) p.gr.resize(std::max(2, GetScreenWidth()), std::max(2, GetScreenHeight()));
     const Camera3D& cam = camera;
     const Vector3 fwd = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
+    // a retired car has been taken off the track: no body, no shadow
+    auto shown = [&](int i) { return p.cars[i] && i < (int)race.cars().size() && !race.cars()[i].dnf; };
 
     // shadows: a sharp cascade round the view's middle, a coarse one out to about a kilometre
     // (redrawn every third frame: it changes slowly)
     p.gr.beginShadows(Vector3Add(cam.position, Vector3Scale(fwd, 60.0f)), 110.0f, 0);
     p.scene.drawShadows(p.gr);
-    for (auto& c : p.cars)
-        if (c) c->drawShadow(p.gr);
+    for (int i = 0; i < (int)p.cars.size(); ++i)
+        if (shown(i)) p.cars[i]->drawShadow(p.gr);
     p.gr.endShadows();
     if (p.frame % 3 == 0) {
         p.gr.beginShadows(Vector3Add(cam.position, Vector3Scale(fwd, 550.0f)), 750.0f, 1);
@@ -408,7 +419,7 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     struct Near { float d; int i; };
     std::vector<Near> near;
     for (int i = 0; i < (int)p.cars.size(); ++i)
-        if (p.cars[i]) near.push_back({Vector3Distance(p.cars[i]->origin(), cam.position), i});
+        if (shown(i)) near.push_back({Vector3Distance(p.cars[i]->origin(), cam.position), i});
     std::sort(near.begin(), near.end(), [](const Near& a, const Near& b) { return a.d < b.d; });
     p.gr.blobs.clear();
     for (int k = 0; k < (int)near.size() && k < gfx::Renderer::kBlobs; ++k) {
@@ -419,8 +430,10 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     p.scene.draw(p.gr);
 
     p.gr.blobs.clear();
-    for (auto& c : p.cars)
-        if (c) c->draw(p.gr);
+    for (int i = 0; i < (int)p.cars.size(); ++i)
+        if (shown(i)) p.cars[i]->draw(p.gr);
+    p.fx.setLevel(opt.quality);
+    p.decals.draw(p.gr, p.fx, race, cam.position);
     p.gr.drawSky();
     p.gr.endScene();
 

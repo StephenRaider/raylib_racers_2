@@ -103,6 +103,11 @@ bool Race::setup(const RaceConfig& cfg, const std::vector<std::string>& botDirs,
         return false;
     }
     if (!track_.load(trackPath, err)) return false;
+    if (cfg_.rubber) {
+        if (!cfg_.rubberMap) cfg_.rubberMap = std::make_shared<TrackRubber>();
+        if (cfg_.rubberMap->empty() || std::fabs(cfg_.rubberMap->length() - track_.length()) > 1.0f)
+            cfg_.rubberMap->reset(track_.length());
+    }
     if (cfg.entries.empty()) {
         if (err) *err = "no cars: add at least one --car";
         return false;
@@ -320,7 +325,7 @@ void Race::computeSensors(Car& c) {
 
     for (float& o : s.opponents) o = RR_SENSOR_RANGE;
     for (const Car& other : cars_) {
-        if (&other == &c) continue;
+        if (&other == &c || other.dnf) continue;  // a retired car has been taken away
         Vec2 d = other.state.pos - st.pos;
         float dist = length(d);
         if (dist >= RR_SENSOR_RANGE) continue;
@@ -453,7 +458,7 @@ void Race::computeSensors(Car& c) {
     int nc = 0;
     for (size_t j = 0; j < cars_.size() && nc < 64; ++j) {
         const Car& o = cars_[j];
-        if (&o == &c) continue;
+        if (&o == &c || o.dnf) continue;
         float ds = wrapDs(o.trackS - c.trackS);
         cand[nc++] = {std::fabs(ds), (int)j, ds};
     }
@@ -528,7 +533,8 @@ void Race::updateBlueFlags() {
     }
 }
 
-// The robot is out (crashed, hung, over the CPU limit): the car stops where it is.
+// The robot is out (crashed, hung, over the CPU limit, removed by the marshals). The car is taken off
+// the track at once: no collisions, no sensors, no slipstream, and the viewers stop drawing it.
 void Race::retire(Car& c, const std::string& why) {
     c.dnf = true;
     c.dnfReason = why;
@@ -849,6 +855,7 @@ void Race::updateProgress(Car& c) {
         if (c.lapsDone >= cfg_.laps) {
             c.finished = true;
             c.finishTime = time_;
+            c.finishFuel = c.state.fuel;
             if (twoCompoundRule() && (c.compoundsUsed & (c.compoundsUsed - 1)) == 0) {
                 c.penalties++;
                 c.penaltyTime += RR_TWO_COMPOUND_PENALTY;
@@ -870,15 +877,28 @@ void Race::updateProgress(Car& c) {
     }
 
     float speed = std::sqrt(c.state.vx * c.state.vx + c.state.vy * c.state.vy);
-    c.stuckTime = (speed < 0.5f && c.pitState != RR_PIT_SERVICE) ? c.stuckTime + cfg_.dt : 0.0f;
+    // A car waiting behind a stopped one is blocked, not stuck: the clock runs only for the one in front.
+    c.stuckTime = (speed < 0.5f && c.pitState != RR_PIT_SERVICE && !c.held && !queued(c)) ? c.stuckTime + cfg_.dt : 0.0f;
     c.noFuelTime = (speed < 0.5f && c.state.fuel <= 0) ? c.noFuelTime + cfg_.dt : 0.0f;
+    // The pit exit road is one car wide: a car that stalls there shuts it for everyone behind, so the
+    // marshals take it away much sooner than one stopped elsewhere.
+    const bool exitRoad = track_.hasPit() && track_.inSpan(c.trackS, track_.pit().lane_end_s, track_.pit().exit_s) &&
+                          c.lateral * (float)track_.pit().side > c.halfWidth;
     if (c.noFuelTime > 5.0f) {
-        c.dnf = true;
-        c.dnfReason = "out of fuel";
-    } else if (c.stuckTime > 60.0f) {
-        c.dnf = true;
-        c.dnfReason = "stuck";
+        retire(c, "out of fuel");
+    } else if (c.stuckTime > (exitRoad ? kPitExitStallTime : 60.0f)) {
+        retire(c, exitRoad ? "stalled at the pit exit" : "stuck");
     }
+}
+
+bool Race::queued(const Car& c) const {
+    for (const Car& o : cars_) {
+        if (&o == &c || o.dnf) continue;
+        const float ahead = wrapDs(o.trackS - c.trackS);
+        if (ahead <= 0.5f || ahead > 12.0f || std::fabs(o.lateral - c.lateral) > 2.6f) continue;
+        if (std::sqrt(o.state.vx * o.state.vx + o.state.vy * o.state.vy) < 3.0f) return true;
+    }
+    return false;
 }
 
 // Running in another car's wake. Slipstream: less drag, strongest right
@@ -888,7 +908,7 @@ void Race::wake(Car& c) const {
     c.draft = c.dirtyAir = 0;
     if (c.state.vx < 15.0f) return;
     for (const Car& o : cars_) {
-        if (&o == &c || o.state.vx < 15.0f) continue;
+        if (&o == &c || o.dnf || o.state.vx < 15.0f) continue;
         Vec2 rel = rotate(c.state.pos - o.state.pos, -o.state.yaw);
         float behind = -rel.x, side = std::fabs(rel.y);
         if (behind < 3.0f || behind > kDraftLength || side > kDraftWidth) continue;
@@ -1236,6 +1256,7 @@ void Race::step() {
 
     const float dt = cfg_.dt;
     const WearRates rates{cfg_.fuelRate, cfg_.wearRate, cfg_.ambient};
+    TrackRubber* rubber = cfg_.rubber ? cfg_.rubberMap.get() : nullptr;
     for (Car& c : cars_) {
         Surface surf;
         c.surface = track_.surfaceAt(c.trackS, c.lateral, c.halfWidth);
@@ -1244,6 +1265,7 @@ void Race::step() {
         surf.perWheel = true;
         for (int w = 0; w < 4; ++w) {
             surf.wheelMu[w] = surfaceProps(c.wheelSurf[w]).mu;
+            if (rubber && c.wheelSurf[w] == RR_SURF_TARMAC) surf.wheelMu[w] *= rubber->grip(c.trackS, c.wheelLat[w]);
             surf.wheelDrag[w] = 0.25f * surfaceProps(c.wheelSurf[w]).drag;
         }
         wake(c);
@@ -1266,6 +1288,9 @@ void Race::step() {
         RRControl in = c.control;
         c.pitLimiter = false;
         if (!c.dnf && (c.finished || over_)) {
+            // The cool-down lap runs on the house: a car that crossed the line on its last drop of fuel
+            // must not crawl round on the racing line in front of the cars still on their last lap.
+            if (c.finished) c.state.fuel = std::max(c.state.fuel, kCoolDownFuel);
             in = coolDownControl(c);
         } else if (c.pitState == RR_PIT_SERVICE || c.held) {
             in = RRControl{};
@@ -1292,7 +1317,17 @@ void Race::step() {
             in.kers = 0;
             in.drs = 0;
         }
+        const float wearBefore[2] = {c.state.tireWear[0], c.state.tireWear[1]};
         stepCar(c.state, c.phys, in, (c.robotCfg.auto_gear != 0) || c.finished || over_, surf, rates, dt);
+        if (rubber && !c.dnf && c.pitState == RR_PIT_NONE) {
+            // each tyre lays down what it wears, on the tarmac it runs on (the wear rate multiplier is
+            // for pit-stop tests and does not mean more rubber)
+            for (int w = 0; w < 4; ++w) {
+                if (c.wheelSurf[w] != RR_SURF_TARMAC) continue;
+                const float worn = (c.state.tireWear[w / 2] - wearBefore[w / 2]) * 0.5f / std::max(rates.tire, 0.01f);
+                if (worn > 0) rubber->add(c.trackS, c.wheelLat[w], worn);
+            }
+        }
         if (!c.finished && !c.dnf) {
             for (int k = 0; k < 2; ++k) {
                 c.tempSum[k] += c.state.tireTemp[k];
@@ -1382,6 +1417,7 @@ bool Race::writeJson(const std::string& path, double wallSeconds) const {
     if (!f) return false;
     std::fprintf(f, "{\n  \"track\": \"%s\",\n  \"track_length\": %.2f,\n  \"laps\": %d,\n  \"seed\": %llu,\n",
                  jsonEscape(track_.name()).c_str(), track_.length(), cfg_.laps, (unsigned long long)cfg_.seed);
+    if (rubber()) std::fprintf(f, "  \"rubber_on_line\": %.3f,\n", rubber()->meanLine());
     std::fprintf(f, "  \"sim_time\": %.3f,\n  \"wall_time\": %.3f,\n  \"cars\": [\n", time_, wallSeconds);
     for (size_t p = 0; p < order_.size(); ++p) {
         const Car& c = cars_[order_[p]];
@@ -1400,7 +1436,7 @@ bool Race::writeJson(const std::string& path, double wallSeconds) const {
                      c.collisions, c.state.damage);
         std::fprintf(f, "\"fuel_left\": %.2f, \"tire_wear\": [%.3f, %.3f], \"tire_compound\": %d, \"pit_stops\": %d, "
                         "\"pit_lane_time\": %.2f, \"pit_laps\": [",
-                     c.state.fuel, c.state.tireWear[0], c.state.tireWear[1], c.state.compound, c.pitStops, c.pitLaneTime);
+                     c.finishFuel >= 0 ? c.finishFuel : c.state.fuel, c.state.tireWear[0], c.state.tireWear[1], c.state.compound, c.pitStops, c.pitLaneTime);
         for (size_t k = 0; k < c.pitLaps.size(); ++k) std::fprintf(f, "%s%d", k ? ", " : "", c.pitLaps[k]);
         std::fprintf(f, "], \"lap_times\": [");
         for (size_t k = 0; k < c.lapTimes.size(); ++k) std::fprintf(f, "%s%.3f", k ? ", " : "", c.lapTimes[k]);
