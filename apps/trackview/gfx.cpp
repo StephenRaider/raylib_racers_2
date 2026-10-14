@@ -155,7 +155,9 @@ in vec4 fragTangent;
 in vec2 fragUV;
 in vec4 fragColor;
 uniform sampler2D albedo0, normal0, orm0, albedo1, normal1, orm1, albedo2, normal2, orm2;
-uniform sampler2DShadow shadowMap0, shadowMap1;
+uniform sampler2DShadow shadowMap0, shadowMap1, shadowMap2;
+uniform int carShadow;     // shadowMap2 (the cars round the one in view) was drawn this frame
+uniform float ambientScale;
 uniform sampler2D specAtlas;
 uniform sampler2D skyMap;  // the full-resolution sky, for mirror-like reflections (car paint)
 uniform int layers;
@@ -172,7 +174,7 @@ uniform int decal;
 uniform int detile;
 uniform float grime;
 uniform vec3 viewPos;
-uniform mat4 lightVP[2];
+uniform mat4 lightVP[3];
 uniform vec3 sunDir;      // towards the sun
 uniform vec3 sunColor;    // irradiance
 uniform vec3 sh[9];       // sky irradiance, spherical harmonics (already scaled)
@@ -186,19 +188,36 @@ uniform int useColorMap;
 uniform vec4 blob[8];   // car footprints: x, z, yaw, ground height
 uniform int blobCount;
 
-// Soft occlusion of the ground under and around the cars (an F1 car sits 3 cm off it).
-float carOcclusion() {
-    float occ = 1.0;
+// Ambient occlusion round the cars, from their footprints (an F1 car sits 3 cm off the road):
+// the ground under and around a car loses most of its sky, and the car's own underside and
+// lower body lose some. x: on the sky light, y: on the sun (under the car, where the shadow
+// map's bias lets some through).
+vec2 carOcclusion(vec3 N) {
+    vec2 occ = vec2(1.0);
     for (int i = 0; i < blobCount; ++i) {
         vec4 b = blob[i];
-        if (fragPos.y > b.w + 0.25) continue;  // the car itself, not the ground
+        float h = fragPos.y - b.w;
+        if (h > 1.4) continue;
         vec2 d = fragPos.xz - b.xy;
         float c = cos(b.z), s = sin(b.z);
         // into the car's frame: x along the car, y across (world x/z -> sim x/-y)
         vec2 l = vec2(c * d.x - s * d.y, -s * d.x - c * d.y);
-        vec2 q = abs(l) - vec2(2.3, 0.75);
+        vec2 q = abs(l) - vec2(2.35, 0.8);
         float dist = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
-        occ *= 1.0 - 0.75 * (1.0 - smoothstep(-0.5, 0.9, dist));
+        if (dist > 1.25) continue;
+        if (h < 0.15 && N.y > 0.7) {
+            // the ground: dark right under the car, a soft halo round it
+            float core = 1.0 - smoothstep(-0.45, 0.05, dist);
+            float halo = 1.0 - smoothstep(-0.4, 1.2, dist);
+            occ.x *= 1.0 - 0.6 * halo - 0.32 * core;
+            occ.y *= 1.0 - 0.9 * core;
+        } else {
+            // the car (or anything over the footprint): the low parts and the underside see the dark road
+            float near = 1.0 - smoothstep(0.0, 0.45, dist);
+            float low = 1.0 - smoothstep(0.03, 0.75, h);
+            float down = max(-N.y, 0.0) * (1.0 - smoothstep(0.15, 1.0, h));
+            occ.x *= 1.0 - near * clamp(0.5 * low + 0.45 * down, 0.0, 0.8);
+        }
     }
     return occ;
 }
@@ -230,6 +249,8 @@ vec3 prefiltered(vec3 r, float rough) {
     return mix(specLevel(uv, k), specLevel(uv, min(k + 1, 5)), l - float(k)) * specScale;
 }
 
+)"  // (split: MSVC caps a single string literal at 16 KB)
+R"(
 // Karis' analytic fit of the split-sum environment BRDF.
 vec2 envBRDF(float rough, float NoV) {
     const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
@@ -267,12 +288,19 @@ float shadowIn(sampler2DShadow map, mat4 vp, vec3 n, float offset, float bias, i
     return lit / count;
 }
 
-// Two cascades: the sharp one near the camera, then the coarse one out to ~1 km.
+// Two cascades: the sharp one near the camera, then the coarse one out to ~1 km; and over
+// them the cars near the one in view, from their own fine map (about 1 cm a texel, a tight
+// bias so the shadow reaches in under the floor, and a wide filter for a soft edge).
 float shadow(vec3 n) {
     bool inside;
+    float sc = 1.0;
+    if (carShadow != 0) {
+        float slope = 1.0 - clamp(dot(n, normalize(sunDir)), 0.0, 1.0);
+        sc = shadowIn(shadowMap2, lightVP[2], n, 0.012 + 0.03 * slope, 0.00004, 2, inside);
+    }
     float s0 = shadowIn(shadowMap0, lightVP[0], n, 0.08, 0.00008, 1, inside);
-    if (inside) return s0;
-    return shadowIn(shadowMap1, lightVP[1], n, 0.5, 0.00006, 0, inside);
+    if (inside) return min(sc, s0);
+    return min(sc, shadowIn(shadowMap1, lightVP[1], n, 0.5, 0.00006, 0, inside));
 }
 
 // a cheap arithmetic hash (no sin)
@@ -411,14 +439,15 @@ void main() {
             albedo *= 1.0 - 0.45 * fine * near;
         }
         grimeDust = max(max(grimeDust, rubber * 0.6), wear * 0.5);    }
-    float carOcc = blobCount > 0 ? carOcclusion() : 1.0;
-    float ao = s.orm.r * (decal != 0 ? 1.0 : fragColor.a) * carOcc;
+    float ao = s.orm.r * (decal != 0 ? 1.0 : fragColor.a);
     float rough = clamp(mix(s.orm.g * roughMul, 0.95, grimeDust * 0.6), 0.04, 1.0);
     float metal = clamp(s.orm.b * metalMul, 0.0, 1.0);
 
     vec3 N = normalize(fragNormal);
     if (!gl_FrontFacing) N = -N;
-    vec3 T = normalize(fragTangent.xyz - N * dot(N, fragTangent.xyz));
+    vec2 carOcc = blobCount > 0 ? carOcclusion(N) : vec2(1.0);
+    ao *= carOcc.x;
+    vec3 T =normalize(fragTangent.xyz - N * dot(N, fragTangent.xyz));
     vec3 B = cross(N, T) * fragTangent.w;
     vec3 tn = s.n;
     tn.xy *= normalStrength;
@@ -437,7 +466,7 @@ void main() {
     float NoH = max(dot(n, H), 0.0), VoH = max(dot(V, H), 0.0);
     vec3 col = vec3(0.0);
     float shRaw = (NoL > 0.0 || translucency > 0.0) ? shadow(normalize(fragNormal)) : 0.0;
-    float sh = (NoL > 0.0 ? shRaw : 0.0) * mix(1.0, carOcc, 0.6);
+    float sh = (NoL > 0.0 ? shRaw : 0.0) * carOcc.y;
     // the shading normal can face the sun when the surface does not: no light there
     sh *= smoothstep(-0.05, 0.05, dot(normalize(fragNormal), L));
     vec3 F = F_Schlick(f0, VoH);
@@ -463,7 +492,7 @@ void main() {
     // and saves the reflection lookup
     vec3 envSpec = (rough > 0.8 ? irradianceSH(R) / PI * specScale : prefiltered(R, rough)) * (f0 * ab.x + ab.y) * horizon * horizon;
     float specAO = clamp(pow(NoV + ao, exp2(-16.0 * a - 1.0)) - 1.0 + ao, 0.0, 1.0);
-    vec3 amb = diffuseColor * E / PI * ao + envSpec * specAO;
+    vec3 amb = diffuseColor * E / PI * ao * ambientScale + envSpec * specAO;
     if (clearcoat > 0.0) {
         float FcV = 0.04 + 0.96 * pow(1.0 - NoV, 5.0);
         vec3 Rc = reflect(-V, normalize(fragNormal));
@@ -546,6 +575,8 @@ uniform sampler2D texture0;
 uniform sampler2D bloomTex;
 uniform float exposure;
 uniform float bloomAmt;
+uniform float contrast;
+uniform float saturation;
 out vec4 finalColor;
 vec3 aces(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
@@ -556,6 +587,8 @@ void main() {
     if (bloomAmt > 0.0) hdr += texture(bloomTex, fragTexCoord).rgb * bloomAmt;  // (the bloom is already in exposed units)
     vec3 c = aces(hdr);
     c = pow(c, vec3(1.0 / 2.2));
+    c = clamp(mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, saturation), 0.0, 1.0);
+    c = mix(c, c * c * (3.0 - 2.0 * c), contrast);
     vec2 q = fragTexCoord - 0.5;
     c *= 1.0 - dot(q, q) * 0.35;  // a gentle vignette
     finalColor = vec4(c, 1.0);
@@ -842,6 +875,9 @@ void Renderer::lookUp(Shader& s, Locs& l) {
     for (int i = 0; i < 9; ++i) l.tex[i] = U(texNames[i]);
     l.shadow[0] = U("shadowMap0");
     l.shadow[1] = U("shadowMap1");
+    l.shadow[2] = U("shadowMap2");
+    l.carShadow = U("carShadow");
+    l.ambient = U("ambientScale");
     l.spec = U("specAtlas");
     l.skyMap = U("skyMap");
     l.blob = U("blob[0]");
@@ -1087,6 +1123,7 @@ Sun Renderer::sun() const {
 
 void Renderer::beginShadows(Vector3 focus, float radius, int cascade) {
     cascade_ = cascade;
+    if (cascade == kCarCascade) carCascadeLive_ = true;
     rlDrawRenderBatchActive();
     Sun s = sun();
     // Snap the focus to whole shadow-map texels across the sun's view, so the shadows
@@ -1181,6 +1218,10 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
     if (L.normalMat >= 0) rlSetUniformMatrix(L.normalMat, MatrixTranspose(MatrixInvert(model)));
     rlSetUniformMatrix(L.lightVP, lightVP_[0]);
     rlSetUniformMatrix(L.lightVP + 1, lightVP_[1]);
+    rlSetUniformMatrix(L.lightVP + 2, lightVP_[2]);
+    int carSh = carCascadeLive_ ? 1 : 0;
+    rlSetUniform(L.carShadow, &carSh, RL_SHADER_UNIFORM_INT, 1);
+    rlSetUniform(L.ambient, &ambient, RL_SHADER_UNIFORM_FLOAT, 1);
     rlSetUniform(L.viewPos, &cam_.position, RL_SHADER_UNIFORM_VEC3, 1);
     Sun s = sun();
     rlSetUniform(L.sunDir, &s.dir, RL_SHADER_UNIFORM_VEC3, 1);
@@ -1249,6 +1290,7 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
     }
     bind(L.shadow[0], shadowTex_[0]);
     bind(L.shadow[1], shadowTex_[1]);
+    bind(L.shadow[2], shadowTex_[2]);
     bind(L.spec, specTex_.id);
     bind(L.skyMap, skyTex_.id);
     bind(L.colorMap, mat.colorMap ? mat.colorMap : specTex_.id);
@@ -1357,6 +1399,7 @@ void Renderer::drawSky() {
 }
 
 void Renderer::endScene() {
+    carCascadeLive_ = false;  // drawn again for the next frame, or not used
     if (msFbo_) {
         gl::bindFramebuffer(gl::READ_FRAMEBUFFER, msFbo_);
         gl::bindFramebuffer(gl::DRAW_FRAMEBUFFER, fbo_);
@@ -1459,6 +1502,8 @@ void Renderer::present(int x, int y, int width, int height) {
     Texture2D t{cur, w_, h_, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16};
     SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "exposure"), &exposure, SHADER_UNIFORM_FLOAT);
     SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "bloomAmt"), &bloomAmt, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "contrast"), &contrast, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "saturation"), &saturation, SHADER_UNIFORM_FLOAT);
     BeginShaderMode(tonemap_);
     SetShaderValueTexture(tonemap_, GetShaderLocation(tonemap_, "bloomTex"), Texture2D{bloomTex, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16});
     // render targets are stored bottom-up

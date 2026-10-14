@@ -247,6 +247,11 @@ bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& as
     gImpl = p_.get();
     if (!p_->gr.init(std::max(2, GetScreenWidth()), std::max(2, GetScreenHeight()), err, 4)) return false;
     if (!p_->gr.loadSky(assetsDir + "/sky", "kloofendal_partly_cloudy", err)) return false;
+    // a broadcast look: deeper shade, a stronger sun and a little more punch than the plain picture
+    p_->gr.ambient = 0.75f;
+    p_->gr.sunIntensity = 1.15f;
+    p_->gr.contrast = 0.3f;
+    p_->gr.saturation = 1.12f;
     if (!p_->scene.build(track, assetsDir, seed ? seed : 1, err)) return false;
     return true;
 }
@@ -571,11 +576,33 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     auto shown = [&](int i) { return p.cars[i] && i < (int)race.cars().size() && !race.cars()[i].dnf; };
 
     // shadows: a sharp cascade round the view's middle, a coarse one out to about a kilometre
-    // (redrawn every third frame: it changes slowly)
+    // (redrawn every third frame: it changes slowly), and a fine one just for the cars round
+    // the one in view (the middle cascade's 5 cm texels and bias lose an F1 car's shadow under it)
+    const float kCarRadius = 12.0f;
+    int lookAt = -1;
+    {
+        float best = 1e9f;
+        for (int i = 0; i < (int)p.cars.size(); ++i)
+            if (shown(i)) {
+                const float d = Vector3Distance(p.cars[i]->origin(), cam.target);
+                if (d < best) best = d, lookAt = i;
+            }
+        if (lookAt >= 0 && (best > 8.0f || Vector3Distance(p.cars[lookAt]->origin(), cam.position) > 150.0f)) lookAt = -1;
+    }
+    std::vector<char> fine(p.cars.size(), 0);
+    if (lookAt >= 0) {
+        const Vector3 c = p.cars[lookAt]->origin();
+        for (int i = 0; i < (int)p.cars.size(); ++i)
+            fine[i] = shown(i) && Vector3Distance(p.cars[i]->origin(), c) < kCarRadius - 3.5f;
+        p.gr.beginShadows(c, kCarRadius, gfx::Renderer::kCarCascade);
+        for (int i = 0; i < (int)p.cars.size(); ++i)
+            if (fine[i]) p.cars[i]->drawShadow(p.gr);
+        p.gr.endShadows();
+    }
     p.gr.beginShadows(Vector3Add(cam.position, Vector3Scale(fwd, 60.0f)), 110.0f, 0);
     p.scene.drawShadows(p.gr);
     for (int i = 0; i < (int)p.cars.size(); ++i)
-        if (shown(i)) p.cars[i]->drawShadow(p.gr);
+        if (shown(i) && !fine[i]) p.cars[i]->drawShadow(p.gr);
     p.gr.endShadows();
     if (p.frame % 3 == 0) {
         p.gr.beginShadows(Vector3Add(cam.position, Vector3Scale(fwd, 550.0f)), 750.0f, 1);
@@ -584,7 +611,7 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     }
     ++p.frame;
 
-    // contact shadows under the cars nearest the camera (not on the cars themselves)
+    // contact shadows under the cars nearest the camera, and on their own lower bodies
     struct Near { float d; int i; };
     std::vector<Near> near;
     for (int i = 0; i < (int)p.cars.size(); ++i)
@@ -597,10 +624,9 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     }
     p.gr.beginScene(cam);
     p.scene.draw(p.gr);
-
-    p.gr.blobs.clear();
     for (int i = 0; i < (int)p.cars.size(); ++i)
         if (shown(i)) p.cars[i]->draw(p.gr);
+    p.gr.blobs.clear();
     p.fx.setLevel(opt.quality);
     p.decals.draw(p.gr, p.fx, race, cam.position);
     p.gr.drawSky();

@@ -70,8 +70,11 @@ public:
     float skyIntensity = 1.0f;  // ambient and reflections
     float sunIntensity = 1.0f;
     float fogDensity = 0.00022f;
+    float ambient = 1.0f;       // the sky's diffuse fill (what lights the shade), on top of skyIntensity
+    // a grade after the tone curve: an S-curve (0 = none, 1 = smoothstep) and saturation (1 = as is)
+    float contrast = 0.0f, saturation = 1.0f;
     // Contact shadows under cars: up to kBlobs footprints (centre x, z, yaw, ground height),
-    // darkening the ground under and just around each car. Set each frame.
+    // darkening the ground under and around each car and the car's own underside. Set each frame.
     static constexpr int kBlobs = 8;
     struct Blob { float x, z, yaw, y; };
     std::vector<Blob> blobs;
@@ -79,8 +82,11 @@ public:
 
     // A frame: shadow passes, then the colour pass into the HDR target, then present().
     // Shadow casters are drawn between beginShadows/endShadows with drawShadow(), once per
-    // cascade: 0 sharp and close to the camera, 1 coarse and far.
-    static constexpr int kCascades = 2;
+    // cascade: 0 sharp and close to the camera, 1 coarse and far, and optionally 2: a small,
+    // fine one round the car in view, for its own shadow only (draw those cars there, not in 0).
+    // Cascade 2 is used for the frame it is drawn in.
+    static constexpr int kCascades = 3;
+    static constexpr int kCarCascade = 2;
     void beginShadows(Vector3 focus, float radius, int cascade = 0);
     void drawShadow(const Mesh& mesh, Matrix model, unsigned alphaTex = 0, float alphaCut = 0.5f, float uvScale = 1.0f);
     // Instanced: `count` model matrices (column major, 64 bytes each) in the vertex buffer
@@ -136,7 +142,8 @@ private:
     int w_ = 0, h_ = 0;
     unsigned fbo_ = 0, color_ = 0, depth_ = 0;
     unsigned shadowFbo_[kCascades] = {}, shadowTex_[kCascades] = {};
-    int shadowRes_[kCascades] = {4096, 2048};
+    int shadowRes_[kCascades] = {4096, 2048, 2048};
+    bool carCascadeLive_ = false;  // cascade 2 was drawn for this frame
     int msaa_ = 4;
     unsigned msFbo_ = 0, msColor_ = 0, msDepth_ = 0;  // multisampled scene target, resolved into fbo_ (colour and depth)
     // post-processing: two full-size ping-pong targets and the bloom chain (down and up, half size and smaller)
@@ -166,7 +173,8 @@ private:
     struct Locs {
         int mvp, model, normalMat, viewPos, lightVP, sunDir, sunColor, sh, skyYaw, fog, exposure, specMax;
         int layerScale, tint, layerTint, depthBias, alphaCut, translucency, vertexTint, roughMul, metalMul, normalStrength, clearcoat, ccRough, macro, layers, decal;
-        int tex[9], shadow[2], spec, skyMap, blob, blobCount, a2c, fogColor, detile, grime, colorMap, colorMapRect, colorMapRange, useColorMap;
+        int tex[9], shadow[kCascades], spec, skyMap, blob, blobCount, a2c, fogColor, detile, grime, colorMap, colorMapRect, colorMapRange, useColorMap;
+        int carShadow, ambient;
     } L_{}, Li_{};  // plain and instanced
     void lookUp(Shader& s, Locs& l);
     int bindMaterial(const Material& mat, const Locs& l, Matrix model, Matrix mvp);
