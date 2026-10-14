@@ -1,0 +1,23 @@
+{
+  "about": "Three-letter codes the race HUD shows in the timing tower and on the minimap. Keys are driver names (as in the setup menu, without the car number) or robot names; anything not listed gets the first three letters of its last word.",
+  "names": {
+    "John F One": "JFO",
+    "racingline": "JFO",
+    "John F Wan": "JFW",
+    "johnfwan": "JFW",
+    "John F Wank": "JFK",
+    "johnfwank": "JFK",
+    "Spongebob": "SPB",
+    "spongebob": "SPB",
+    "Dave": "DAV",
+    "dave": "DAV",
+    "Granny Doris": "DOR",
+    "granny": "DOR",
+    "Franz Hermann": "HER",
+    "franzhermann": "HER",
+    "gapfollow": "GAP",
+    "gapfollow safe": "GPS",
+    "gapfollow steady": "GPY",
+    "simple": "SIM"
+  }
+}
