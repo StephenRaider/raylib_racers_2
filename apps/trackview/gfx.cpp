@@ -168,6 +168,7 @@ uniform float alphaCut;
 uniform float translucency;
 uniform int vertexTint;
 uniform int alphaToCoverage;
+uniform int decal;
 uniform int detile;
 uniform float grime;
 uniform vec3 viewPos;
@@ -395,7 +396,7 @@ void main() {
         grimeDust = max(grimeDust, rubber * 0.5);
     }
     float carOcc = blobCount > 0 ? carOcclusion() : 1.0;
-    float ao = s.orm.r * fragColor.a * carOcc;
+    float ao = s.orm.r * (decal != 0 ? 1.0 : fragColor.a) * carOcc;
     float rough = clamp(mix(s.orm.g * roughMul, 0.95, grimeDust * 0.6), 0.04, 1.0);
     float metal = clamp(s.orm.b * metalMul, 0.0, 1.0);
 
@@ -459,6 +460,7 @@ void main() {
     float fog = 1.0 - exp(-dist * fogDensity);
     vec3 fogCol = fogColor + sunColor * 0.05 * pow(max(dot(-V, L), 0.0), 8.0);
     col = mix(col, fogCol, fog);
+    if (decal != 0) outAlpha = fragColor.a * texture(albedo0, fragUV / layerScale.x).a;
     finalColor = vec4(col, outAlpha);
 }
 )";
@@ -813,7 +815,7 @@ void Renderer::lookUp(Shader& s, Locs& l) {
     l.layerScale = U("layerScale"); l.tint = U("tint"); l.layerTint = U("layerTint"); l.roughMul = U("roughMul"); l.metalMul = U("metalMul");
     l.normalStrength = U("normalStrength"); l.clearcoat = U("clearcoat"); l.ccRough = U("ccRough");
     l.grime = U("grime");
-    l.macro = U("macroVariation"); l.layers = U("layers"); l.depthBias = U("depthBias");
+    l.macro = U("macroVariation"); l.layers = U("layers"); l.decal = U("decal"); l.depthBias = U("depthBias");
     l.alphaCut = U("alphaCut"); l.translucency = U("translucency"); l.vertexTint = U("vertexTint");
     l.a2c = U("alphaToCoverage");
     l.fogColor = U("fogColor");
@@ -1189,6 +1191,13 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
     rlSetUniform(L.depthBias, &mat.depthBias, RL_SHADER_UNIFORM_FLOAT, 1);
     rlSetUniform(L.alphaCut, &mat.alphaCut, RL_SHADER_UNIFORM_FLOAT, 1);
     rlSetUniform(L.translucency, &mat.translucency, RL_SHADER_UNIFORM_FLOAT, 1);
+    int dec = mat.decal ? 1 : 0;
+    rlSetUniform(L.decal, &dec, RL_SHADER_UNIFORM_INT, 1);
+    if (mat.decal) {
+        rlEnableColorBlend();
+        rlSetBlendMode(RL_BLEND_ALPHA);
+        rlDisableDepthMask();
+    }
     int vtint = mat.vertexTint ? 1 : 0;
     rlSetUniform(L.vertexTint, &vtint, RL_SHADER_UNIFORM_INT, 1);
     int macro = mat.macroVariation ? 1 : 0;
@@ -1234,6 +1243,7 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
 void Renderer::unbindMaterial(int slots, const Material& mat) {
     if (mat.doubleSided) rlEnableBackfaceCulling();
     if (mat.alphaCut > 0 && msFbo_) gl::disable(gl::SAMPLE_ALPHA_TO_COVERAGE);
+    if (mat.decal) rlEnableDepthMask();  // (blending stays on, as raylib's 2D drawing expects)
     for (int i = slots - 1; i >= 0; --i) {
         rlActiveTextureSlot(i);
         rlDisableTexture();

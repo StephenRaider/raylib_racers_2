@@ -22,7 +22,8 @@ void Race::logIncident(const Car& c, const char* kind) {
 
 // Nobody is about to run into a car standing at c.trackS: no car within 40 m either side, and every
 // car behind it more than 7 s away at its current closing speed (10 s if the car faces the wrong way and
-// needs room to turn round).
+// needs room to turn round). A car crawling or stopped right behind it is waiting for it to go, not
+// about to hit it: holding the front car for it would leave both stuck there.
 bool Race::trackClearBehind(const Car& c) const {
     const float ang = wrapAngle(c.state.yaw - std::atan2(track_.dirAt(c.trackS).y, track_.dirAt(c.trackS).x));
     const float need = std::fabs(ang) > 1.2f ? 10.0f : 7.0f;
@@ -30,6 +31,7 @@ bool Race::trackClearBehind(const Car& c) const {
         if (&o == &c || o.dnf || o.finished || o.parked || o.held || o.pitState != RR_PIT_NONE || o.distRaced < 0) continue;
         const float behind = wrapDs(c.trackS - o.trackS);  // + = o is behind c
         const bool slow = std::fabs(o.state.vx) < 5.0f;     // a crawling car is no danger from further than a car length
+        if (slow && behind > 3.0f) continue;                 // queued behind it
         if (std::fabs(behind) < (slow ? 8.0f : 40.0f)) return false;
         if (slow) continue;
         if (behind > 0 && behind < 400.0f) {
@@ -115,7 +117,9 @@ void Race::updateNeutral() {
         const float ang = std::fabs(wrapAngle(c.state.yaw - std::atan2(d.y, d.x)));
         // A released car gets a few seconds to get going before it counts as stuck again.
         const bool settling = time_ - c.releasedAt < RR_REJOIN_GRACE;
-        c.stoppedT = live && !settling && speed < 2.0f && time_ > 6.0 ? c.stoppedT + tick : 0.0f;
+        // A car stopped nose to tail behind a stopped car (a wreck, a held car) is blocked, not in trouble.
+        const bool blocked = live && speed < 2.0f && queued(c);
+        c.stoppedT = live && !settling && !blocked && speed < 2.0f && time_ > 6.0 ? c.stoppedT + tick : 0.0f;
         c.acrossT = live && !settling && ang > RR_INCIDENT_ANGLE && speed < RR_INCIDENT_MAX_SPEED ? c.acrossT + tick : 0.0f;
         if (!live) continue;
         const char* kind = nullptr;

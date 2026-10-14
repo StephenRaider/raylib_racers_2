@@ -9,6 +9,7 @@
 #include "config.hpp"
 #include "robot_driver.hpp"
 #include "robot_loader.hpp"
+#include "rubber.hpp"
 #include "track.hpp"
 
 namespace rr {
@@ -66,6 +67,7 @@ struct Car {
     int lapsBehind = 0;
     int collisions = 0;
     float stuckTime = 0;
+    float finishFuel = -1;  // fuel left at the flag (the cool-down lap does not count)
     std::vector<double> checkpoints;  // race time at every 10 m of distance
 
     // consumables and pit
@@ -211,6 +213,7 @@ public:
     float dt() const { return cfg_.dt; }
     int laps() const { return cfg_.laps; }
     const Track& track() const { return track_; }
+    const TrackRubber* rubber() const { return cfg_.rubber ? cfg_.rubberMap.get() : nullptr; }  // null when off
     const std::vector<Car>& cars() const { return cars_; }
     // For replays in the viewer only: overwrite a car's pose to show a recorded
     // moment, and restore it before the next step().
@@ -246,6 +249,7 @@ private:
     void updateNeutral();       // incidents, holds, yellow flags and the VSC (once per robot tick)
     void logIncident(const Car& c, const char* kind);
     bool trackClearBehind(const Car& c) const;
+    bool queued(const Car& c) const;  // stopped nose to tail behind a stopped car: blocked, not stuck
     float neutralCap(const Car& c) const;
     void updateWheels(Car& c);  // wheel positions, surfaces and track limits
     void updateDrs(Car& c);
@@ -253,6 +257,8 @@ private:
     void endSession(Car& c);
     void retire(Car& c, const std::string& why);
     static constexpr int kMaxCpuOverruns = 50;  // drive() calls over the CPU cap before the car is out
+    static constexpr float kPitExitStallTime = 10.0f;  // s stopped on the pit exit road before the car is removed
+    static constexpr float kCoolDownFuel = 2.0f;       // litres a finished car is topped up to for its cool-down lap
     void wake(Car& c) const;  // slipstream and dirty air behind other cars
     void finishService(Car& c);
     float wrapDs(float ds) const;

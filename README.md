@@ -19,7 +19,13 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   far-off things on the others, motion blur on the moving cameras (the followed car stays
   sharp), a touch of bloom, and tyre smoke on full lock-ups only. F10 turns them down
   (low is a plain picture).
-  The menu, HUD, testing screens and director are Raylib Racers 1's, unchanged.
+  The menu, testing screens and director are Raylib Racers 1's, unchanged.
+- **A new race HUD**: an F1-style timing tower with three-letter driver codes
+  (`assets/short_names.json`) whose rows slide when cars swap places, a
+  see-through track map with DRS zones and the followed car ringed in yellow and
+  black, and a car panel of graphics: rev gauge, tyre and brake temperatures on
+  a top view of the car, pedal bars, a turning steering wheel, KERS battery, and
+  DRS and zone lettering that glows yellow when active.
 - **A 2013 car** (`specs/f1_2013.json`): 642 kg, a 2.4 l V8 (560 kW at 18,000 rpm),
   about 3 g of downforce, no refuelling (a fixed start load, tyre-only stops) and
   305 km races, KERS (2014-style: 120 kW, 4 MJ a lap, a 4 MJ store, with conversion
@@ -120,7 +126,7 @@ ctest --test-dir build          # quick smoke races
 team's choice of starting tyres, overriding the robot's) apply to the car before
 them. `--help` lists all options (noise on the range finders, physics step,
 robot rate, time limit, `--fuel-rate` and `--wear-rate` multipliers,
-`--ambient` temperature, `--two-compounds on|off|auto`, `--cool-down` to run on
+`--ambient` temperature, `--rubber on|off`, `--two-compounds on|off|auto`, `--cool-down` to run on
 until the cars have parked after the flag).
 
 **Two-compound rule.** By default a race longer than 20 laps requires every car
@@ -299,6 +305,14 @@ green in the window, amber and red hot.
 (1.0), kerb (0.97, no extra drag), grass (0.70), gravel (0.55, the most drag), dirt
 (0.65), pit lane (1.0) and paved run-off (0.95).
 
+**Rubber on track.** Tyres lay rubber where they wear. A per-track map (cells 4 m along by 0.5 m across)
+fills in from each wheel's wear on tarmac and saturates after about a hundred cars have passed; a wheel
+on a fully rubbered cell has 3% more grip, and the rest of the track stays green. The map belongs to the weekend
+(practice, qualifying and the race share it) and a quick race starts green; `--rubber off` turns it off. Robots
+are not told about it: the grip they learn per 20 m of track picks it up. The viewer draws the same map as a dark
+line on the road, plus black skid marks where tyres slide, lock or spin, tyre tracks in grass, gravel and dirt, and the dust
+thrown up off those surfaces.
+
 **KERS and DRS** (the 2013 car only; the 2006 car has neither). The KERS
 motor-generator is 120 kW on the crankshaft (at most 200 N m). Braking recovers
 energy: it takes part of the rear braking force (the total stays what the pedal
@@ -313,7 +327,7 @@ free in every zone in practice and qualifying, and closes on a touch of the brak
 Details are in [docs/ROBOTS.md](docs/ROBOTS.md).
 
 The timing tower shows each car's compound, its age in laps and its number of
-stops. When the focused car's algorithm publishes its plan, the car panel shows
+stops (one pip per stop). When the focused car's algorithm publishes its plan, the car panel shows
 the window of its next stop and the tyres it will fit, and warns when the
 two-compound rule still wants a second compound.
 
