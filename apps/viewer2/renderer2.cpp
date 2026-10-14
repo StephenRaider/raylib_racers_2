@@ -398,13 +398,15 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     if (GetScreenWidth() != p.gr.width() || GetScreenHeight() != p.gr.height()) p.gr.resize(std::max(2, GetScreenWidth()), std::max(2, GetScreenHeight()));
     const Camera3D& cam = camera;
     const Vector3 fwd = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
+    // a retired car has been taken off the track: no body, no shadow
+    auto shown = [&](int i) { return p.cars[i] && i < (int)race.cars().size() && !race.cars()[i].dnf; };
 
     // shadows: a sharp cascade round the view's middle, a coarse one out to about a kilometre
     // (redrawn every third frame: it changes slowly)
     p.gr.beginShadows(Vector3Add(cam.position, Vector3Scale(fwd, 60.0f)), 110.0f, 0);
     p.scene.drawShadows(p.gr);
-    for (auto& c : p.cars)
-        if (c) c->drawShadow(p.gr);
+    for (int i = 0; i < (int)p.cars.size(); ++i)
+        if (shown(i)) p.cars[i]->drawShadow(p.gr);
     p.gr.endShadows();
     if (p.frame % 3 == 0) {
         p.gr.beginShadows(Vector3Add(cam.position, Vector3Scale(fwd, 550.0f)), 750.0f, 1);
@@ -417,7 +419,7 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     struct Near { float d; int i; };
     std::vector<Near> near;
     for (int i = 0; i < (int)p.cars.size(); ++i)
-        if (p.cars[i]) near.push_back({Vector3Distance(p.cars[i]->origin(), cam.position), i});
+        if (shown(i)) near.push_back({Vector3Distance(p.cars[i]->origin(), cam.position), i});
     std::sort(near.begin(), near.end(), [](const Near& a, const Near& b) { return a.d < b.d; });
     p.gr.blobs.clear();
     for (int k = 0; k < (int)near.size() && k < gfx::Renderer::kBlobs; ++k) {
@@ -428,8 +430,8 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     p.scene.draw(p.gr);
 
     p.gr.blobs.clear();
-    for (auto& c : p.cars)
-        if (c) c->draw(p.gr);
+    for (int i = 0; i < (int)p.cars.size(); ++i)
+        if (shown(i)) p.cars[i]->draw(p.gr);
     p.fx.setLevel(opt.quality);
     p.decals.draw(p.gr, p.fx, race, cam.position);
     p.gr.drawSky();

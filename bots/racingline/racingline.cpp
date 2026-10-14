@@ -887,15 +887,18 @@ float pitOffset(const RacingLine& r, int i, float boxS, bool serviced) {
     }
     if (r.inSpan(s, p.lane_end_s, p.exit_s)) {
         // Stay clear of the end of the pit wall, edge up to the white line, and cross it only in the last
-        // metres before the exit (RR_PIT_EXIT_MARGIN: crossing earlier is a penalty).
+        // metres before the exit (RR_PIT_EXIT_MARGIN: crossing earlier is a penalty). Rejoin on our own
+        // side of the track, not on the racing line: the merge onto the line comes after the exit.
         const float start = 5.0f, finalBlend = 0.8f * RR_PIT_EXIT_MARGIN;
         const float d = r.fwd(p.lane_end_s, s), road = r.fwd(p.lane_end_s, p.exit_s);
-        const float edge = lane + (lane > 0 ? 1 : -1) * (r.tp[r.wrap(i)].half_width + 1.5f - std::fabs(lane));
+        const float side = lane > 0 ? 1.0f : -1.0f, hw = r.tp[r.wrap(i)].half_width;
+        const float edge = lane + side * (hw + 1.5f - std::fabs(lane));
         if (road - d > finalBlend) {
             float u = smooth01((d - start) / std::max(10.0f, road - finalBlend - start));
             return lane + (edge - lane) * u;
         }
-        return edge + (line - edge) * smooth01(1.0f - (road - d) / finalBlend);
+        const float rejoin = side * std::max(0.0f, hw - 1.8f);
+        return edge + (rejoin - edge) * smooth01(1.0f - (road - d) / finalBlend);
     }
     return line;
 }
@@ -1204,6 +1207,11 @@ void drive(void* self, const RRSensors* in, RRControl* out) {
     if (r->mode == PIT_OUT && in->pit_state == RR_PIT_NONE && !r->inSpan(s, r->pit.entry_s, r->pit.exit_s)) {
         r->mode = RACE;
         r->plan[0] = 0;
+        // Out of the pits: keep to the pit side and ease onto the line, like off the grid, so the cars
+        // still racing go by on the line instead of finding us crawling across it.
+        r->startLat = in->track_pos * r->tp[idx].half_width;
+        r->startDist = in->dist_raced;
+        r->passOffset = 0;
     }
     // Overshot the box: give up on this stop.
     if (r->mode == PIT_IN && in->pit_state == RR_PIT_LANE && r->signedDs(in->pit_box_s, s) > 2.5f) {

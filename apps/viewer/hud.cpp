@@ -283,6 +283,7 @@ void Hud::drawMinimap(const rr::Race& race, const HudState& st) {
         for (size_t i = 0; i < cars.size(); ++i) {
             bool focus = (int)i == st.focus;
             if ((pass == 1) != focus) continue;  // focused car on top
+            if (cars[i].dnf) continue;            // taken off the track
             Vector2 c = P(cars[i].state.pos);
             if (focus) DrawCircleV(c, 8, kText);
             DrawCircleV(c, focus ? 6 : 5, teamColor((int)i));
