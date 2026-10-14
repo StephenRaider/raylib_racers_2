@@ -15,6 +15,10 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   cascaded sun shadows, 4x MSAA, instanced trees with levels of detail and
   baked terrain occlusion; 2013 F1 cars with clear-coat paint, steering front
   wheels, a turning steering wheel and a suspension that rolls, pitches and squats.
+  Camera effects: lens depth of field on the cinematic and TV cameras, a slight blur of
+  far-off things on the others, motion blur on the moving cameras (the followed car stays
+  sharp), a touch of bloom, and tyre smoke on full lock-ups only. F10 turns them down
+  (low is a plain picture).
   The menu, testing screens and director are Raylib Racers 1's, unchanged.
 - **A new race HUD**: an F1-style timing tower with three-letter driver codes
   (`assets/short_names.json`) whose rows slide when cars swap places, a

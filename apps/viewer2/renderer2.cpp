@@ -81,6 +81,27 @@ struct Renderer::Impl {
     float orbitYaw = 0.6f, orbitPitch = 0.25f, orbitDist = 9.0f;
     std::vector<Vector3> tvSpots;
     int tvSpot = -1;
+    Vector3 lastCamPos{};
+    int lastTvSpot = -1;
+    bool haveCamPos = false;
+    bool camCut = true;  // the camera jumped this frame (a new shot, car or camera): no motion blur
+
+    // Tyre smoke on a full lock-up: puffs laid down the path of the locked wheels. Viewer only; the
+    // sim never sees it.
+    struct Smoke { Vector3 p, v; float age, life, size0, size1, alpha0, rot, spin; };
+    struct WheelTrail { Vector3 last[4]; float carry[4] = {0, 0, 0, 0}; bool valid = false; };
+    std::vector<Smoke> smoke;
+    std::vector<WheelTrail> trails;
+    double smokeTime = -1;
+    unsigned smokeRng = 2463534242u;
+    float rnd() {
+        smokeRng ^= smokeRng << 13, smokeRng ^= smokeRng >> 17, smokeRng ^= smokeRng << 5;
+        return (smokeRng >> 8) / 16777216.0f;
+    }
+
+    // Post effects for the camera the frame was drawn with (see Renderer::draw).
+    void setPost(const Camera3D& cam, const ViewOptions& opt);
+    void updateSmoke(const rr::Race& race, float dt);
     float cineClock = 0;
     Vector3 cineOff{};
 
@@ -230,7 +251,10 @@ bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& as
     return true;
 }
 
-void Renderer::stepEffects(const rr::Race& race, float dt) { p_->fx.update(race, dt); }
+void Renderer::stepEffects(const rr::Race& race, float dt) {
+    p_->fx.update(race, dt);
+    p_->updateSmoke(race, dt > 0 ? dt : -1.0f);  // (shot mode calls this as it runs the race up to the saved frame)
+}
 
 void Renderer::adjustLighting(bool nextSky, float turn, float exposureFactor) {
     static const char* skies[] = {"kloofendal_partly_cloudy", "mud_road", "overcast_soil"};
@@ -385,8 +409,154 @@ void Renderer::updateCamera(const rr::Race& race, int focus, CamMode mode, float
             break;
         }
     }
+    p.camCut = !p.init || !p.haveCamPos || Vector3Distance(c.position, p.lastCamPos) > 30.0f ||
+               (mode == CAM_TV && p.tvSpot != p.lastTvSpot);
+    p.lastTvSpot = p.tvSpot;
+    p.lastCamPos = c.position;
+    p.haveCamPos = true;
     p.init = true;
     camera = c;
+}
+
+// What each camera gets, in the picture's own terms:
+//  - lens depth of field where the shot is a real lens (cinematic, TV): the car in focus, the
+//    background and any fence in front of the lens soft; a longer lens blurs more.
+//  - a slight blur of far-off things on every camera that looks along the ground.
+//  - camera motion blur where the camera moves or pans (not the top-down, overview and orbit views),
+//    with the followed car kept sharp.
+//  - a little bloom everywhere.
+void Renderer::Impl::setPost(const Camera3D& cam, const ViewOptions& opt) {
+    gfx::Renderer::PostParams P;
+    if (opt.quality <= 0 || lastFocus < 0) {
+        gr.post = P;
+        return;
+    }
+    const bool full = opt.quality >= 2;
+    CarRender* cr = car(lastFocus);
+    const bool lens = lastMode == CAM_CINEMATIC || lastMode == CAM_TV;
+    const bool ground = lastMode != CAM_TOP && lastMode != CAM_OVERVIEW;
+    const float tanHalf = std::tan(cam.fovy * DEG2RAD * 0.5f);
+    P.bloom = 0.35f;
+    P.bloomThreshold = 0.7f;
+
+    if (ground) {
+        P.hazeCoc = 2.4f;
+        P.hazeStart = 70.0f;
+        P.hazeEnd = 350.0f;
+    }
+    if (lens && cr) {
+        const Vector3 target = Vector3Add(cr->origin(), {0, 0.5f, 0});
+        const float f = std::max(Vector3Distance(cam.position, target), 3.0f);
+        constexpr float kHalfCar = 2.7f;  // m: the car stays sharp from nose to tail
+        P.focusDist = f;
+        P.focusTol = 0.6f * kHalfCar / (f * std::max(f - kHalfCar, 1.0f));
+        P.lensK = 70.0f / tanHalf;  // px per dioptre of defocus: a long lens is shallow
+        P.maxCoc = 14.0f;
+    }
+    P.taps = lens ? (full ? 32 : 16) : (full ? 14 : 8);
+
+    // motion blur
+    float shutter = 0;
+    switch (lastMode) {
+        case CAM_CHASE: shutter = 0.45f; break;
+        case CAM_CINEMATIC: shutter = 0.35f; break;
+        case CAM_TV: shutter = 0.5f; break;
+        case CAM_HELI: shutter = 0.3f; break;
+        case CAM_TCAM:
+        case CAM_NOSE: shutter = 0.5f; break;
+        default: break;
+    }
+    P.shutter = shutter;
+    P.cut = camCut;
+    if (shutter > 0 && cr) {
+        if (lastMode == CAM_TCAM || lastMode == CAM_NOSE) {
+            P.keepDepth = 3.5f;  // the car's own nose and wheels
+        } else {
+            const Vector3 centre = Vector3Add(cr->origin(), {0, 0.5f, 0});
+            const Vector2 sp = GetWorldToScreen(centre, cam);
+            const float W = (float)GetScreenWidth(), H = (float)GetScreenHeight();
+            const float d = std::max(Vector3Distance(cam.position, centre), 1.0f);
+            const float ppm = (H * 0.5f) / (tanHalf * d);  // pixels per metre at the car
+            P.keep = {sp.x / W, 1.0f - sp.y / H, 3.6f * ppm / W, 2.4f * ppm / H};
+        }
+    }
+    gr.post = P;
+}
+
+// Smoke from the front or rear tyres when they lock under heavy braking: the brake force asked of the
+// axle well past what its tyres can give (not just hard braking), the pedal nearly flat and the car
+// still fast. dt < 0 ages the smoke by the sim time since the last call.
+void Renderer::Impl::updateSmoke(const rr::Race& race, float dt) {
+    const double now = race.time();
+    if (dt < 0) dt = smokeTime >= 0 && now > smokeTime ? (float)std::min(now - smokeTime, 0.1) : 0.0f;
+    for (auto& s : smoke) {
+        s.age += dt;
+        s.p = Vector3Add(s.p, Vector3Scale(s.v, dt));
+        s.v = Vector3Scale(s.v, 1.0f - std::min(1.0f, 1.4f * dt));
+    }
+    smoke.erase(std::remove_if(smoke.begin(), smoke.end(), [](const Smoke& s) { return s.age >= s.life; }), smoke.end());
+
+    const bool moved = now > smokeTime;
+    const bool jump = smokeTime < 0 || now < smokeTime || now - smokeTime > 0.5;  // a restart, replay scrub or fast-forward
+    smokeTime = now;
+    if (trails.size() != race.cars().size()) trails.assign(race.cars().size(), WheelTrail{});
+    if (jump) {
+        smoke.clear();
+        for (auto& t : trails) t.valid = false;
+    }
+    if (!moved) return;
+    constexpr float kHalfBase = 1.7f, kHalfTrack = 0.72f, kSpacing = 1.3f;
+    constexpr float kLockUse = 1.3f, kFullLock = 2.2f;  // brake force asked / what the axle's tyres can give
+    for (size_t i = 0; i < race.cars().size(); ++i) {
+        const rr::Car& c = race.cars()[i];
+        WheelTrail& tr = trails[i];
+        const float cy = std::cos(c.state.yaw), sy = std::sin(c.state.yaw);
+        Vector3 now4[4];
+        for (int w = 0; w < 4; ++w) {
+            const float lx = w < 2 ? kHalfBase : -kHalfBase, ly = (w % 2 == 0) ? kHalfTrack : -kHalfTrack;
+            now4[w] = W2(c.state.pos + rr::Vec2{lx * cy - ly * sy, lx * sy + ly * cy});
+            now4[w].y = scene.groundHeight(now4[w].x, now4[w].z) + 0.1f;
+        }
+        const float speed = std::hypot(c.state.vx, c.state.vy);
+        const bool braking = c.control.brake > 0.9f && speed > 12.0f && !c.dnf && c.pitState == RR_PIT_NONE;
+        if (tr.valid && braking) {
+            const rr::Vec2 vw = c.state.velWorld();
+            const Vector3 vel = {vw.x, 0, -vw.y};
+            const float fast = std::clamp((speed - 8.0f) / 25.0f, 0.0f, 1.0f);  // a car crawling to a stop barely smokes
+            for (int axle = 0; axle < 2; ++axle) {
+                const float k = std::clamp((c.state.gripUse[axle] - kLockUse) / (kFullLock - kLockUse), 0.0f, 1.0f) * fast;
+                if (k <= 0) continue;
+                for (int w = 2 * axle; w < 2 * axle + 2; ++w) {
+                    const Vector3 a = tr.last[w], b = now4[w];
+                    const float len = Vector3Distance(a, b);
+                    if (len > 25.0f || len < 1e-4f) continue;
+                    tr.carry[w] += len;
+                    while (tr.carry[w] >= kSpacing && smoke.size() < 600) {
+                        tr.carry[w] -= kSpacing;
+                        const float u = 1.0f - tr.carry[w] / len;  // where along this step the puff falls
+                        Smoke s;
+                        s.p = Vector3Lerp(a, b, std::clamp(u, 0.0f, 1.0f));
+                        s.p.x += (rnd() - 0.5f) * 0.3f;
+                        s.p.z += (rnd() - 0.5f) * 0.3f;
+                        s.p.y += 0.1f + rnd() * 0.25f;
+                        s.v = Vector3Add(Vector3Scale(vel, 0.12f), {(rnd() - 0.5f) * 1.6f, 0.9f + rnd() * 1.2f, (rnd() - 0.5f) * 1.6f});
+                        s.age = 0;
+                        s.life = 1.2f + rnd() * 0.8f + 0.5f * k;
+                        s.size0 = 0.5f + 0.3f * rnd();
+                        s.size1 = 2.2f + 1.2f * k + 1.0f * rnd();
+                        s.alpha0 = 0.14f + 0.26f * k;
+                        s.rot = rnd() * 6.2832f;
+                        s.spin = (rnd() - 0.5f) * 0.8f;
+                        smoke.push_back(s);
+                    }
+                }
+            }
+        } else {
+            for (float& v : tr.carry) v = 0;
+        }
+        for (int w = 0; w < 4; ++w) tr.last[w] = now4[w];
+        tr.valid = true;
+    }
 }
 
 void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
@@ -394,7 +564,6 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     p.sync(race, 0);
 
     (void)focus;
-    (void)opt;
     if (GetScreenWidth() != p.gr.width() || GetScreenHeight() != p.gr.height()) p.gr.resize(std::max(2, GetScreenWidth()), std::max(2, GetScreenHeight()));
     const Camera3D& cam = camera;
     const Vector3 fwd = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
@@ -435,7 +604,19 @@ void Renderer::draw(const rr::Race& race, int focus, const ViewOptions& opt) {
     p.fx.setLevel(opt.quality);
     p.decals.draw(p.gr, p.fx, race, cam.position);
     p.gr.drawSky();
+    p.updateSmoke(race, std::min(GetFrameTime(), 0.1f));
+    {
+        std::vector<gfx::Renderer::Puff> puffs;
+        puffs.reserve(p.smoke.size());
+        for (const auto& s : p.smoke) {
+            const float t = s.age / s.life;
+            const float fade = std::min(1.0f, s.age / 0.12f) * std::pow(1.0f - t, 1.5f);
+            puffs.push_back({s.p, s.size0 + (s.size1 - s.size0) * std::sqrt(t), s.alpha0 * fade, s.rot + s.spin * s.age});
+        }
+        p.gr.drawPuffs(puffs);
+    }
     p.gr.endScene();
+    p.setPost(camera, opt);
 
     rlViewport(0, 0, GetRenderWidth(), GetRenderHeight());
     p.gr.present(0, 0, GetScreenWidth(), GetScreenHeight());
