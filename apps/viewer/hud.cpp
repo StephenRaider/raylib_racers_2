@@ -6,6 +6,7 @@
 #include "short_names.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -143,7 +144,7 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
         const char* hint = "F1 help   Tab next car   L follow leader   C camera   M sound   Space pause   +/- speed   Esc menu";
         textS(hint, 18, GetScreenHeight() - 30.0f, 15, Fade(kText, 0.7f));
         // camera and focus mode, top centre
-        char buf[96];
+        char buf[128];
         if (st.qualifying)
             std::snprintf(buf, sizeof buf, "%s  RUN %d / %d   %s CAM   Enter: skip run   Shift+Enter: skip the rest%s",
                           st.sessionTitle.c_str(), st.qualiRun, st.qualiRuns, camName(st.camera), st.muted ? "   SOUND OFF" : "");
@@ -152,6 +153,10 @@ void Hud::draw(const rr::Race& race, const HudState& st) {
         else
             std::snprintf(buf, sizeof buf, "%s CAM   %s%s", camName(st.camera), st.followLeader ? "FOLLOWING LEADER" : "CAR SELECTED",
                           st.muted ? "   SOUND OFF" : "");
+        {
+            static const char* gfx[] = {"LOW", "MEDIUM", "HIGH"};
+            std::snprintf(buf + std::strlen(buf), sizeof buf - std::strlen(buf), "   GFX %s", gfx[std::clamp(st.view.quality, 0, 2)]);
+        }
         float w = width(buf, 14, true) + 40;
         float x = (GetScreenWidth() - w) / 2;
         band({x, 16, w, 26}, Fade(kInk, 0.82f), 8);
@@ -759,7 +764,7 @@ void Hud::drawHelp() {
         "Space         pause",          "+ / -         simulation speed",  "N             single step (paused)",
         "R             restart race",   "P             robot paths",       "S             range finders",
         "M             engine sound on / off", "Esc           race setup menu",
-        "H             hide HUD",       "F10           graphics quality", "K             next sky and lighting", ";  '          turn the sun",   ",  .          exposure", "F12           screenshot",        "F1            close help"};
+        "H             hide HUD",       "Q / F10       graphics quality (low, medium, high)", "K             next sky and lighting", ";  '          turn the sun",   ",  .          exposure", "F12           screenshot",        "F1            close help"};
     const int n = sizeof(lines) / sizeof(lines[0]);
     float w = 760, h = 70 + n * 24.0f;
     float x = (GetScreenWidth() - w) / 2, y = (GetScreenHeight() - h) / 2;

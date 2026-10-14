@@ -17,7 +17,7 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
   wheels, a turning steering wheel and a suspension that rolls, pitches and squats.
   Camera effects: lens depth of field on the cinematic and TV cameras, a slight blur of
   far-off things on the others, motion blur on the moving cameras (the followed car stays
-  sharp), a touch of bloom, and tyre smoke on full lock-ups only. F10 turns them down
+  sharp), a touch of bloom, and tyre smoke on full lock-ups only. `Q` (or F10) turns them down
   (low is a plain picture).
   The menu, testing screens and director are Raylib Racers 1's, unchanged.
 - **A new race HUD**: an F1-style timing tower with three-letter driver codes
@@ -76,7 +76,7 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
 - **`rr_viewer`**: raylib 3D viewer with low-poly F1 cars in team liveries
   (steering, rolling wheels), sun shadows, fog, procedural textures, kerbs,
   barriers, pit lane and boxes, scenery, eight cameras including an automatic
-  director (F9), three graphics quality levels (F10), a timing tower (with
+  director (F9), three graphics quality levels (`Q` or F10; some laptops need Fn for the F-keys), a timing tower (with
   tyres and pit status), minimap, a per-car panel with fuel, tyre wear and
   tyre and brake temperatures, a menu for quick races, weekends, championships
   and testing, and race-end windows (results, positions, lap chart, lap times,

@@ -1242,7 +1242,7 @@ int main(int argc, char** argv) {
             if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) st.timeScale = std::min(64.0f, st.timeScale * 2);
             if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) st.timeScale = std::max(0.125f, st.timeScale / 2);
             if (IsKeyPressed(KEY_P)) st.view.showPaths = !st.view.showPaths;
-            if (IsKeyPressed(KEY_F10)) st.view.quality = (st.view.quality + 1) % 3;
+            if (IsKeyPressed(KEY_F10) || IsKeyPressed(KEY_Q)) st.view.quality = (st.view.quality + 1) % 3;
             if (IsKeyPressed(KEY_S)) st.view.showSensors = !st.view.showSensors;
             if (IsKeyPressed(KEY_H)) st.showHud = !st.showHud;
             if (IsKeyPressed(KEY_F1)) st.showHelp = !st.showHelp;
@@ -1370,7 +1370,7 @@ int main(int argc, char** argv) {
             if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) st.timeScale = std::min(64.0f, st.timeScale * 2);
             if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) st.timeScale = std::max(0.125f, st.timeScale / 2);
             if (IsKeyPressed(KEY_P)) st.view.showPaths = !st.view.showPaths;
-            if (IsKeyPressed(KEY_F10)) st.view.quality = (st.view.quality + 1) % 3;
+            if (IsKeyPressed(KEY_F10) || IsKeyPressed(KEY_Q)) st.view.quality = (st.view.quality + 1) % 3;
             if (IsKeyPressed(KEY_S)) st.view.showSensors = !st.view.showSensors;
             if (IsKeyPressed(KEY_M)) st.muted = !st.muted;
             if (IsKeyPressed(KEY_H)) st.showHud = !st.showHud;
