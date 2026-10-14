@@ -157,7 +157,6 @@ in vec4 fragColor;
 uniform sampler2D albedo0, normal0, orm0, albedo1, normal1, orm1, albedo2, normal2, orm2;
 uniform sampler2DShadow shadowMap0, shadowMap1, shadowMap2;
 uniform int carShadow;     // shadowMap2 (the cars round the one in view) was drawn this frame
-uniform float ambientScale;
 uniform sampler2D specAtlas;
 uniform sampler2D skyMap;  // the full-resolution sky, for mirror-like reflections (car paint)
 uniform int layers;
@@ -173,6 +172,7 @@ uniform int alphaToCoverage;
 uniform int decal;
 uniform int detile;
 uniform float grime;
+uniform float shadowDeepen;
 uniform vec3 viewPos;
 uniform mat4 lightVP[3];
 uniform vec3 sunDir;      // towards the sun
@@ -199,6 +199,7 @@ vec2 carOcclusion(vec3 N) {
         float h = fragPos.y - b.w;
         if (h > 1.4) continue;
         vec2 d = fragPos.xz - b.xy;
+        if (dot(d, d) > 40.0) continue;
         float c = cos(b.z), s = sin(b.z);
         // into the car's frame: x along the car, y across (world x/z -> sim x/-y)
         vec2 l = vec2(c * d.x - s * d.y, -s * d.x - c * d.y);
@@ -211,6 +212,9 @@ vec2 carOcclusion(vec3 N) {
             float halo = 1.0 - smoothstep(-0.4, 1.2, dist);
             occ.x *= 1.0 - 0.6 * halo - 0.32 * core;
             occ.y *= 1.0 - 0.9 * core;
+            // and a patch at each tyre
+            vec2 w = vec2((abs(l.x) - 1.72) / 0.6, (abs(l.y) - 0.72) / 0.42);
+            occ.x *= 1.0 - 0.5 * (1.0 - smoothstep(0.0, 1.0, length(w)));
         } else {
             // the car (or anything over the footprint): the low parts and the underside see the dark road
             float near = 1.0 - smoothstep(0.0, 0.45, dist);
@@ -492,7 +496,12 @@ void main() {
     // and saves the reflection lookup
     vec3 envSpec = (rough > 0.8 ? irradianceSH(R) / PI * specScale : prefiltered(R, rough)) * (f0 * ab.x + ab.y) * horizon * horizon;
     float specAO = clamp(pow(NoV + ao, exp2(-16.0 * a - 1.0)) - 1.0 + ao, 0.0, 1.0);
-    vec3 amb = diffuseColor * E / PI * ao * ambientScale + envSpec * specAO;
+    // deeper, cooler shade: inside a shadow only the sky lights a surface, so on a sunny sky pull that
+    // light down a bit and towards blue (an overcast sky has no sun to contrast with)
+    float sunStrength = clamp((sunColor.g - 0.8) / 2.5, 0.0, 1.0);
+    float inShade = clamp(1.0 - sh, 0.0, 1.0) * sunStrength;
+    vec3 shadeTint = mix(vec3(1.0), vec3(0.86, 0.94, 1.1), inShade);
+    vec3 amb = diffuseColor * E / PI * ao * (1.0 - shadowDeepen * inShade) * shadeTint + envSpec * specAO;
     if (clearcoat > 0.0) {
         float FcV = 0.04 + 0.96 * pow(1.0 - NoV, 5.0);
         vec3 Rc = reflect(-V, normalize(fragNormal));
@@ -503,7 +512,7 @@ void main() {
     // aerial perspective: fade to the blurred sky along the view ray, warmer towards the sun
     float dist = length(viewPos - fragPos);
     float fog = 1.0 - exp(-dist * fogDensity);
-    vec3 fogCol = fogColor + sunColor * 0.05 * pow(max(dot(-V, L), 0.0), 8.0);
+    vec3 fogCol = fogColor + sunColor * 0.03 * pow(max(dot(-V, L), 0.0), 8.0);
     col = mix(col, fogCol, fog);
     if (decal != 0) outAlpha = fragColor.a * texture(albedo0, fragUV / layerScale.x).a;
     finalColor = vec4(col, outAlpha);
@@ -557,6 +566,7 @@ uniform sampler2D skyTex;
 uniform float skyScale;
 uniform vec3 sunDir;
 uniform vec3 sunColor;
+uniform float halo;
 out vec4 finalColor;
 void main() {
     vec3 d = normalize(dir);
@@ -565,6 +575,7 @@ void main() {
     float cosA = dot(d, normalize(sunDir));
     float disc = smoothstep(0.99996, 0.99999, cosA);
     c += sunColor * disc * 20000.0 + sunColor * pow(max(cosA, 0.0), 600.0) * 2.0;
+    c += sunColor * (pow(max(cosA, 0.0), 14.0) * 0.05 + pow(max(cosA, 0.0), 3.0) * 0.012) * halo;  // a bright, hazy glow round the sun
     finalColor = vec4(c, 1.0);
 }
 )";
@@ -575,8 +586,16 @@ uniform sampler2D texture0;
 uniform sampler2D bloomTex;
 uniform float exposure;
 uniform float bloomAmt;
-uniform float contrast;
-uniform float saturation;
+uniform float grade;
+uniform float glare;
+uniform sampler2D depthTex;
+uniform vec3 camFwd;      // the camera's axes, right and up scaled by the tan of the half field of view
+uniform vec3 camRightT;
+uniform vec3 camUpT;
+uniform vec3 sunDirW;
+uniform vec3 sunTint;     // the sun's colour, normalised
+uniform vec3 sunUV;       // where the sun is on screen (uv, 1 when in front of the camera)
+uniform float aspect;
 out vec4 finalColor;
 vec3 aces(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
@@ -585,10 +604,45 @@ vec3 aces(vec3 x) {
 void main() {
     vec3 hdr = texture(texture0, fragTexCoord).rgb * exposure;
     if (bloomAmt > 0.0) hdr += texture(bloomTex, fragTexCoord).rgb * bloomAmt;  // (the bloom is already in exposed units)
+    hdr *= 1.0 - 0.22 * glare;  // the haze look is a stop or so darker, so the sunlit side does not blow out
+    if (glare > 0.0) {
+        vec2 ndc = fragTexCoord * 2.0 - 1.0;
+        vec3 ray = normalize(camFwd + camRightT * ndc.x + camUpT * ndc.y);
+        float cs = max(dot(ray, normalize(sunDirW)), 0.0);
+        // looking towards the sun: a warm veil over everything (light scattered inside the lens)
+        hdr += sunTint * (pow(cs, 5.0) * 0.09 + pow(cs, 40.0) * 0.18) * glare;
+        if (sunUV.z > 0.5) {
+            // the sun itself, if it is not behind something: a bright core, a bloom and ghosts across the frame
+            float vis = 0.0;
+            for (int i = 0; i < 8; ++i) {
+                float a = float(i) * 0.785398, r = 0.012 + 0.012 * float(i & 1);
+                vec2 u = sunUV.xy + vec2(cos(a) / aspect, sin(a)) * r;
+                vis += (u.x > 0.0 && u.x < 1.0 && u.y > 0.0 && u.y < 1.0 && texture(depthTex, u).r > 0.99999) ? 0.125 : 0.0;
+            }
+            vec2 dv = (fragTexCoord - sunUV.xy) * vec2(aspect, 1.0);
+            float r = length(dv);
+            vec3 g = sunTint * (exp(-r * 9.0) * 0.9 + exp(-r * 2.5) * 0.18);
+            vec2 axis = (vec2(0.5) - sunUV.xy);
+            for (int k = 0; k < 3; ++k) {
+                vec2 gp = sunUV.xy + axis * (0.7 + 0.55 * float(k));
+                float gr = length((fragTexCoord - gp) * vec2(aspect, 1.0));
+                float rad = 0.05 + 0.03 * float(k);
+                g += mix(vec3(1.0, 0.8, 0.5), vec3(0.6, 0.8, 1.0), float(k) / 2.0) * (smoothstep(rad, rad * 0.55, gr) * 0.05 + smoothstep(0.012, 0.0, abs(gr - rad)) * 0.05);
+            }
+            hdr += g * vis * glare;
+        }
+    }
     vec3 c = aces(hdr);
     c = pow(c, vec3(1.0 / 2.2));
-    c = clamp(mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, saturation), 0.0, 1.0);
-    c = mix(c, c * c * (3.0 - 2.0 * c), contrast);
+    if (glare > 0.0) c = mix(c, c * 0.9 + vec3(0.045, 0.04, 0.033), 0.7 * glare);  // lifted, hazy blacks
+    if (grade > 0.0) {
+        // a little contrast and colour, cool shade and warm light
+        vec3 g = mix(c, c * c * (3.0 - 2.0 * c), 0.35);
+        float luma = dot(g, vec3(0.2126, 0.7152, 0.0722));
+        g = mix(vec3(luma), g, mix(1.12, 0.74, glare));  // (muted in the sunny haze look)
+        g *= mix(vec3(0.95, 0.98, 1.05), vec3(1.05, 1.01, 0.94), smoothstep(0.12, 0.75, luma));
+        c = mix(c, clamp(g, 0.0, 1.0), grade);
+    }
     vec2 q = fragTexCoord - 0.5;
     c *= 1.0 - dot(q, q) * 0.35;  // a gentle vignette
     finalColor = vec4(c, 1.0);
@@ -602,6 +656,78 @@ uniform float zNear;
 uniform float zFar;
 float linZ(float d) { return 2.0 * zNear * zFar / (zFar + zNear - (d * 2.0 - 1.0) * (zFar - zNear)); }
 float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }  // interleaved gradient noise
+)";
+
+// Screen-space ambient occlusion at half size: for each pixel, taps round it in the depth buffer count
+// how much nearby geometry rises above its surface (angle based, so a flat surface scores nothing).
+// The result is (occlusion, depth in metres) so that applying it can ignore taps from another surface.
+const char* kSsaoFS = R"(#version 330
+in vec2 fragTexCoord;
+uniform vec2 size;      // full-size px
+uniform vec2 tanFov;    // tan of the half field of view across and up
+uniform float radius;   // m
+out vec4 finalColor;
+vec3 viewPos(vec2 uv, float z) { return vec3((uv * 2.0 - 1.0) * tanFov * z, z); }
+void main() {
+    vec2 uv = fragTexCoord;
+    float d0 = texture(depthTex, uv).r;
+    if (d0 >= 0.99999) { finalColor = vec4(1.0, zFar, 0.0, 1.0); return; }
+    float z = linZ(d0);
+    vec3 P = viewPos(uv, z);
+    vec2 px = 1.0 / size;
+    vec3 Pr = viewPos(uv + vec2(px.x, 0.0), linZ(texture(depthTex, uv + vec2(px.x, 0.0)).r));
+    vec3 Pl = viewPos(uv - vec2(px.x, 0.0), linZ(texture(depthTex, uv - vec2(px.x, 0.0)).r));
+    vec3 Pu = viewPos(uv + vec2(0.0, px.y), linZ(texture(depthTex, uv + vec2(0.0, px.y)).r));
+    vec3 Pd = viewPos(uv - vec2(0.0, px.y), linZ(texture(depthTex, uv - vec2(0.0, px.y)).r));
+    vec3 dx = abs(Pr.z - P.z) < abs(P.z - Pl.z) ? Pr - P : P - Pl;
+    vec3 dy = abs(Pu.z - P.z) < abs(P.z - Pd.z) ? Pu - P : P - Pd;
+    vec3 N = normalize(cross(dx, dy));
+    if (dot(N, P) > 0.0) N = -N;
+    float focalPx = 0.5 * size.y / tanFov.y;
+    float rPx = clamp(radius * focalPx / z, 4.0, 60.0);
+    float rot = ign(gl_FragCoord.xy * 2.0) * 6.2831853;
+    float occ = 0.0;
+    const int N_TAPS = 14;
+    for (int i = 0; i < N_TAPS; ++i) {
+        float r = (float(i) + 0.5) / float(N_TAPS);
+        float a = float(i) * 2.3999632 + rot;
+        vec2 suv = uv + vec2(cos(a), sin(a)) * (r * r * 0.7 + 0.3) * rPx * px;
+        float zs = linZ(texture(depthTex, suv).r);
+        vec3 v = viewPos(suv, zs) - P;
+        float len = length(v);
+        float cosA = dot(v, N) / max(len, 1e-4);
+        occ += max(cosA - 0.12, 0.0) * (1.0 - smoothstep(radius * 0.8, radius * 2.0, len));
+    }
+    finalColor = vec4(clamp(1.0 - 1.9 * occ / float(N_TAPS), 0.0, 1.0), z, 0.0, 1.0);
+}
+)";
+
+// Applies the occlusion to the picture: a depth-aware blur of the half-size result (so it does not
+// bleed over silhouettes), fading out with distance.
+const char* kAoApplyFS = R"(#version 330
+in vec2 fragTexCoord;
+uniform sampler2D texture0;   // the picture
+uniform sampler2D aoTex;      // (occlusion, depth)
+uniform vec2 aoTexel;
+uniform float strength;
+out vec4 finalColor;
+void main() {
+    vec2 uv = fragTexCoord;
+    vec3 c = texture(texture0, uv).rgb;
+    float z = linZ(texture(depthTex, uv).r);
+    float fade = (1.0 - smoothstep(50.0, 160.0, z)) * strength;
+    if (fade <= 0.0) { finalColor = vec4(c, 1.0); return; }
+    float sum = 0.0, ws = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            vec2 t = texture(aoTex, uv + vec2(x, y) * aoTexel).rg;
+            float w = exp(-abs(t.y - z) / (0.04 * z + 0.05)) * (x == 0 && y == 0 ? 2.0 : 1.0);
+            sum += t.x * w;
+            ws += w;
+        }
+    float ao = ws > 0.0 ? sum / ws : 1.0;
+    finalColor = vec4(c * mix(1.0, ao, fade), 1.0);
+}
 )";
 
 // Depth of field: a gather over a disc of taps, each weighted by whether its own blur circle reaches
@@ -705,11 +831,12 @@ uniform vec2 texel;   // of the source
 uniform int first;
 uniform float exposure;
 uniform float threshold;
+uniform float cap;    // the most any one pixel may feed the bloom (a blinding glint should not flare)
 out vec4 finalColor;
 vec3 fetch(vec2 uv) {
     vec3 c = texture(texture0, uv).rgb;
     if (first == 0) return c;
-    c = min(c * exposure, vec3(30.0));
+    c = min(c * exposure, vec3(cap));
     float br = max(c.r, max(c.g, c.b));
     float knee = 0.5 * threshold;
     float soft = clamp(br - threshold + knee, 0.0, 2.0 * knee);
@@ -863,7 +990,7 @@ void Renderer::lookUp(Shader& s, Locs& l) {
     l.skyYaw = U("skyYaw"); l.fog = U("fogDensity"); l.specMax = U("specScale");
     l.layerScale = U("layerScale"); l.tint = U("tint"); l.layerTint = U("layerTint"); l.roughMul = U("roughMul"); l.metalMul = U("metalMul");
     l.normalStrength = U("normalStrength"); l.clearcoat = U("clearcoat"); l.ccRough = U("ccRough");
-    l.grime = U("grime");
+    l.grime = U("grime"); l.shadowDeepen = U("shadowDeepen");
     l.macro = U("macroVariation"); l.layers = U("layers"); l.decal = U("decal"); l.depthBias = U("depthBias");
     l.alphaCut = U("alphaCut"); l.translucency = U("translucency"); l.vertexTint = U("vertexTint");
     l.a2c = U("alphaToCoverage");
@@ -877,7 +1004,6 @@ void Renderer::lookUp(Shader& s, Locs& l) {
     l.shadow[1] = U("shadowMap1");
     l.shadow[2] = U("shadowMap2");
     l.carShadow = U("carShadow");
-    l.ambient = U("ambientScale");
     l.spec = U("specAtlas");
     l.skyMap = U("skyMap");
     l.blob = U("blob[0]");
@@ -900,7 +1026,9 @@ bool Renderer::init(int width, int height, std::string* err, int msaa) {
     bloomDownS_ = LoadShaderFromMemory(nullptr, kBloomDownFS);
     bloomUpS_ = LoadShaderFromMemory(nullptr, kBloomUpFS);
     puff_ = LoadShaderFromMemory(kPuffVS, kPuffFS);
-    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_, &dof_, &mblur_, &bloomDownS_, &bloomUpS_, &puff_})
+    ssao_ = LoadShaderFromMemory(nullptr, withPost(kSsaoFS).c_str());
+    aoApply_ = LoadShaderFromMemory(nullptr, withPost(kAoApplyFS).c_str());
+    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_, &dof_, &mblur_, &bloomDownS_, &bloomUpS_, &puff_, &ssao_, &aoApply_})
         if (s->id == 0 || s->id == rlGetShaderIdDefault()) {
             if (err) *err = "shader compilation failed (OpenGL 3.3 required); see the log above";
             return false;
@@ -1064,7 +1192,7 @@ void Renderer::shutdown() {
     }
     for (Texture2D* t : {&skyTex_, &specTex_})
         if (t->id) UnloadTexture(*t), t->id = 0;
-    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_, &dof_, &mblur_, &bloomDownS_, &bloomUpS_, &puff_})
+    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_, &dof_, &mblur_, &bloomDownS_, &bloomUpS_, &puff_, &ssao_, &aoApply_})
         if (s->id) UnloadShader(*s), s->id = 0;
     if (puffTex_.id) UnloadTexture(puffTex_), puffTex_ = Texture2D{};
     if (cube_.vertexCount) UnloadMesh(cube_), cube_ = Mesh{};
@@ -1118,6 +1246,14 @@ Sun Renderer::sun() const {
     Vector3 d = s.dir;
     s.dir = Vector3Normalize({c * d.x - sn * d.z, d.y, sn * d.x + c * d.z});
     s.irradiance = Vector3Scale(s.irradiance, sunIntensity);
+    if (haze > 0 && hasSun_) {
+        // lower, stronger and warmer: shadows lengthen and the light comes from ahead
+        const float elev = std::asin(std::clamp(s.dir.y, -1.0f, 1.0f));
+        const float want = elev + (0.43f - elev) * haze;
+        const float hl = std::max(std::sqrt(s.dir.x * s.dir.x + s.dir.z * s.dir.z), 1e-4f);
+        s.dir = {s.dir.x / hl * std::cos(want), std::sin(want), s.dir.z / hl * std::cos(want)};
+        s.irradiance = Vector3Multiply(s.irradiance, Vector3Lerp({1, 1, 1}, {1.1f, 1.0f, 0.85f}, haze));
+    }
     return s;
 }
 
@@ -1221,7 +1357,6 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
     rlSetUniformMatrix(L.lightVP + 2, lightVP_[2]);
     int carSh = carCascadeLive_ ? 1 : 0;
     rlSetUniform(L.carShadow, &carSh, RL_SHADER_UNIFORM_INT, 1);
-    rlSetUniform(L.ambient, &ambient, RL_SHADER_UNIFORM_FLOAT, 1);
     rlSetUniform(L.viewPos, &cam_.position, RL_SHADER_UNIFORM_VEC3, 1);
     Sun s = sun();
     rlSetUniform(L.sunDir, &s.dir, RL_SHADER_UNIFORM_VEC3, 1);
@@ -1230,8 +1365,10 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
     for (int i = 0; i < 9; ++i) sh[i] = Vector3Scale(sh_[i], skyIntensity);
     rlSetUniform(L.sh, sh, RL_SHADER_UNIFORM_VEC3, 9);
     rlSetUniform(L.skyYaw, &skyYaw, RL_SHADER_UNIFORM_FLOAT, 1);
-    rlSetUniform(L.fog, &fogDensity, RL_SHADER_UNIFORM_FLOAT, 1);
+    const float fogD = fogDensity * (1.0f + 0.6f * haze);
+    rlSetUniform(L.fog, &fogD, RL_SHADER_UNIFORM_FLOAT, 1);
     Vector3 fc = Vector3Scale(fogColor_, skyIntensity);
+    if (haze > 0) fc = Vector3Lerp(fc, {fc.x * 1.25f + 0.10f, fc.y * 1.12f + 0.07f, fc.z * 0.98f + 0.03f}, haze);  // pale and warm
     rlSetUniform(L.fogColor, &fc, RL_SHADER_UNIFORM_VEC3, 1);
     rlSetUniform(L.specMax, &skyIntensity, RL_SHADER_UNIFORM_FLOAT, 1);
     int layers = 0;
@@ -1260,6 +1397,7 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
     int macro = mat.macroVariation ? 1 : 0;
     rlSetUniform(L.macro, &macro, RL_SHADER_UNIFORM_INT, 1);
     rlSetUniform(L.grime, &mat.grime, RL_SHADER_UNIFORM_FLOAT, 1);
+    rlSetUniform(L.shadowDeepen, &shadowDeepen, RL_SHADER_UNIFORM_FLOAT, 1);
     {
         int n = (int)std::min(blobs.size(), (size_t)kBlobs);
         rlSetUniform(L.blobCount, &n, RL_SHADER_UNIFORM_INT, 1);
@@ -1382,6 +1520,7 @@ void Renderer::drawSky() {
     if (!hasSun_) s.irradiance = {0, 0, 0};
     rlSetUniform(GetShaderLocation(sky_, "sunDir"), &s.dir, RL_SHADER_UNIFORM_VEC3, 1);
     rlSetUniform(GetShaderLocation(sky_, "sunColor"), &s.irradiance, RL_SHADER_UNIFORM_VEC3, 1);
+    rlSetUniform(GetShaderLocation(sky_, "halo"), &haze, RL_SHADER_UNIFORM_FLOAT, 1);
     int slot = 0;
     rlActiveTextureSlot(0);
     rlEnableTexture(skyTex_.id);
@@ -1439,6 +1578,20 @@ void Renderer::present(int x, int y, int width, int height) {
     };
     const float pxScale = h_ / 1080.0f;
 
+    if (P.ao > 0 && bloomLevels_ >= 1) {
+        // half-size occlusion into the first bloom level (which the bloom overwrites later), then applied
+        depthTexture(ssao_);
+        set2(ssao_, "size", (float)w_, (float)h_);
+        set2(ssao_, "tanFov", 1.0f / proj_.m0, 1.0f / proj_.m5);
+        set1(ssao_, "radius", P.aoRadius);
+        runPass(bloomDown_[0], ssao_, cur, {{"depthTex", depth_}});
+        Target& dst = nextTarget();
+        depthTexture(aoApply_);
+        set2(aoApply_, "aoTexel", 1.0f / bloomDown_[0].w, 1.0f / bloomDown_[0].h);
+        set1(aoApply_, "strength", P.ao);
+        runPass(dst, aoApply_, cur, {{"depthTex", depth_}, {"aoTex", bloomDown_[0].tex}});
+        cur = dst.tex;
+    }
     if (P.shutter > 0 && !P.cut && havePrev_) {
         Target& dst = nextTarget();
         depthTexture(mblur_);
@@ -1482,6 +1635,7 @@ void Renderer::present(int x, int y, int width, int height) {
             seti(bloomDownS_, "first", i == 0 ? 1 : 0);
             set1(bloomDownS_, "exposure", exposure);
             set1(bloomDownS_, "threshold", P.bloomThreshold);
+            set1(bloomDownS_, "cap", P.glare > 0 ? 2.2f : 30.0f);
             runPass(bloomDown_[i], bloomDownS_, src);
         }
         for (int i = bloomLevels_ - 1; i >= 0; --i) {
@@ -1502,9 +1656,39 @@ void Renderer::present(int x, int y, int width, int height) {
     Texture2D t{cur, w_, h_, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16};
     SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "exposure"), &exposure, SHADER_UNIFORM_FLOAT);
     SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "bloomAmt"), &bloomAmt, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "contrast"), &contrast, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "saturation"), &saturation, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "grade"), &P.grade, SHADER_UNIFORM_FLOAT);
+    if (P.glare > 0) {
+        const Sun sn = sun();
+        const Vector3 fwd = Vector3Normalize(Vector3Subtract(cam_.target, cam_.position));
+        const Vector3 right = Vector3Normalize(Vector3CrossProduct(fwd, cam_.up));
+        const Vector3 up = Vector3CrossProduct(right, fwd);
+        const Vector3 rt = Vector3Scale(right, 1.0f / proj_.m0), ut = Vector3Scale(up, 1.0f / proj_.m5);
+        const float mx = std::max(sn.irradiance.x, std::max(sn.irradiance.y, sn.irradiance.z));
+        Vector3 tint = {sn.irradiance.x / mx, sn.irradiance.y / mx, sn.irradiance.z / mx};
+        tint = Vector3Multiply(tint, {1.0f, 0.92f, 0.78f});
+        Vector3 su = {0, 0, 0};
+        const float front = Vector3DotProduct(fwd, sn.dir);
+        if (front > 0.05f) {
+            const float ax = Vector3DotProduct(sn.dir, right) / (front * (1.0f / proj_.m0));
+            const float ay = Vector3DotProduct(sn.dir, up) / (front * (1.0f / proj_.m5));
+            su = {ax * 0.5f + 0.5f, ay * 0.5f + 0.5f, 1.0f};
+        }
+        const Shader& T = tonemap_;
+        SetShaderValue(T, GetShaderLocation(T, "glare"), &P.glare, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(T, GetShaderLocation(T, "camFwd"), &fwd, SHADER_UNIFORM_VEC3);
+        SetShaderValue(T, GetShaderLocation(T, "camRightT"), &rt, SHADER_UNIFORM_VEC3);
+        SetShaderValue(T, GetShaderLocation(T, "camUpT"), &ut, SHADER_UNIFORM_VEC3);
+        SetShaderValue(T, GetShaderLocation(T, "sunDirW"), &sn.dir, SHADER_UNIFORM_VEC3);
+        SetShaderValue(T, GetShaderLocation(T, "sunTint"), &tint, SHADER_UNIFORM_VEC3);
+        SetShaderValue(T, GetShaderLocation(T, "sunUV"), &su, SHADER_UNIFORM_VEC3);
+        const float asp = (float)w_ / h_;
+        SetShaderValue(T, GetShaderLocation(T, "aspect"), &asp, SHADER_UNIFORM_FLOAT);
+    } else {
+        const float zero = 0;
+        SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "glare"), &zero, SHADER_UNIFORM_FLOAT);
+    }
     BeginShaderMode(tonemap_);
+    if (P.glare > 0) SetShaderValueTexture(tonemap_, GetShaderLocation(tonemap_, "depthTex"), Texture2D{depth_, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16});
     SetShaderValueTexture(tonemap_, GetShaderLocation(tonemap_, "bloomTex"), Texture2D{bloomTex, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16});
     // render targets are stored bottom-up
     DrawTexturePro(t, {0, 0, (float)w_, (float)-h_}, {(float)x, (float)y, (float)width, (float)height}, {0, 0}, 0, WHITE);

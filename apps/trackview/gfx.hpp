@@ -70,9 +70,8 @@ public:
     float skyIntensity = 1.0f;  // ambient and reflections
     float sunIntensity = 1.0f;
     float fogDensity = 0.00022f;
-    float ambient = 1.0f;       // the sky's diffuse fill (what lights the shade), on top of skyIntensity
-    // a grade after the tone curve: an S-curve (0 = none, 1 = smoothstep) and saturation (1 = as is)
-    float contrast = 0.0f, saturation = 1.0f;
+    float haze = 0.0f;          // 0..1: the "sunny haze" look: low warm sun, thicker warm fog, a halo round the sun
+    float shadowDeepen = 0.5f;  // 0..1: how much darker (and cooler) the sky light is inside a shadow, in a sunny sky
     // Contact shadows under cars: up to kBlobs footprints (centre x, z, yaw, ground height),
     // darkening the ground under and around each car and the car's own underside. Set each frame.
     static constexpr int kBlobs = 8;
@@ -122,6 +121,11 @@ public:
         Vector4 keep = {0.5f, 0.5f, 0, 0};  // an ellipse (centre uv, radii uv) round the followed car, kept sharp
         float keepDepth = 0;    // m: anything nearer (the car's own nose) is not blurred
         bool cut = false;       // the camera jumped since the last frame: no smear
+        // screen-space ambient occlusion: contact darkening where surfaces meet (under cars, kerb and barrier feet)
+        float ao = 0;           // strength 0..1; 0 = off
+        float aoRadius = 0.7f;  // m
+        float glare = 0;        // 0..1: sun glare, a warm veil when looking towards the sun, and lens ghosts
+        float grade = 0;        // 0..1: filmic colour grade (a little contrast, cool shade, warm light)
         // bloom
         float bloom = 0;        // strength; 0 = off
         float bloomThreshold = 1.0f;
@@ -151,7 +155,7 @@ private:
     static constexpr int kBloomLevels = 6;
     Target ppA_, ppB_, bloomDown_[kBloomLevels], bloomUp_[kBloomLevels];
     int bloomLevels_ = 0;
-    Shader dof_{}, mblur_{}, bloomDownS_{}, bloomUpS_{}, puff_{};
+    Shader dof_{}, mblur_{}, bloomDownS_{}, bloomUpS_{}, puff_{}, ssao_{}, aoApply_{};
     Texture2D puffTex_{};
     Matrix prevViewProj_{};
     bool havePrev_ = false;
@@ -172,9 +176,9 @@ private:
     Matrix view_{}, proj_{};
     struct Locs {
         int mvp, model, normalMat, viewPos, lightVP, sunDir, sunColor, sh, skyYaw, fog, exposure, specMax;
-        int layerScale, tint, layerTint, depthBias, alphaCut, translucency, vertexTint, roughMul, metalMul, normalStrength, clearcoat, ccRough, macro, layers, decal;
+        int layerScale, tint, layerTint, depthBias, alphaCut, translucency, vertexTint, roughMul, metalMul, normalStrength, clearcoat, ccRough, macro, layers, decal, shadowDeepen;
         int tex[9], shadow[kCascades], spec, skyMap, blob, blobCount, a2c, fogColor, detile, grime, colorMap, colorMapRect, colorMapRange, useColorMap;
-        int carShadow, ambient;
+        int carShadow;
     } L_{}, Li_{};  // plain and instanced
     void lookUp(Shader& s, Locs& l);
     int bindMaterial(const Material& mat, const Locs& l, Matrix model, Matrix mvp);

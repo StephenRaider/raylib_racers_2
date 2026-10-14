@@ -247,11 +247,6 @@ bool Renderer::init(const rr::Track& track, unsigned seed, const std::string& as
     gImpl = p_.get();
     if (!p_->gr.init(std::max(2, GetScreenWidth()), std::max(2, GetScreenHeight()), err, 4)) return false;
     if (!p_->gr.loadSky(assetsDir + "/sky", "kloofendal_partly_cloudy", err)) return false;
-    // a broadcast look: deeper shade, a stronger sun and a little more punch than the plain picture
-    p_->gr.ambient = 0.75f;
-    p_->gr.sunIntensity = 1.15f;
-    p_->gr.contrast = 0.3f;
-    p_->gr.saturation = 1.12f;
     if (!p_->scene.build(track, assetsDir, seed ? seed : 1, err)) return false;
     return true;
 }
@@ -266,8 +261,12 @@ void Renderer::adjustLighting(bool nextSky, float turn, float exposureFactor) {
     Impl& p = *p_;
     if (nextSky) {
         std::string err;
-        const int idx = (p.skyIdx + 1) % 3;
-        if (p.gr.loadSky(p.assets + "/sky", skies[idx], &err)) p.skyIdx = idx;
+        // four looks: the three skies, then the partly cloudy sky again as a hazy low-sun look
+        const int look = (p.skyIdx + 1) % 4;
+        if (p.gr.loadSky(p.assets + "/sky", skies[look == 3 ? 0 : look], &err)) {
+            p.skyIdx = look;
+            p.gr.haze = look == 3 ? 1.0f : 0.0f;
+        }
     }
     p.gr.skyYaw += turn;
     p.gr.exposure = std::clamp(p.gr.exposure * exposureFactor, 0.2f, 3.0f);
@@ -441,8 +440,12 @@ void Renderer::Impl::setPost(const Camera3D& cam, const ViewOptions& opt) {
     const bool lens = lastMode == CAM_CINEMATIC || lastMode == CAM_TV;
     const bool ground = lastMode != CAM_TOP && lastMode != CAM_OVERVIEW;
     const float tanHalf = std::tan(cam.fovy * DEG2RAD * 0.5f);
-    P.bloom = 0.35f;
-    P.bloomThreshold = 0.7f;
+    P.bloom = 0.35f + 0.1f * gr.haze;
+    P.ao = full ? 0.7f : 0.5f;
+    P.aoRadius = 0.8f;
+    P.grade = 1.0f;
+    P.bloomThreshold = 0.7f + 0.3f * gr.haze;
+    P.glare = gr.haze;
 
     if (ground) {
         P.hazeCoc = 2.4f;
