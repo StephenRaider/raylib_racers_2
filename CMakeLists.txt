@@ -152,7 +152,9 @@ if(RR_BUILD_VIEWER)
     apps/viewer/hud.cpp apps/viewer/hud_results.cpp apps/viewer/hud_menu.cpp apps/viewer/hud_test.cpp
     apps/viewer/menu.cpp apps/viewer/test_figures.cpp apps/viewer/liveries.cpp
     apps/viewer/engine_sound.cpp apps/viewer/surface_sound.cpp apps/viewer/race_audio.cpp
+    apps/viewer/effects.cpp
     apps/viewer2/renderer2.cpp
+    apps/viewer2/decals.cpp
     apps/viewer2/car_render.cpp)
   target_compile_definitions(rr_viewer2 PRIVATE RR2_RENDERER=1)
   target_include_directories(rr_viewer2 PRIVATE apps/viewer apps/viewer2)
@@ -170,6 +172,11 @@ add_executable(test_surfaces tests/surfaces/main.cpp)
 target_link_libraries(test_surfaces PRIVATE rr_core)
 target_compile_options(test_surfaces PRIVATE ${RR_WARNINGS})
 add_test(NAME surfaces COMMAND test_surfaces WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(test_rubber tests/rubber/main.cpp)
+target_link_libraries(test_rubber PRIVATE rr_core)
+target_compile_options(test_rubber PRIVATE ${RR_WARNINGS})
+add_test(NAME rubber COMMAND test_rubber WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(test_tyres tests/tyres/main.cpp)
 target_link_libraries(test_tyres PRIVATE rr_core)
 target_compile_options(test_tyres PRIVATE ${RR_WARNINGS})

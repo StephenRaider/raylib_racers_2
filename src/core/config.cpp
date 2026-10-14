@@ -40,6 +40,7 @@ std::string usage(const char* prog, bool viewer) {
         "  --two-compounds on|off|auto  every car must use two compounds (auto: races over 20 laps)\n"
         "  --no-pits              pit requests are ignored (robots are told, ABI 6)\n"
         "  --vsc off|auto         incident holds, yellow flags and the virtual safety car in races (default auto)\n"
+        "  --rubber on|off        tyres lay rubber on the track: the racing line gains up to 3% grip (default on)\n"
         "  --wet                  a wet track: no DRS (there is no rain model yet)\n"
         "Competition\n"
         "  --sandbox              run each robot in its own locked-down process (rr_bothost): no file\n"
@@ -124,6 +125,12 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
             }
             else if (a == "--no-pits") cfg.pitsClosed = true;
             else if (a == "--wet") cfg.wet = true;
+            else if (a == "--rubber") {
+                const std::string v = need(i, a);
+                if (v == "off") cfg.rubber = false;
+                else if (v == "on") cfg.rubber = true;
+                else throw std::runtime_error("--rubber takes on or off");
+            }
             else if (a == "--vsc") {
                 const std::string v = need(i, a);
                 if (v == "off") cfg.neutral = false;
