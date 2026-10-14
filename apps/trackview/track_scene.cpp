@@ -527,7 +527,7 @@ void TrackScene::buildRoad(unsigned seed) {
     mKerb.depthBias = 2.0f;
     mKerb.tint = {0.95f, 0.08f, 0.06f};
     mKerb.roughness = 0.6f;
-    mKerb.grime = 0.9f;  // worn: dust, rubber and grit
+    mKerb.grime = 1.0f;  // worn: dust, rubber and grit
     part(kerbRed, mKerb, true);
     mKerb.tint = {1.1f, 1.1f, 1.1f};
     part(kerbWhite, mKerb, true);

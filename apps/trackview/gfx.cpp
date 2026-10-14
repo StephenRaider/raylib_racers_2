@@ -382,19 +382,35 @@ void main() {
         // kerbs: dust and brake dirt over everything, black rubber marks where cars have run over them,
         // and scattered grit and debris close up
         vec2 gp = fragPos.xz;
-        float cover = smoothstep(0.25, 0.75, vnoise(gp * 0.35) * 0.6 + vnoise(gp * 1.7) * 0.4);
-        grimeDust = grime * (0.35 + 0.65 * cover);
-        albedo = mix(albedo, albedo * vec3(0.5, 0.47, 0.44) + vec3(0.012, 0.01, 0.008), clamp(grimeDust * 0.95, 0.0, 1.0));
-        float streak = vnoise(vec2(gp.x * 0.5 + gp.y * 0.2, gp.y * 2.2 + gp.x * 0.3) * 1.3) * 0.55 + vnoise(gp * 6.0) * 0.45;
-        float rubber = smoothstep(0.45, 0.75, streak) * smoothstep(0.2, 0.6, vnoise(gp * 0.23 + 7.0)) * grime;
-        albedo *= 1.0 - 0.85 * rubber;
-        if (camDist < 50.0) {
-            vec2 cell = floor(gp * 45.0);
-            float speck = step(0.965, hash(cell)) * step(length(fract(gp * 45.0) - 0.5), 0.34 + 0.12 * hash(cell + 3.0));
-            albedo *= 1.0 - 0.75 * speck * grime * (1.0 - smoothstep(25.0, 50.0, camDist));
+        // the kerb's UVs are (metres across, metres along the track): the marks run along it
+        vec2 k = vec2(abs(fragUV.x), fragUV.y);
+        float cover = smoothstep(0.2, 0.7, vnoise(gp * 0.35) * 0.6 + vnoise(gp * 1.7) * 0.4);
+        grimeDust = grime * (0.45 + 0.55 * cover);
+        // a grey-brown film of dust and brake dust (it shows most on the white)
+        vec3 dust = vec3(0.16, 0.15, 0.135);
+        albedo = mix(albedo, min(albedo, dust + albedo * 0.35), clamp(grimeDust * 0.85, 0.0, 1.0));
+        // paint worn through to the grey underneath in patches
+        float wear = smoothstep(0.55, 0.78,vnoise(vec2(k.x * 3.0, k.y * 0.7)) * 0.7 + vnoise(gp * 4.0) * 0.3) * grime;
+        albedo = mix(albedo, vec3(0.2, 0.19, 0.18), wear * 0.75);
+        // smeared black rubber, long streaks along the track where wheels have run over it
+        float streak = vnoise(vec2(k.x * 2.2, k.y * 0.13)) * 0.6 + vnoise(vec2(k.x * 9.0, k.y * 0.5)) * 0.4;
+        float run = smoothstep(0.15, 0.5, vnoise(vec2(k.x * 0.8, k.y * 0.045) + 7.0));
+        float rubber = smoothstep(0.36, 0.56, streak) * run * grime;
+        albedo = mix(albedo, vec3(0.025, 0.024, 0.023), rubber * 0.75);
+        // and a fainter grey smudge around the streaks
+        float smudge = smoothstep(0.25, 0.5, streak) * smoothstep(0.05, 0.4, run) * grime;
+        albedo *= 1.0 - 0.4 * smudge;
+        if (camDist < 60.0) {
+            // grit, rubber pellets and bits of debris
+            float near = grime * (1.0 - smoothstep(30.0, 60.0, camDist));
+            vec2 cell = floor(gp * 40.0);
+            float speck = step(0.945, hash(cell)) * step(length(fract(gp * 40.0) - 0.5), 0.3 + 0.15 * hash(cell + 3.0));
+            albedo = mix(albedo, vec3(0.02, 0.018, 0.016) + vec3(0.06, 0.045, 0.03) * hash(cell + 5.0), speck * 0.85 * near);
+            vec2 cell2 = floor(gp * 110.0);
+            float fine = step(0.9, hash(cell2)) * step(length(fract(gp * 110.0) - 0.5), 0.35);
+            albedo *= 1.0 - 0.45 * fine * near;
         }
-        grimeDust = max(grimeDust, rubber * 0.5);
-    }
+        grimeDust = max(max(grimeDust, rubber * 0.6), wear * 0.5);    }
     float carOcc = blobCount > 0 ? carOcclusion() : 1.0;
     float ao = s.orm.r * (decal != 0 ? 1.0 : fragColor.a) * carOcc;
     float rough = clamp(mix(s.orm.g * roughMul, 0.95, grimeDust * 0.6), 0.04, 1.0);

@@ -198,6 +198,7 @@ int main(int argc, char** argv) {
             {"08_valley_hairpin", 9, -150, 0.0f, 1.1f, -20, 0.0f, 0.5f, 60},
             {"09_highmoor_climb", 13, -40, 3.0f, 1.1f, 100, 0.0f, 1.0f, 60},
             {"10_aerial", 7, 0, 0, 0, 0, 0, 0, 50, {-330, 240, 380}},
+            {"11_kerb_close", 6, -8, 3.5f, 1.3f, -2, 6.0f, 0.0f, 50},
         };
         RenderTexture2D out = LoadRenderTexture(width, height);
         for (const Shot& sh : shots) {
