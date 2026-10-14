@@ -350,10 +350,16 @@ incidents: a hard crash (a wall hit over 8 m/s or a car impact over 6 m/s, after
 nearly stopped), a car standing still on the track for 3 s, or one across the track (angle over
 1.9 rad) for 1 s. Such a car is *held*: the host brakes it and ignores its controls
 (`held` is 1) so it cannot drive back into traffic, and releases it when the track behind it
-is clear (nobody within 40 m, nobody arriving within 7 s). A released car has 6 s to get going
+is clear (nobody within 40 m, nobody arriving within 7 s; a car waiting right behind it does
+not count). A released car has 6 s to get going
 and is limited to 25 m/s for 10 s; if it is stuck or crashes again in that time, is held for
 over 45 s, or is held a third time, it is taken off the track (retired, "removed after
-incident"). While a car is held:
+incident"). A car stopped nose to tail behind a stopped car is blocked, not stuck: it is never
+held or retired for waiting there. A retired car is gone at once: it leaves `nearby` and the
+opponent sensors, has no collisions and no wake, and the viewers stop drawing it. A car that
+stalls on the pit exit road (after the lane, before the exit line) for 10 s is retired
+("stalled at the pit exit"), elsewhere after 60 s ("stuck"). A finished car is topped up with
+a little fuel for its cool-down lap so it never runs dry on the racing line. While a car is held:
 - the track from 250 m before it to 30 m after it is **yellow** (double yellow if it is on the
   racing surface): `flag_state`, and `incident_ds` is the distance to the incident ahead;
 - the whole field runs under the **virtual safety car** (`vsc_state`): at least one lap (at most
