@@ -27,6 +27,10 @@ typedef void (*FbRbFn)(unsigned, unsigned, unsigned, unsigned);
 typedef void (*BlitFn)(int, int, int, int, int, int, int, int, unsigned, unsigned);
 typedef void (*CapFn)(unsigned);
 typedef void (*DelFn)(int, const unsigned*);
+typedef void (*TexImageFn)(unsigned, int, int, int, int, int, unsigned, unsigned, const void*);
+TexImageFn texImage2D;
+GenFn genTextures;
+BindFn bindTexture;
 GenFn genRenderbuffers;
 BindFn bindRenderbuffer, bindFramebuffer;
 StorageMsFn renderbufferStorageMultisample;
@@ -38,7 +42,8 @@ TexParamFn texParameteri;
 DelFn deleteRenderbuffers;
 const unsigned RENDERBUFFER = 0x8D41, FRAMEBUFFER = 0x8D40, READ_FRAMEBUFFER = 0x8CA8, DRAW_FRAMEBUFFER = 0x8CA9;
 const unsigned COLOR_ATTACHMENT0 = 0x8CE0, DEPTH_ATTACHMENT = 0x8D00, RGBA16F = 0x881A, DEPTH_COMPONENT24 = 0x81A6;
-const unsigned COLOR_BUFFER_BIT = 0x4000, NEAREST = 0x2600, SAMPLE_ALPHA_TO_COVERAGE = 0x809E;
+const unsigned COLOR_BUFFER_BIT = 0x4000, DEPTH_BUFFER_BIT = 0x100, NEAREST = 0x2600, SAMPLE_ALPHA_TO_COVERAGE = 0x809E;
+const unsigned TEXTURE_2D = 0x0DE1, DEPTH_COMPONENT = 0x1902, UNSIGNED_INT = 0x1405;
 bool load() {
     genRenderbuffers = (GenFn)glfwGetProcAddress("glGenRenderbuffers");
     deleteRenderbuffers = (DelFn)glfwGetProcAddress("glDeleteRenderbuffers");
@@ -50,7 +55,10 @@ bool load() {
     enable = (CapFn)glfwGetProcAddress("glEnable");
     disable = (CapFn)glfwGetProcAddress("glDisable");
     texParameteri = (TexParamFn)glfwGetProcAddress("glTexParameteri");
-    return genRenderbuffers && deleteRenderbuffers && bindRenderbuffer && bindFramebuffer && renderbufferStorageMultisample &&
+    texImage2D = (TexImageFn)glfwGetProcAddress("glTexImage2D");
+    genTextures = (GenFn)glfwGetProcAddress("glGenTextures");
+    bindTexture = (BindFn)glfwGetProcAddress("glBindTexture");
+    return texImage2D && genTextures && bindTexture && genRenderbuffers && deleteRenderbuffers && bindRenderbuffer && bindFramebuffer && renderbufferStorageMultisample &&
            framebufferRenderbuffer && blitFramebuffer && enable && disable && texParameteri;
 }
 }  // namespace gl
@@ -498,7 +506,9 @@ void main() {
 const char* kTonemapFS = R"(#version 330
 in vec2 fragTexCoord;
 uniform sampler2D texture0;
+uniform sampler2D bloomTex;
 uniform float exposure;
+uniform float bloomAmt;
 out vec4 finalColor;
 vec3 aces(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
@@ -506,11 +516,187 @@ vec3 aces(vec3 x) {
 }
 void main() {
     vec3 hdr = texture(texture0, fragTexCoord).rgb * exposure;
+    if (bloomAmt > 0.0) hdr += texture(bloomTex, fragTexCoord).rgb * bloomAmt;  // (the bloom is already in exposed units)
     vec3 c = aces(hdr);
     c = pow(c, vec3(1.0 / 2.2));
     vec2 q = fragTexCoord - 0.5;
     c *= 1.0 - dot(q, q) * 0.35;  // a gentle vignette
     finalColor = vec4(c, 1.0);
+}
+)";
+
+// Shared by the post passes: the depth buffer's depth in metres (the projection is 0.5 .. 15000 m).
+const char* kPostCommon = R"(
+uniform sampler2D depthTex;
+uniform float zNear;
+uniform float zFar;
+float linZ(float d) { return 2.0 * zNear * zFar / (zFar + zNear - (d * 2.0 - 1.0) * (zFar - zNear)); }
+float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }  // interleaved gradient noise
+)";
+
+// Depth of field: a gather over a disc of taps, each weighted by whether its own blur circle reaches
+// this pixel. A sharp thing in front is never smeared onto what is behind it, and a sharp thing
+// behind is not let leak over a blurred foreground.
+const char* kDofFS = R"(#version 330
+in vec2 fragTexCoord;
+uniform sampler2D texture0;
+uniform vec2 texel;
+uniform float pxScale;
+uniform float focus;      // m; 0 = no lens blur
+uniform float focusTol;   // 1/m
+uniform float lensK;      // px per 1/m
+uniform float maxCoc;     // px
+uniform float hazeCoc;    // px
+uniform float hazeStart;
+uniform float hazeEnd;
+uniform int taps;
+out vec4 finalColor;
+float coc(float z) {
+    float c = 0.0;
+    if (focus > 0.0) c = max(abs(1.0 / focus - 1.0 / z) - focusTol, 0.0) * lensK;
+    if (hazeCoc > 0.0) c = max(c, hazeCoc * smoothstep(hazeStart, hazeEnd, z));
+    return min(c, maxCoc) * pxScale;
+}
+void main() {
+    vec2 uv = fragTexCoord;
+    vec3 c0 = texture(texture0, uv).rgb;
+    float R = maxCoc * pxScale;
+    if (R < 0.5) { finalColor = vec4(c0, 1.0); return; }
+    float zc = linZ(texture(depthTex, uv).r);
+    float cc = coc(zc);
+    vec3 acc = c0;
+    float ws = 1.0;
+    float rot = ign(gl_FragCoord.xy) * 6.2831853;
+    for (int i = 0; i < taps; ++i) {
+        float r = sqrt((float(i) + 0.5) / float(taps)) * R;
+        float a = float(i) * 2.3999632 + rot;
+        vec2 suv = uv + vec2(cos(a), sin(a)) * r * texel;
+        float zs = linZ(texture(depthTex, suv).r);
+        float cs = coc(zs);
+        float cu = zs > zc ? min(cs, cc) : cs;  // what is behind cannot blur over what is sharper in front
+        float w = smoothstep(r - 1.0, r + 1.0, cu) * step(0.6, cu);
+        if (w <= 0.0) continue;
+        acc += min(texture(texture0, suv).rgb, vec3(24.0)) * w;
+        ws += w;
+    }
+    finalColor = vec4(acc / ws, 1.0);
+}
+)";
+
+// Camera motion blur: every pixel is reprojected into the previous frame's view from its depth, and
+// smeared along the way it came. An ellipse round the followed car and anything nearer than keepDepth
+// (the car's own nose) are left sharp, since they move with the camera.
+const char* kMotionFS = R"(#version 330
+in vec2 fragTexCoord;
+uniform sampler2D texture0;
+uniform mat4 invVP;
+uniform mat4 prevVP;
+uniform float shutter;
+uniform float maxBlur;     // uv
+uniform vec2 size;         // px
+uniform vec4 keep;         // centre uv, radii uv
+uniform float keepDepth;
+out vec4 finalColor;
+void main() {
+    vec2 uv = fragTexCoord;
+    vec3 c0 = texture(texture0, uv).rgb;
+    float d = texture(depthTex, uv).r;
+    float z = linZ(d);
+    float m = 1.0;
+    if (keep.z > 0.0) m = smoothstep(1.0, 1.5, length((uv - keep.xy) / keep.zw));
+    if (z < keepDepth) m = 0.0;
+    if (m <= 0.0) { finalColor = vec4(c0, 1.0); return; }
+    vec4 w = invVP * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+    w /= w.w;
+    vec4 pc = prevVP * w;
+    if (pc.w < 0.05) { finalColor = vec4(c0, 1.0); return; }
+    vec2 v = (uv - (pc.xy / pc.w * 0.5 + 0.5)) * shutter * m;
+    float len = length(v);
+    if (len * max(size.x, size.y) < 0.75) { finalColor = vec4(c0, 1.0); return; }
+    if (len > maxBlur) v *= maxBlur / len;
+    float jitter = ign(gl_FragCoord.xy);
+    vec3 acc = vec3(0.0);
+    const int N = 14;
+    for (int i = 0; i < N; ++i) {
+        float t = (float(i) + jitter) / float(N) - 0.5;
+        acc += min(texture(texture0, uv + v * t).rgb, vec3(24.0));
+    }
+    finalColor = vec4(acc / float(N), 1.0);
+}
+)";
+
+// Bloom: a chain of half-size targets. The first level keeps only what is brighter than the
+// threshold (after exposure); each next one halves again with a 13-tap filter; the way back up
+// adds each level to the blurred ones below it.
+const char* kBloomDownFS = R"(#version 330
+in vec2 fragTexCoord;
+uniform sampler2D texture0;
+uniform vec2 texel;   // of the source
+uniform int first;
+uniform float exposure;
+uniform float threshold;
+out vec4 finalColor;
+vec3 fetch(vec2 uv) {
+    vec3 c = texture(texture0, uv).rgb;
+    if (first == 0) return c;
+    c = min(c * exposure, vec3(30.0));
+    float br = max(c.r, max(c.g, c.b));
+    float knee = 0.5 * threshold;
+    float soft = clamp(br - threshold + knee, 0.0, 2.0 * knee);
+    soft = soft * soft / (4.0 * knee + 1e-4);
+    return c * (max(soft, br - threshold) / max(br, 1e-4));
+}
+void main() {
+    vec2 uv = fragTexCoord;
+    vec3 a = fetch(uv + texel * vec2(-2, 2)), b = fetch(uv + texel * vec2(0, 2)), c = fetch(uv + texel * vec2(2, 2));
+    vec3 d = fetch(uv + texel * vec2(-2, 0)), e = fetch(uv), f = fetch(uv + texel * vec2(2, 0));
+    vec3 g = fetch(uv + texel * vec2(-2, -2)), h = fetch(uv + texel * vec2(0, -2)), i = fetch(uv + texel * vec2(2, -2));
+    vec3 j = fetch(uv + texel * vec2(-1, 1)), k = fetch(uv + texel * vec2(1, 1));
+    vec3 l = fetch(uv + texel * vec2(-1, -1)), m = fetch(uv + texel * vec2(1, -1));
+    vec3 r = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
+    finalColor = vec4(r, 1.0);
+}
+)";
+
+const char* kBloomUpFS = R"(#version 330
+in vec2 fragTexCoord;
+uniform sampler2D texture0;  // the smaller level
+uniform sampler2D highTex;   // this level, going down
+uniform vec2 texel;          // of the smaller level
+uniform float weight;
+out vec4 finalColor;
+void main() {
+    vec2 uv = fragTexCoord;
+    vec3 s = texture(texture0, uv + texel * vec2(-1, 1)).rgb + 2.0 * texture(texture0, uv + texel * vec2(0, 1)).rgb + texture(texture0, uv + texel * vec2(1, 1)).rgb
+           + 2.0 * texture(texture0, uv + texel * vec2(-1, 0)).rgb + 4.0 * texture(texture0, uv).rgb + 2.0 * texture(texture0, uv + texel * vec2(1, 0)).rgb
+           + texture(texture0, uv + texel * vec2(-1, -1)).rgb + 2.0 * texture(texture0, uv + texel * vec2(0, -1)).rgb + texture(texture0, uv + texel * vec2(1, -1)).rgb;
+    finalColor = vec4(texture(highTex, uv).rgb + s * (weight / 16.0), 1.0);
+}
+)";
+
+// Smoke puffs: textured billboards through raylib's batch, tinted by a (HDR) light colour.
+const char* kPuffVS = R"(#version 330
+in vec3 vertexPosition;
+in vec2 vertexTexCoord;
+in vec4 vertexColor;
+uniform mat4 mvp;
+out vec2 fragTexCoord;
+out vec4 fragColor;
+void main() {
+    fragTexCoord = vertexTexCoord;
+    fragColor = vertexColor;
+    gl_Position = mvp * vec4(vertexPosition, 1.0);
+}
+)";
+const char* kPuffFS = R"(#version 330
+in vec2 fragTexCoord;
+in vec4 fragColor;
+uniform sampler2D texture0;
+uniform vec3 tint;
+out vec4 finalColor;
+void main() {
+    vec4 t = texture(texture0, fragTexCoord);
+    finalColor = vec4(tint * fragColor.rgb, t.a * fragColor.a);
 }
 )";
 
@@ -633,7 +819,14 @@ bool Renderer::init(int width, int height, std::string* err, int msaa) {
     depthCut_ = LoadShaderFromMemory(kDepthCutVS, kDepthCutFS);
     sky_ = LoadShaderFromMemory(kSkyVS, withSkyCommon(kSkyFS).c_str());
     tonemap_ = LoadShaderFromMemory(nullptr, kTonemapFS);
-    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_})
+    const std::string common = std::string("#version 330\n") + kPostCommon;
+    auto withPost = [&](const char* fs) { return std::string(fs).replace(0, 13, common); };  // (swaps the "#version 330\n" line)
+    dof_ = LoadShaderFromMemory(nullptr, withPost(kDofFS).c_str());
+    mblur_ = LoadShaderFromMemory(nullptr, withPost(kMotionFS).c_str());
+    bloomDownS_ = LoadShaderFromMemory(nullptr, kBloomDownFS);
+    bloomUpS_ = LoadShaderFromMemory(nullptr, kBloomUpFS);
+    puff_ = LoadShaderFromMemory(kPuffVS, kPuffFS);
+    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_, &dof_, &mblur_, &bloomDownS_, &bloomUpS_, &puff_})
         if (s->id == 0 || s->id == rlGetShaderIdDefault()) {
             if (err) *err = "shader compilation failed (OpenGL 3.3 required); see the log above";
             return false;
@@ -660,6 +853,33 @@ bool Renderer::init(int width, int height, std::string* err, int msaa) {
     }
 
     cube_ = GenMeshCube(2, 2, 2);
+    {   // a soft puff of smoke: a round fall-off broken up by a little low-frequency noise
+        const int n = 96;
+        Image img = GenImageColor(n, n, BLANK);
+        auto hash = [](int x, int y) {
+            unsigned h = (unsigned)x * 374761393u + (unsigned)y * 668265263u;
+            h = (h ^ (h >> 13)) * 1274126177u;
+            return ((h ^ (h >> 16)) & 0xffff) / 65535.0f;
+        };
+        auto vnoise = [&](float x, float y) {
+            const int xi = (int)std::floor(x), yi = (int)std::floor(y);
+            const float fx = x - xi, fy = y - yi, ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
+            return (hash(xi, yi) * (1 - ux) + hash(xi + 1, yi) * ux) * (1 - uy) + (hash(xi, yi + 1) * (1 - ux) + hash(xi + 1, yi + 1) * ux) * uy;
+        };
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x) {
+                const float dx = (x + 0.5f) / n * 2 - 1, dy = (y + 0.5f) / n * 2 - 1;
+                const float r = std::sqrt(dx * dx + dy * dy);
+                const float edge = std::clamp(1.0f - r, 0.0f, 1.0f);
+                const float ns = vnoise(x * 0.09f, y * 0.09f) * 0.6f + vnoise(x * 0.2f + 31, y * 0.2f) * 0.4f;
+                const float a = std::pow(edge, 1.3f) * (0.55f + 0.7f * ns);
+                const unsigned char v = (unsigned char)(std::clamp(a, 0.0f, 1.0f) * 255);
+                ImageDrawPixel(&img, x, y, Color{255, 255, 255, v});
+            }
+        puffTex_ = LoadTextureFromImage(img);
+        SetTextureFilter(puffTex_, TEXTURE_FILTER_BILINEAR);
+        UnloadImage(img);
+    }
     w_ = width;
     h_ = height;
     createTargets();
@@ -675,9 +895,28 @@ void Renderer::createTargets() {
     color_ = rlLoadTexture(nullptr, w_, h_, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16, 1);
     rlTextureParameters(color_, RL_TEXTURE_MIN_FILTER, RL_TEXTURE_FILTER_LINEAR);
     rlTextureParameters(color_, RL_TEXTURE_MAG_FILTER, RL_TEXTURE_FILTER_LINEAR);
-    depth_ = rlLoadTextureDepth(w_, h_, true);
+    // the depth is a texture of its own (24 bits, the multisampled target's format) so that the post
+    // passes can read it
+    gl::genTextures(1, &depth_);
+    gl::bindTexture(gl::TEXTURE_2D, depth_);
+    gl::texImage2D(gl::TEXTURE_2D, 0, (int)gl::DEPTH_COMPONENT24, w_, h_, 0, gl::DEPTH_COMPONENT, gl::UNSIGNED_INT, nullptr);
+    gl::bindTexture(gl::TEXTURE_2D, 0);
+    rlTextureParameters(depth_, RL_TEXTURE_MIN_FILTER, RL_TEXTURE_FILTER_NEAREST);
+    rlTextureParameters(depth_, RL_TEXTURE_MAG_FILTER, RL_TEXTURE_FILTER_NEAREST);
+    rlTextureParameters(depth_, RL_TEXTURE_WRAP_S, RL_TEXTURE_WRAP_CLAMP);
+    rlTextureParameters(depth_, RL_TEXTURE_WRAP_T, RL_TEXTURE_WRAP_CLAMP);
     rlFramebufferAttach(fbo_, color_, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
-    rlFramebufferAttach(fbo_, depth_, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_RENDERBUFFER, 0);
+    rlFramebufferAttach(fbo_, depth_, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+    makeTarget(ppA_, w_, h_);
+    makeTarget(ppB_, w_, h_);
+    bloomLevels_ = 0;
+    for (int i = 0; i < kBloomLevels; ++i) {
+        const int bw = w_ >> (i + 1), bh = h_ >> (i + 1);
+        if (std::min(bw, bh) < 4) break;
+        makeTarget(bloomDown_[i], bw, bh);
+        makeTarget(bloomUp_[i], bw, bh);
+        bloomLevels_ = i + 1;
+    }
     if (msaa_ > 1) {
         // the scene renders here, multisampled, then resolves into fbo_'s colour texture
         msFbo_ = rlLoadFramebuffer();
@@ -703,7 +942,28 @@ void Renderer::createTargets() {
     }
 }
 
+void Renderer::makeTarget(Target& t, int w, int h) {
+    t.w = w;
+    t.h = h;
+    t.fbo = rlLoadFramebuffer();
+    t.tex = rlLoadTexture(nullptr, w, h, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16, 1);
+    rlTextureParameters(t.tex, RL_TEXTURE_MIN_FILTER, RL_TEXTURE_FILTER_LINEAR);
+    rlTextureParameters(t.tex, RL_TEXTURE_MAG_FILTER, RL_TEXTURE_FILTER_LINEAR);
+    rlTextureParameters(t.tex, RL_TEXTURE_WRAP_S, RL_TEXTURE_WRAP_CLAMP);
+    rlTextureParameters(t.tex, RL_TEXTURE_WRAP_T, RL_TEXTURE_WRAP_CLAMP);
+    rlFramebufferAttach(t.fbo, t.tex, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
+}
+
+void Renderer::freeTarget(Target& t) {
+    if (t.fbo) rlUnloadFramebuffer(t.fbo);  // also frees the texture
+    t = Target{};
+}
+
 void Renderer::freeTargets() {
+    freeTarget(ppA_);
+    freeTarget(ppB_);
+    for (int i = 0; i < kBloomLevels; ++i) freeTarget(bloomDown_[i]), freeTarget(bloomUp_[i]);
+    bloomLevels_ = 0;
     if (fbo_) rlUnloadFramebuffer(fbo_);  // also frees the attachments
     fbo_ = color_ = depth_ = 0;
     if (msFbo_) {
@@ -730,8 +990,9 @@ void Renderer::shutdown() {
     }
     for (Texture2D* t : {&skyTex_, &specTex_})
         if (t->id) UnloadTexture(*t), t->id = 0;
-    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_})
+    for (Shader* s : {&pbr_, &pbrInst_, &depth_s_, &depthCut_, &depthInst_, &sky_, &tonemap_, &dof_, &mblur_, &bloomDownS_, &bloomUpS_, &puff_})
         if (s->id) UnloadShader(*s), s->id = 0;
+    if (puffTex_.id) UnloadTexture(puffTex_), puffTex_ = Texture2D{};
     if (cube_.vertexCount) UnloadMesh(cube_), cube_ = Mesh{};
 }
 
@@ -864,7 +1125,10 @@ void Renderer::beginScene(const Camera3D& cam) {
     cam_ = cam;
     view_ = MatrixLookAt(cam.position, cam.target, cam.up);
     proj_ = MatrixPerspective(cam.fovy * DEG2RAD, (double)w_ / h_, 0.5, 15000.0);
-    viewProj_ = MatrixMultiply(view_, proj_);
+    const Matrix vp = MatrixMultiply(view_, proj_);
+    prevViewProj_ = havePrev_ ? viewProj_ : vp;  // last frame's, for the motion blur
+    havePrev_ = true;
+    viewProj_ = vp;
     rlEnableFramebuffer(msFbo_ ? msFbo_ : fbo_);
     rlViewport(0, 0, w_, h_);
     rlClearColor(0, 0, 0, 255);
@@ -1049,18 +1313,161 @@ void Renderer::endScene() {
     if (msFbo_) {
         gl::bindFramebuffer(gl::READ_FRAMEBUFFER, msFbo_);
         gl::bindFramebuffer(gl::DRAW_FRAMEBUFFER, fbo_);
-        gl::blitFramebuffer(0, 0, w_, h_, 0, 0, w_, h_, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+        gl::blitFramebuffer(0, 0, w_, h_, 0, 0, w_, h_, gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT, gl::NEAREST);
     }
     rlDisableFramebuffer();
 }
 
+// One full-screen pass: `src` through `shader` into `dst`. (Render targets are stored bottom-up, hence
+// the flipped source rectangle; every target here has the orientation of the scene's.)
+void Renderer::runPass(Target& dst, Shader& shader, unsigned srcTex, const std::vector<std::pair<const char*, unsigned>>& samplers) {
+    RenderTexture2D rt{};
+    rt.id = dst.fbo;
+    rt.texture = Texture2D{dst.tex, dst.w, dst.h, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16};
+    const Texture2D src{srcTex, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16};
+    BeginTextureMode(rt);
+    BeginShaderMode(shader);
+    // (after the shader is begun: switching shaders or targets flushes the batch, which forgets samplers)
+    for (const auto& sm : samplers)
+        SetShaderValueTexture(shader, GetShaderLocation(shader, sm.first), Texture2D{sm.second, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16});
+    DrawTexturePro(src, {0, 0, 1, -1}, {0, 0, (float)dst.w, (float)dst.h}, {0, 0}, 0, WHITE);
+    EndShaderMode();
+    EndTextureMode();
+}
+
 void Renderer::present(int x, int y, int width, int height) {
-    Texture2D t{color_, w_, h_, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16};
+    const PostParams& P = post;
+    unsigned cur = color_;
+    bool flip = false;
+    auto nextTarget = [&]() -> Target& { Target& t = flip ? ppB_ : ppA_; flip = !flip; return t; };
+    auto set1 = [](Shader& sh, const char* n, float v) { SetShaderValue(sh, GetShaderLocation(sh, n), &v, SHADER_UNIFORM_FLOAT); };
+    auto set2 = [](Shader& sh, const char* n, float a, float b) { float v[2] = {a, b}; SetShaderValue(sh, GetShaderLocation(sh, n), v, SHADER_UNIFORM_VEC2); };
+    auto seti = [](Shader& sh, const char* n, int v) { SetShaderValue(sh, GetShaderLocation(sh, n), &v, SHADER_UNIFORM_INT); };
+    auto depthTexture = [&](Shader& sh) {
+        set1(sh, "zNear", 0.5f);
+        set1(sh, "zFar", 15000.0f);
+    };
+    const float pxScale = h_ / 1080.0f;
+
+    if (P.shutter > 0 && !P.cut && havePrev_) {
+        Target& dst = nextTarget();
+        depthTexture(mblur_);
+        SetShaderValueMatrix(mblur_, GetShaderLocation(mblur_, "invVP"), MatrixInvert(viewProj_));
+        SetShaderValueMatrix(mblur_, GetShaderLocation(mblur_, "prevVP"), prevViewProj_);
+        set1(mblur_, "shutter", P.shutter);
+        set1(mblur_, "maxBlur", P.maxBlur);
+        set2(mblur_, "size", (float)w_, (float)h_);
+        SetShaderValue(mblur_, GetShaderLocation(mblur_, "keep"), &P.keep, SHADER_UNIFORM_VEC4);
+        set1(mblur_, "keepDepth", P.keepDepth);
+        runPass(dst, mblur_, cur, {{"depthTex", depth_}});
+        cur = dst.tex;
+    }
+    const float lensCoc = P.focusDist > 0 ? P.maxCoc : 0.0f;
+    const float maxCoc = std::max(lensCoc, P.hazeCoc);
+    if (maxCoc * pxScale >= 0.5f) {
+        Target& dst = nextTarget();
+        depthTexture(dof_);
+        set2(dof_, "texel", 1.0f / w_, 1.0f / h_);
+        set1(dof_, "pxScale", pxScale);
+        set1(dof_, "focus", P.focusDist);
+        set1(dof_, "focusTol", P.focusTol);
+        set1(dof_, "lensK", P.lensK);
+        set1(dof_, "maxCoc", maxCoc);
+        set1(dof_, "hazeCoc", P.hazeCoc);
+        set1(dof_, "hazeStart", P.hazeStart);
+        set1(dof_, "hazeEnd", P.hazeEnd);
+        seti(dof_, "taps", std::clamp(P.taps, 4, 48));
+        runPass(dst, dof_, cur, {{"depthTex", depth_}});
+        cur = dst.tex;
+    }
+    unsigned bloomTex = cur;
+    float bloomAmt = 0;
+    if (P.bloom > 0 && bloomLevels_ >= 2) {
+        const unsigned src0 = cur;
+        const int srcW0 = w_, srcH0 = h_;
+        for (int i = 0; i < bloomLevels_; ++i) {
+            const unsigned src = i == 0 ? src0 : bloomDown_[i - 1].tex;
+            const int sw = i == 0 ? srcW0 : bloomDown_[i - 1].w, sh = i == 0 ? srcH0 : bloomDown_[i - 1].h;
+            set2(bloomDownS_, "texel", 1.0f / sw, 1.0f / sh);
+            seti(bloomDownS_, "first", i == 0 ? 1 : 0);
+            set1(bloomDownS_, "exposure", exposure);
+            set1(bloomDownS_, "threshold", P.bloomThreshold);
+            runPass(bloomDown_[i], bloomDownS_, src);
+        }
+        for (int i = bloomLevels_ - 1; i >= 0; --i) {
+            if (i == bloomLevels_ - 1) {  // the smallest level has nothing below it
+                set2(bloomUpS_, "texel", 1.0f / bloomDown_[i].w, 1.0f / bloomDown_[i].h);
+                set1(bloomUpS_, "weight", 0.0f);
+                runPass(bloomUp_[i], bloomUpS_, bloomDown_[i].tex, {{"highTex", bloomDown_[i].tex}});
+            } else {
+                set2(bloomUpS_, "texel", 1.0f / bloomUp_[i + 1].w, 1.0f / bloomUp_[i + 1].h);
+                set1(bloomUpS_, "weight", 1.0f);
+                runPass(bloomUp_[i], bloomUpS_, bloomUp_[i + 1].tex, {{"highTex", bloomDown_[i].tex}});
+            }
+        }
+        bloomTex = bloomUp_[0].tex;
+        bloomAmt = P.bloom;
+    }
+
+    Texture2D t{cur, w_, h_, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16};
     SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "exposure"), &exposure, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(tonemap_, GetShaderLocation(tonemap_, "bloomAmt"), &bloomAmt, SHADER_UNIFORM_FLOAT);
     BeginShaderMode(tonemap_);
+    SetShaderValueTexture(tonemap_, GetShaderLocation(tonemap_, "bloomTex"), Texture2D{bloomTex, 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16});
     // render targets are stored bottom-up
     DrawTexturePro(t, {0, 0, (float)w_, (float)-h_}, {(float)x, (float)y, (float)width, (float)height}, {0, 0}, 0, WHITE);
     EndShaderMode();
+}
+
+Vector3 Renderer::ambientColor() const { return Vector3Scale(fogColor_, skyIntensity); }
+
+void Renderer::drawPuffs(const std::vector<Puff>& puffs) {
+    if (puffs.empty() || !puffTex_.id) return;
+    std::vector<int> order(puffs.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
+    auto dist2 = [&](const Puff& p) { return Vector3DistanceSqr(p.p, cam_.position); };
+    std::sort(order.begin(), order.end(), [&](int a, int b) { return dist2(puffs[a]) > dist2(puffs[b]); });
+    const Vector3 fwd = Vector3Normalize(Vector3Subtract(cam_.target, cam_.position));
+    const Vector3 right = Vector3Normalize(Vector3CrossProduct(fwd, cam_.up));
+    const Vector3 up = Vector3CrossProduct(right, fwd);
+
+    rlDrawRenderBatchActive();
+    const Matrix savedProj = rlGetMatrixProjection(), savedView = rlGetMatrixModelview();
+    rlSetMatrixProjection(proj_);
+    rlSetMatrixModelview(view_);
+    const Vector3 tint = Vector3Scale(ambientColor(), 1.5f);
+    SetShaderValue(puff_, GetShaderLocation(puff_, "tint"), &tint, SHADER_UNIFORM_VEC3);
+    rlDisableBackfaceCulling();
+    rlDisableDepthMask();
+    BeginShaderMode(puff_);
+    rlSetTexture(puffTex_.id);
+    rlBegin(RL_QUADS);
+    int n = 0;
+    for (int idx : order) {
+        const Puff& p = puffs[idx];
+        if (p.alpha <= 0.002f) continue;
+        if (++n % 800 == 0) { rlEnd(); rlDrawRenderBatchActive(); rlBegin(RL_QUADS); }
+        const float h = p.size * 0.5f, cs = std::cos(p.rot) * h, sn = std::sin(p.rot) * h;
+        const Vector3 ax = Vector3Add(Vector3Scale(right, cs), Vector3Scale(up, sn));
+        const Vector3 ay = Vector3Add(Vector3Scale(up, cs), Vector3Scale(right, -sn));
+        // thin out as it nears the lens, so a car sitting in its own smoke is not hidden by it
+        const float near = std::clamp((Vector3Distance(p.p, cam_.position) - 2.5f) / 7.5f, 0.0f, 1.0f);
+        rlColor4ub(255, 255, 255, (unsigned char)(std::clamp(p.alpha * near * near, 0.0f, 1.0f) * 255));
+        const Vector3 c[4] = {Vector3Subtract(Vector3Subtract(p.p, ax), ay), Vector3Subtract(Vector3Add(p.p, ay), ax),
+                              Vector3Add(Vector3Add(p.p, ax), ay), Vector3Subtract(Vector3Add(p.p, ax), ay)};
+        const float uv[4][2] = {{0, 0}, {0, 1}, {1, 1}, {1, 0}};
+        for (int k = 0; k < 4; ++k) {
+            rlTexCoord2f(uv[k][0], uv[k][1]);
+            rlVertex3f(c[k].x, c[k].y, c[k].z);
+        }
+    }
+    rlEnd();
+    rlSetTexture(0);
+    EndShaderMode();
+    rlEnableDepthMask();
+    rlEnableBackfaceCulling();
+    rlSetMatrixProjection(savedProj);
+    rlSetMatrixModelview(savedView);
 }
 
 // ---------------------------------------------------------------- meshes

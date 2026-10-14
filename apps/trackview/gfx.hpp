@@ -3,6 +3,7 @@
 // a shadow-casting sun, metallic-roughness materials and ACES tone mapping.
 // Nothing here knows about tracks or cars.
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "raylib.h"
@@ -92,8 +93,36 @@ public:
     Vector3 cameraPosition() const { return cam_.position; }
     void drawSky();
     void endScene();
-    // Tone map to the current framebuffer (the screen, or a texture for screenshots).
+    // Post effects for the next present(): depth of field and a far haze blur, camera motion blur
+    // and bloom. All off by default (a plain tone-mapped picture); the viewer sets them per frame.
+    struct PostParams {
+        // thin-lens depth of field, sizes in pixels at 1080 lines (scaled to the real height)
+        float focusDist = 0;    // m to the plane in focus; 0 = no lens blur
+        float focusTol = 0;     // 1/m: how far off focus (in dioptres) before blur starts: the subject's depth
+        float lensK = 0;        // blur px per dioptre of defocus: the longer the lens, the larger
+        float maxCoc = 0;       // the largest blur circle, px
+        // blur of far-off things on any camera
+        float hazeCoc = 0;      // blur px at hazeEnd
+        float hazeStart = 80, hazeEnd = 500;
+        int taps = 24;          // gather samples (quality)
+        // motion blur of the camera's own movement (reprojected from the depth buffer)
+        float shutter = 0;      // fraction of a frame's movement smeared; 0 = off
+        float maxBlur = 0.03f;  // longest smear, as a fraction of the picture
+        Vector4 keep = {0.5f, 0.5f, 0, 0};  // an ellipse (centre uv, radii uv) round the followed car, kept sharp
+        float keepDepth = 0;    // m: anything nearer (the car's own nose) is not blurred
+        bool cut = false;       // the camera jumped since the last frame: no smear
+        // bloom
+        float bloom = 0;        // strength; 0 = off
+        float bloomThreshold = 1.0f;
+    } post;
+
+    // Tone map to the current framebuffer (the screen, or a texture for screenshots), after the post effects.
     void present(int x, int y, int width, int height);
+
+    // Soft camera-facing puffs of smoke, drawn into the scene after the sky (depth tested, not written).
+    struct Puff { Vector3 p; float size; float alpha; float rot; };
+    void drawPuffs(const std::vector<Puff>& puffs);
+    Vector3 ambientColor() const;  // what a white, matt thing looks like in the shade: the sky's horizon light
 
     int width() const { return w_; }
     int height() const { return h_; }
@@ -104,7 +133,19 @@ private:
     unsigned shadowFbo_[kCascades] = {}, shadowTex_[kCascades] = {};
     int shadowRes_[kCascades] = {4096, 2048};
     int msaa_ = 4;
-    unsigned msFbo_ = 0, msColor_ = 0, msDepth_ = 0;  // multisampled scene target, resolved into fbo_
+    unsigned msFbo_ = 0, msColor_ = 0, msDepth_ = 0;  // multisampled scene target, resolved into fbo_ (colour and depth)
+    // post-processing: two full-size ping-pong targets and the bloom chain (down and up, half size and smaller)
+    struct Target { unsigned fbo = 0, tex = 0; int w = 0, h = 0; };
+    static constexpr int kBloomLevels = 6;
+    Target ppA_, ppB_, bloomDown_[kBloomLevels], bloomUp_[kBloomLevels];
+    int bloomLevels_ = 0;
+    Shader dof_{}, mblur_{}, bloomDownS_{}, bloomUpS_{}, puff_{};
+    Texture2D puffTex_{};
+    Matrix prevViewProj_{};
+    bool havePrev_ = false;
+    void makeTarget(Target& t, int w, int h);
+    void freeTarget(Target& t);
+    void runPass(Target& dst, Shader& s, unsigned tex, const std::vector<std::pair<const char*, unsigned>>& samplers = {});
     int cascade_ = 0;
     Matrix lightVP_[kCascades] = {}, viewProj_{};
     static bool boxInClip(const BoundingBox& b, const Matrix& m);
