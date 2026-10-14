@@ -469,7 +469,7 @@ void main() {
     // aerial perspective: fade to the blurred sky along the view ray, warmer towards the sun
     float dist = length(viewPos - fragPos);
     float fog = 1.0 - exp(-dist * fogDensity);
-    vec3 fogCol = fogColor + sunColor * 0.05 * pow(max(dot(-V, L), 0.0), 8.0);
+    vec3 fogCol = fogColor + sunColor * 0.03 * pow(max(dot(-V, L), 0.0), 8.0);
     col = mix(col, fogCol, fog);
     if (decal != 0) outAlpha = fragColor.a * texture(albedo0, fragUV / layerScale.x).a;
     finalColor = vec4(col, outAlpha);
@@ -561,12 +561,13 @@ vec3 aces(vec3 x) {
 void main() {
     vec3 hdr = texture(texture0, fragTexCoord).rgb * exposure;
     if (bloomAmt > 0.0) hdr += texture(bloomTex, fragTexCoord).rgb * bloomAmt;  // (the bloom is already in exposed units)
+    hdr *= 1.0 - 0.22 * glare;  // the haze look is a stop or so darker, so the sunlit side does not blow out
     if (glare > 0.0) {
         vec2 ndc = fragTexCoord * 2.0 - 1.0;
         vec3 ray = normalize(camFwd + camRightT * ndc.x + camUpT * ndc.y);
         float cs = max(dot(ray, normalize(sunDirW)), 0.0);
         // looking towards the sun: a warm veil over everything (light scattered inside the lens)
-        hdr += sunTint * (pow(cs, 5.0) * 0.16 + pow(cs, 40.0) * 0.28) * glare;
+        hdr += sunTint * (pow(cs, 5.0) * 0.09 + pow(cs, 40.0) * 0.18) * glare;
         if (sunUV.z > 0.5) {
             // the sun itself, if it is not behind something: a bright core, a bloom and ghosts across the frame
             float vis = 0.0;
@@ -590,7 +591,7 @@ void main() {
     }
     vec3 c = aces(hdr);
     c = pow(c, vec3(1.0 / 2.2));
-    if (glare > 0.0) c = mix(c, c * 0.88 + vec3(0.06, 0.055, 0.045), 0.7 * glare);  // lifted, hazy blacks
+    if (glare > 0.0) c = mix(c, c * 0.9 + vec3(0.045, 0.04, 0.033), 0.7 * glare);  // lifted, hazy blacks
     if (grade > 0.0) {
         // a little contrast and colour, cool shade and warm light
         vec3 g = mix(c, c * c * (3.0 - 2.0 * c), 0.35);
@@ -1205,7 +1206,7 @@ Sun Renderer::sun() const {
         const float want = elev + (0.43f - elev) * haze;
         const float hl = std::max(std::sqrt(s.dir.x * s.dir.x + s.dir.z * s.dir.z), 1e-4f);
         s.dir = {s.dir.x / hl * std::cos(want), std::sin(want), s.dir.z / hl * std::cos(want)};
-        s.irradiance = Vector3Multiply(s.irradiance, Vector3Lerp({1, 1, 1}, {1.2f, 1.08f, 0.88f}, haze));
+        s.irradiance = Vector3Multiply(s.irradiance, Vector3Lerp({1, 1, 1}, {1.1f, 1.0f, 0.85f}, haze));
     }
     return s;
 }
@@ -1314,7 +1315,7 @@ int Renderer::bindMaterial(const Material& mat, const Locs& L, Matrix model, Mat
     for (int i = 0; i < 9; ++i) sh[i] = Vector3Scale(sh_[i], skyIntensity);
     rlSetUniform(L.sh, sh, RL_SHADER_UNIFORM_VEC3, 9);
     rlSetUniform(L.skyYaw, &skyYaw, RL_SHADER_UNIFORM_FLOAT, 1);
-    const float fogD = fogDensity * (1.0f + 0.9f * haze);
+    const float fogD = fogDensity * (1.0f + 0.6f * haze);
     rlSetUniform(L.fog, &fogD, RL_SHADER_UNIFORM_FLOAT, 1);
     Vector3 fc = Vector3Scale(fogColor_, skyIntensity);
     if (haze > 0) fc = Vector3Lerp(fc, {fc.x * 1.25f + 0.10f, fc.y * 1.12f + 0.07f, fc.z * 0.98f + 0.03f}, haze);  // pale and warm

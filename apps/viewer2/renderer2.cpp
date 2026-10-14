@@ -440,11 +440,11 @@ void Renderer::Impl::setPost(const Camera3D& cam, const ViewOptions& opt) {
     const bool lens = lastMode == CAM_CINEMATIC || lastMode == CAM_TV;
     const bool ground = lastMode != CAM_TOP && lastMode != CAM_OVERVIEW;
     const float tanHalf = std::tan(cam.fovy * DEG2RAD * 0.5f);
-    P.bloom = 0.35f + 0.25f * gr.haze;
+    P.bloom = 0.35f + 0.1f * gr.haze;
     P.ao = full ? 0.7f : 0.5f;
     P.aoRadius = 0.8f;
     P.grade = 1.0f;
-    P.bloomThreshold = 0.7f - 0.2f * gr.haze;
+    P.bloomThreshold = 0.7f + 0.3f * gr.haze;
     P.glare = gr.haze;
 
     if (ground) {
