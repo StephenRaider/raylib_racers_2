@@ -81,7 +81,7 @@ std::string usage(const char* prog, bool viewer) {
              "  --quality N           graphics 0 low, 1 medium, 2 high (default)\n"
              "  --look N              lighting: 0 partly cloudy, 1 mud road, 2 overcast, 3 sunny haze (RR2 viewer; K cycles)\n"
              "  --sun-turn DEG        turn the sky and its sun about the vertical (RR2 viewer; ; and ' turn it live)\n"
-             "  --stock N             every team drives stock car N, 1..11 (2 is the Mercedes in its own livery)\n"
+             "  --stock N             the followed car (--focus) drives stock car N, 1..11 (2 is the Mercedes in its own livery), the others a mix of the rest\n"
              "  --focus N             follow car N (0 = first --car); default: whoever leads\n"
              "  --screenshot FILE     save a screenshot at --at seconds of race time, then exit\n"
              "  --at SECONDS\n"
