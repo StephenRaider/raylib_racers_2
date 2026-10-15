@@ -35,7 +35,7 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
 - **A V8 sound**: eight firings a cycle through a recorded F1 exhaust response, with
   gearshift effects and the odd pop.
 
-![Start of a race on Highmoor Ridge, TV camera (Raylib Racers 2)](docs/images/rr2_start.jpg)
+![Highmoor Ridge in the sunny haze look, follow camera (Raylib Racers 2)](docs/images/rr2_start.jpg)
 
 ## What is in the box
 
@@ -93,6 +93,10 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
 | ![Testing: telemetry dashboard while scrubbing a run](docs/images/rr2_testing.jpg) | ![Testing: track and events window with the delta to the best lap](docs/images/rr2_testing_track.jpg) |
 | ![Race end: lap chart](docs/images/rr2_lapchart.jpg) | ![Ardennes Ring: the Kemmel-style straight under a footbridge](docs/images/rr2_spa_kemmel.jpg) |
 | ![Ardennes Ring: paddock, garages, grandstand and a village skyline](docs/images/rr2_spa_paddock.jpg) | ![Ardennes Ring: Ruisseau, concrete walls and forest](docs/images/rr2_spa_eau_rouge.jpg) |
+
+The race HUD (the race screenshots above are in the sunny haze look, `K` in the viewer): the timing tower, the see-through track map and the car panel.
+
+![Race HUD: timing tower, track map and the car panel with rev gauge, tyre and brake temperatures, pedals, steering, KERS and DRS](docs/images/rr2_hud.jpg)
 
 ## Build
 
@@ -502,6 +506,7 @@ The V8 sound plays through a recorded F1 exhaust response (`assets/sound`); `M` 
 ./build/rr_viewer2 --test --no-menu --car racingline  # a testing run with the telemetry screens
 ./build/rr_viewer2 --no-menu --camera 7              # a race with the director camera
 ./build/rr_viewer2 --screenshot shot.png --at 40 --no-menu   # a screenshot of the race at 40 s
+./build/rr_viewer2 --screenshot shot.png --at 40 --no-menu --look 3 --stock 2 --sun-turn 250   # in the sunny haze look, every team in the Mercedes livery, the sun turned 250 degrees
 ```
 
 The materials and skies come from `tools/import_assets.py` (CC0, see

@@ -219,6 +219,10 @@ int main(int argc, char** argv) {
         neutralTeams(liveries);  // Team 1, Team 2 ...: the teams' colours are the player's to pick
         loadStockCars(paths.assets);
 #endif
+#ifdef RR2_RENDERER
+        if (cfg.stockCar > 0 && stockPresent(cfg.stockCar))
+            for (CarLivery& l : liveries) l.model = cfg.stockCar, l.color = stockColour(cfg.stockCar);
+#endif
         setLiveryTable(liveries);
     }
     const int liveryCount = std::max(1, (int)liveryTable().size());
@@ -413,6 +417,10 @@ int main(int argc, char** argv) {
         hud->settle = shotMode;
         if (!renderer->init(race->track(), (unsigned)cfg.seed, paths.assets, &err)) return false;
         hud->init(race->track(), paths.assets);
+#ifdef RR2_RENDERER
+        if (cfg.look) renderer->setLook(cfg.look);
+        if (cfg.sunTurn != 0) renderer->adjustLighting(false, cfg.sunTurn * 3.14159265f / 180.0f, 1.0f);
+#endif
         sceneTrack = race->config().track;
         return true;
     };

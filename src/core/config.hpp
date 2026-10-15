@@ -81,6 +81,9 @@ struct RaceConfig {
     float screenshotAt = -1;   // race time; the viewer exits after saving
     int camera = 0;
     int quality = 2;           // viewer graphics: 0 low, 1 medium, 2 high
+    int look = 0;              // viewer 2 lighting: 0 partly cloudy, 1 mud road, 2 overcast, 3 sunny haze
+    float sunTurn = 0;         // viewer 2: turns the sky and its sun about the vertical, degrees
+    int stockCar = 0;          // viewer 2: every team drives this stock 2013 car (1..11; 2 is the Mercedes), 0 = as set up
     int focus = -1;            // car index to follow (-1: the leader)
     bool noMenu = false;       // start racing straight away
     bool mute = false;

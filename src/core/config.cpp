@@ -79,6 +79,9 @@ std::string usage(const char* prog, bool viewer) {
              "  --speed X             start at X times real time\n"
              "  --camera N            0 follow, 1 cinematic, 2 TV, 3 helicopter, 4 top down, 5 orbit, 6 overview, 7 T-cam, 8 nose, 9 director\n"
              "  --quality N           graphics 0 low, 1 medium, 2 high (default)\n"
+             "  --look N              lighting: 0 partly cloudy, 1 mud road, 2 overcast, 3 sunny haze (RR2 viewer; K cycles)\n"
+             "  --sun-turn DEG        turn the sky and its sun about the vertical (RR2 viewer; ; and ' turn it live)\n"
+             "  --stock N             every team drives stock car N, 1..11 (2 is the Mercedes in its own livery)\n"
              "  --focus N             follow car N (0 = first --car); default: whoever leads\n"
              "  --screenshot FILE     save a screenshot at --at seconds of race time, then exit\n"
              "  --at SECONDS\n"
@@ -185,6 +188,9 @@ bool parseArgs(int argc, char** argv, RaceConfig& cfg, bool viewer, bool& wantHe
             else if (viewer && a == "--speed") cfg.timeScale = std::stof(need(i, a));
             else if (viewer && a == "--camera") cfg.camera = std::stoi(need(i, a));
             else if (viewer && a == "--quality") cfg.quality = std::clamp(std::stoi(need(i, a)), 0, 2);
+            else if (viewer && a == "--look") cfg.look = std::clamp(std::stoi(need(i, a)), 0, 3);
+            else if (viewer && a == "--sun-turn") cfg.sunTurn = std::stof(need(i, a));
+            else if (viewer && a == "--stock") cfg.stockCar = std::clamp(std::stoi(need(i, a)), 0, 11);
             else if (viewer && a == "--focus") cfg.focus = std::stoi(need(i, a));
             else if (viewer && a == "--no-menu") cfg.noMenu = true;
             else if (viewer && a == "--mute") cfg.mute = true;
