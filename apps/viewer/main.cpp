@@ -220,8 +220,18 @@ int main(int argc, char** argv) {
         loadStockCars(paths.assets);
 #endif
 #ifdef RR2_RENDERER
-        if (cfg.stockCar > 0 && stockPresent(cfg.stockCar))
-            for (CarLivery& l : liveries) l.model = cfg.stockCar, l.color = stockColour(cfg.stockCar);
+        if (cfg.stockCar > 0 && stockPresent(cfg.stockCar)) {
+            // the followed car (--focus, else the first) drives that stock car; the rest of the field a mix of the others, so the tower has colour
+            int next = 0;
+            for (size_t i = 0; i < liveries.size(); ++i) {
+                int model = cfg.stockCar;
+                if ((int)i != std::max(0, cfg.focus)) {
+                    do model = 1 + next++ % kStockCars; while (model == cfg.stockCar || !stockPresent(model));
+                }
+                liveries[i].model = model;
+                liveries[i].color = stockColour(model);
+            }
+        }
 #endif
         setLiveryTable(liveries);
     }
