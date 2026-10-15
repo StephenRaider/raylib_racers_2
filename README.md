@@ -91,7 +91,8 @@ of times real time for experiments, or in a raylib 3D viewer to watch them.
 | ![Quick race menu](docs/images/rr2_menu.jpg) | ![Grid page: livery, algorithm and start tyres per car](docs/images/rr2_grid.jpg) |
 | ![Championship: calendar, rules and saved seasons](docs/images/rr2_championship.jpg) | ![Race end: results with the fastest lap](docs/images/rr2_results.jpg) |
 | ![Testing: telemetry dashboard while scrubbing a run](docs/images/rr2_testing.jpg) | ![Testing: track and events window with the delta to the best lap](docs/images/rr2_testing_track.jpg) |
-| ![Race end: lap chart](docs/images/rr2_lapchart.jpg) | |
+| ![Race end: lap chart](docs/images/rr2_lapchart.jpg) | ![Ardennes Ring: the Kemmel-style straight under a footbridge](docs/images/rr2_spa_kemmel.jpg) |
+| ![Ardennes Ring: paddock, garages, grandstand and a village skyline](docs/images/rr2_spa_paddock.jpg) | ![Ardennes Ring: Ruisseau, concrete walls and forest](docs/images/rr2_spa_eau_rouge.jpg) |
 
 ## Build
 
