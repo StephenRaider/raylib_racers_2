@@ -246,7 +246,7 @@ cars nearest the camera. `M` mutes it;
 Click a car in the timing tower to watch it. Viewer keys: `Tab`/arrows change car, `1`-`9` focus by position, `L` goes back
 to following the leader (the default), `C` / `Shift+C` cycle the cameras and
 `F2`-`F8` pick one: follow, cinematic (eases between framings around the car),
-TV, helicopter, top down, orbit, overview (`F9` is the director; in `rr_viewer2`
+TV, helicopter, top down, orbit, overview (`F9` is the director, the last camera in the `C` cycle; leaving it returns to the car you were following; in `rr_viewer2`
 `T` is the roll-hoop camera and `B` the nose camera, both also in the `C` cycle,
 and `K` picks the next look (three skies, then a muted "sunny haze" look with a low warm sun, glare and lens ghosts; turn the sun with `;` `'` to face it), `;` and `'` turn the sun, `,` and `.` change the
 exposure). The mouse wheel zooms the orbit,

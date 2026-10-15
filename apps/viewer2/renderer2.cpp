@@ -22,7 +22,7 @@ namespace {
 Vector3 W2(rr::Vec2 v, float h = 0) { return {v.x, h, -v.y}; }
 constexpr int kCarModels = 11;  // assets/cars/f1_2013_01 .. 11
 
-const char* kCamNames[CAM_COUNT] = {"FOLLOW", "CINEMATIC", "TV", "HELICOPTER", "TOP DOWN", "ORBIT", "OVERVIEW", "DIRECTOR", "T-CAM", "NOSE"};
+const char* kCamNames[CAM_COUNT] = {"FOLLOW", "CINEMATIC", "TV", "HELICOPTER", "TOP DOWN", "ORBIT", "OVERVIEW", "T-CAM", "NOSE", "DIRECTOR"};
 
 }  // namespace
 
@@ -214,14 +214,21 @@ struct Renderer::Impl {
             }
     }
 
+    // Trackside TV cameras on the outside of the bends, on the track side of the barrier (in front of any catch
+    // fence, tyre wall and tree, so the picture never looks through them), a little above the wall.
     void buildTvSpots(const rr::Track& tr) {
         tvSpots.clear();
-        for (float s = 60; s < tr.length(); s += 240) {
+        for (float s = 60; s < tr.length(); s += 220) {
             const auto& sm = tr.at(tr.indexAt(s));
+            if (tr.inPitArea(s)) continue;                                       // not in the pit lane
+            bool underBridge = false;                                            // nor beneath a footbridge
+            for (const auto& f : tr.features())
+                if (f.kind == "bridge" && std::fabs(std::remainder(f.s0 - s, tr.length())) < 25.0f) underBridge = true;
+            if (underBridge) continue;
             const int side = sm.curvature > 0 ? -1 : 1;  // the outside of any bend
-            const float lat = side * (tr.barrierOffset(s, side, sm.halfWidth) + 8.0f);
+            const float lat = side * (tr.barrierOffset(s, side, sm.halfWidth) - 2.4f);
             Vector3 w = W2(tr.pointAt(s, lat));
-            w.y = scene.groundHeight(w.x, w.z) + 4.5f;
+            w.y = tr.heightAt(s, lat) + 2.3f;
             tvSpots.push_back(w);
         }
     }

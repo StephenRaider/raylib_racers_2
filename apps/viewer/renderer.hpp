@@ -12,7 +12,8 @@
 
 // Follow, cinematic, trackside TV, helicopter, top-down, free orbit, whole-track overview.
 // CAM_DIRECTOR is the viewer's TV director picking cars and shots; the renderer only sees the shot it picked.
-enum CamMode { CAM_CHASE = 0, CAM_CINEMATIC, CAM_TV, CAM_HELI, CAM_TOP, CAM_ORBIT, CAM_OVERVIEW, CAM_DIRECTOR, CAM_TCAM, CAM_NOSE, CAM_COUNT };
+// (the director is the last mode, so the C key reaches it after all the others)
+enum CamMode { CAM_CHASE = 0, CAM_CINEMATIC, CAM_TV, CAM_HELI, CAM_TOP, CAM_ORBIT, CAM_OVERVIEW, CAM_TCAM, CAM_NOSE, CAM_DIRECTOR, CAM_COUNT };
 // (CAM_TCAM, the roll-hoop camera looking down the car, and CAM_NOSE are drawn by the RR2 renderer;
 // T and B select them.)
 const char* camName(CamMode mode);

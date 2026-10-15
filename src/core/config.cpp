@@ -77,7 +77,7 @@ std::string usage(const char* prog, bool viewer) {
              "  --width N --height N  window size (default 1600x900)\n"
              "  --fullscreen\n"
              "  --speed X             start at X times real time\n"
-             "  --camera N            0 follow, 1 cinematic, 2 TV, 3 helicopter, 4 top down, 5 orbit, 6 overview, 7 director\n"
+             "  --camera N            0 follow, 1 cinematic, 2 TV, 3 helicopter, 4 top down, 5 orbit, 6 overview, 7 T-cam, 8 nose, 9 director\n"
              "  --quality N           graphics 0 low, 1 medium, 2 high (default)\n"
              "  --focus N             follow car N (0 = first --car); default: whoever leads\n"
              "  --screenshot FILE     save a screenshot at --at seconds of race time, then exit\n"

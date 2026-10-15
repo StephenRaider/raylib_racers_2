@@ -397,6 +397,10 @@ int main(int argc, char** argv) {
     // The renderer and HUD are built for one track; a new track gets new ones.
     std::unique_ptr<Renderer> renderer;
     Director director;
+    // The car the viewer was following before the director took over: the director cuts between cars, and
+    // leaving it brings back the viewer's own choice (a pick made while it runs becomes the new one).
+    int userFocus = 0;
+    bool userFollow = true, directorOn = false;
     const rr::Race* directorRace = nullptr;
     std::unique_ptr<Hud> hud;
     std::string sceneTrack;
@@ -1235,8 +1239,9 @@ int main(int argc, char** argv) {
                 else st.muted = !st.muted;
             }
             if (IsKeyPressed(KEY_C)) st.camera = (CamMode)((st.camera + (shift ? CAM_COUNT - 1 : 1)) % CAM_COUNT);
-            for (int k = 0; k < CAM_COUNT && k < 8; ++k)
+            for (int k = 0; k < 7; ++k)
                 if (IsKeyPressed(KEY_F2 + k)) st.camera = (CamMode)k;
+            if (IsKeyPressed(KEY_F9)) st.camera = CAM_DIRECTOR;
             if (IsKeyPressed(KEY_T)) st.camera = CAM_TCAM;
             if (IsKeyPressed(KEY_B)) st.camera = CAM_NOSE;
             if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) st.timeScale = std::min(64.0f, st.timeScale * 2);
@@ -1339,6 +1344,11 @@ int main(int argc, char** argv) {
             }
         } else {
             // ---- input
+            if (directorOn) {  // the director's car was only for the picture: input works on the viewer's own
+                st.focus = userFocus;
+                st.followLeader = userFollow;
+                directorOn = false;
+            }
             const bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
             auto pick = [&](int car) { st.focus = car; st.followLeader = false; };
             if (IsKeyPressed(KEY_TAB) || IsKeyPressed(KEY_RIGHT)) pick((st.focus + 1) % n);
@@ -1362,8 +1372,9 @@ int main(int argc, char** argv) {
                 if (IsKeyPressed(KEY_G)) st.showResults = !st.showResults;
             }
             if (IsKeyPressed(KEY_C)) st.camera = (CamMode)((st.camera + (shift ? CAM_COUNT - 1 : 1)) % CAM_COUNT);
-            for (int k = 0; k < CAM_COUNT && k < 8; ++k)
+            for (int k = 0; k < 7; ++k)
                 if (IsKeyPressed(KEY_F2 + k)) st.camera = (CamMode)k;
+            if (IsKeyPressed(KEY_F9)) st.camera = CAM_DIRECTOR;
             if (IsKeyPressed(KEY_T)) st.camera = CAM_TCAM;
             if (IsKeyPressed(KEY_B)) st.camera = CAM_NOSE;
             if (IsKeyPressed(KEY_SPACE)) st.paused = !st.paused;
@@ -1474,6 +1485,9 @@ int main(int argc, char** argv) {
             if (st.camera == CAM_DIRECTOR && phase == Phase::Race) {
                 if (directorRace != race.get()) director.reset(), directorRace = race.get();
                 director.update(*race, shotMode ? 1.0f / 60 : frameDt);
+                userFocus = st.focus;
+                userFollow = st.followLeader;
+                directorOn = true;
                 if (director.focus() >= 0) st.focus = director.focus();
                 shot = director.shot();
                 st.directorCaption = director.caption();

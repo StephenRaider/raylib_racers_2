@@ -639,7 +639,7 @@ void Renderer::buildTrack(const rr::Track& tr) {
 // ---------------------------------------------------------------- camera
 
 const char* camName(CamMode mode) {
-    static const char* names[] = {"FOLLOW", "CINEMATIC", "TV", "HELICOPTER", "TOP DOWN", "ORBIT", "OVERVIEW", "DIRECTOR", "T-CAM", "NOSE"};
+    static const char* names[] = {"FOLLOW", "CINEMATIC", "TV", "HELICOPTER", "TOP DOWN", "ORBIT", "OVERVIEW", "T-CAM", "NOSE", "DIRECTOR"};
     return mode >= 0 && mode < CAM_COUNT ? names[mode] : "?";
 }
 
