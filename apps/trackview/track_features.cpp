@@ -1,5 +1,5 @@
 // What a track file's "feature" lines build beside the track: tyre walls, catch fences, marshal
-// posts, grandstands with crowds, buildings, footbridges, hoardings and distant flat skylines (the
+// posts, grandstands, buildings, footbridges, hoardings and distant flat skylines (the
 // houses of a village, a row of towers) that fake a town beyond the hills. All of it is generated here
 // from plain boxes and a few small textures drawn in code, so there are no model files to credit.
 #include "track_scene.hpp"
@@ -76,7 +76,7 @@ void tri(gfx::MeshBuilder& mb, Vector3 a, Vector3 b, Vector3 c, Vector3 outward)
 }
 
 // A six-sided block from its eight corners (bottom four, then the top four), faces outwards. `rgb` is the
-// vertex colour (for the vertex-tinted crowd); ao darkens the lower edge.
+// vertex colour; ao darkens the lower edge.
 void block(gfx::MeshBuilder& mb, const Vector3 c[8], bool bottom = false, float aoLow = 1.0f, unsigned char rgb = 255,
            unsigned char g = 255, unsigned char b = 255) {
     Vector3 mid = {0, 0, 0};
@@ -264,12 +264,7 @@ void TrackScene::buildFeatures(const std::string& assetsDir) {
                         TP(s0, l0, h1), TP(s1, l0, h1), TP(s1, l1, h1), TP(s0, l1, h1)};
         block(mb, c, bottom, ao);
     };
-    auto person = [&](gfx::MeshBuilder& mb, float s0, float s1, float l0, float l1, float h0, float h1, Color col) {
-        Vector3 c[8] = {TP(s0, l0, h0), TP(s1, l0, h0), TP(s1, l1, h0), TP(s0, l1, h0),
-                        TP(s0, l0, h1), TP(s1, l0, h1), TP(s1, l1, h1), TP(s0, l1, h1)};
-        block(mb, c, false, 0.8f, col.r, col.g, col.b);
-    };
-    gfx::MeshBuilder wallA, wallB, roofA, roofB, roofW, glassF, steelF, whiteF, tyresF, fenceF, orangeF, seatsA, seatsB, seatsC, crowd,
+    gfx::MeshBuilder wallA, wallB, roofA, roofB, roofW, glassF, steelF, whiteF, tyresF, fenceF, orangeF, seatsA, seatsB, seatsC,
         ad[4], skylineMb;
     auto spanOf = [&](const rr::Track::Feature& f) {
         float d = std::fmod(f.s1 - f.s0, L);
@@ -277,10 +272,6 @@ void TrackScene::buildFeatures(const std::string& assetsDir) {
     };
     auto arg = [](const rr::Track::Feature& f, size_t i, float dflt) { return i < f.args.size() ? f.args[i] : dflt; };
     int stand = 0, bld = 0, nSky = 0;
-    // muted, so a crowd reads as people and not as confetti
-    const Color shirts[] = {{150, 50, 48, 255}, {58, 76, 128, 255}, {170, 170, 166, 255}, {176, 144, 62, 255}, {58, 96, 70, 255},
-                            {40, 40, 46, 255}, {160, 96, 52, 255}, {110, 70, 112, 255}, {120, 118, 112, 255}, {200, 196, 186, 255}};
-    const Color skins[] = {{196, 150, 120, 255}, {160, 112, 84, 255}, {220, 180, 150, 255}, {110, 76, 58, 255}};
     for (const rr::Track::Feature& f : tr.features()) {
         const float len = spanOf(f);
         for (int side : {1, -1}) {
@@ -328,7 +319,7 @@ void TrackScene::buildFeatures(const std::string& assetsDir) {
                     blk(orangeF, st + 1.7f, st + 2.9f, lat - 0.015f, lat + 0.015f, g + 4.1f, g + 5.0f);
                 }
             }
-            // ---- a grandstand: stepped concrete, rows of coloured seats and a crowd, a cantilever roof when tall
+            // ---- a grandstand: stepped concrete, rows of coloured seats, a cantilever roof when tall
             else if (f.kind == "grandstand") {
                 const int rows = std::clamp((int)arg(f, 0, 8), 3, 24);
                 const float setback = arg(f, 1, 6.0f);
@@ -347,16 +338,6 @@ void TrackScene::buildFeatures(const std::string& assetsDir) {
                         const float top = g0 + base + r * rise;
                         blk(whiteF, a, e, lat((float)r), lat(r + 1.0f), g0 - 3.0f, top, false, 0.7f);
                         blk(seats, a + 0.2f, e - 0.2f, lat(r + 0.28f), lat(r + 0.78f), top, top + 0.42f);
-                        // the crowd, in rows of shirts
-                        for (float x = a + 0.3f; x < e - 0.45f; x += 0.5f) {
-                            const int ix = (int)std::floor(x * 2.0f);
-                            if (rnd(ix, r, 90 + sid) > 0.5f) continue;
-                            const float sh = 0.7f + 0.3f * rnd(ix, r, 290 + sid);  // some taller than others
-                            person(crowd, x, x + 0.34f, lat(r + 0.4f), lat(r + 0.64f), top + 0.42f, top + 0.42f + 0.52f * sh,
-                                   shirts[(int)(rnd(ix, r, 190 + sid) * 10) % 10]);
-                            person(crowd, x + 0.07f, x + 0.27f, lat(r + 0.44f), lat(r + 0.6f), top + 0.42f + 0.52f * sh,
-                                   top + 0.42f + 0.52f * sh + 0.2f, skins[(int)(rnd(ix, r, 390 + sid) * 4) % 4]);
-                        }
                     }
                     const float back = lat((float)rows);
                     const float topRow = g0 + base + rows * rise;
@@ -554,11 +535,6 @@ void TrackScene::buildFeatures(const std::string& assetsDir) {
     part(seatsA, concrete({0.08f, 0.22f, 0.6f}, 0.45f, 1.0f), true);
     part(seatsB, concrete({0.62f, 0.07f, 0.06f}, 0.45f, 1.0f), true);
     part(seatsC, concrete({0.06f, 0.38f, 0.16f}, 0.45f, 1.0f), true);
-    {
-        gfx::Material m = concrete({1.0f, 1.0f, 1.0f}, 0.9f, 1.0f);
-        m.vertexTint = true;
-        part(crowd, m, false);
-    }
     {
         const Vector3 tints[4] = {{0.9f, 0.1f, 0.1f}, {0.08f, 0.3f, 0.85f}, {0.95f, 0.78f, 0.08f}, {0.9f, 0.9f, 0.92f}};
         for (int k = 0; k < 4; ++k) part(ad[k], concrete(tints[k], 0.5f, 2.0f), true);
