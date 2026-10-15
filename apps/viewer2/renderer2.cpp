@@ -263,18 +263,21 @@ void Renderer::stepEffects(const rr::Race& race, float dt) {
     p_->updateSmoke(race, dt > 0 ? dt : -1.0f);  // (shot mode calls this as it runs the race up to the saved frame)
 }
 
-void Renderer::adjustLighting(bool nextSky, float turn, float exposureFactor) {
+void Renderer::setLook(int look) {
     static const char* skies[] = {"kloofendal_partly_cloudy", "mud_road", "overcast_soil"};
     Impl& p = *p_;
-    if (nextSky) {
-        std::string err;
-        // four looks: the three skies, then the partly cloudy sky again as a hazy low-sun look
-        const int look = (p.skyIdx + 1) % 4;
-        if (p.gr.loadSky(p.assets + "/sky", skies[look == 3 ? 0 : look], &err)) {
-            p.skyIdx = look;
-            p.gr.haze = look == 3 ? 1.0f : 0.0f;
-        }
+    look = ((look % 4) + 4) % 4;
+    std::string err;
+    // four looks: the three skies, then the partly cloudy sky again as a hazy low-sun look
+    if (p.gr.loadSky(p.assets + "/sky", skies[look == 3 ? 0 : look], &err)) {
+        p.skyIdx = look;
+        p.gr.haze = look == 3 ? 1.0f : 0.0f;
     }
+}
+
+void Renderer::adjustLighting(bool nextSky, float turn, float exposureFactor) {
+    Impl& p = *p_;
+    if (nextSky) setLook(p.skyIdx + 1);
     p.gr.skyYaw += turn;
     p.gr.exposure = std::clamp(p.gr.exposure * exposureFactor, 0.2f, 3.0f);
 }
