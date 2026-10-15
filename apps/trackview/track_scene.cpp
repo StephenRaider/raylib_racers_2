@@ -222,6 +222,42 @@ bool TrackScene::build(const rr::Track& track, const std::string& assetsDir, uns
     for (int i = 0; i < track.size(); ++i) zsum += track.at(i).z;
     centre_.y = zsum / track.size();
 
+    // the paddock's reach: stop short of any other stretch of the track near it
+    pitReach_.clear();
+    if (track.hasPit()) {
+        const int n = track.size();
+        const float Lt = track.length();
+        pitReach_.assign(n, 45.0f);
+        for (int i = 0; i < n; ++i) {
+            const auto& a = track.at(i);
+            if (!track.inPitArea(a.s)) continue;
+            // the paddock fades out beyond the garages, over 40 m
+            float best = 45.0f;
+            if (!track.inSpan(a.s, track.pit().lane_start_s - 10.0f, track.pit().lane_end_s + 10.0f)) {
+                auto fwd = [&](float f, float t) { float d = std::fmod(t - f + 2 * Lt, Lt); return d; };
+                const float dOut = std::min(fwd(track.pit().lane_end_s + 10.0f, a.s), fwd(a.s, track.pit().lane_start_s - 10.0f));
+                best = 45.0f * std::clamp(1.0f - dOut / 40.0f, 0.0f, 1.0f);
+            }
+            for (int j = 0; j < n; j += 2) {
+                const auto& b = track.at(j);
+                float ds = std::fabs(b.s - a.s);
+                ds = std::min(ds, Lt - ds);
+                if (ds < 120.0f) continue;
+                const float d = rr::length(b.p - a.p);
+                if (d > 140.0f) continue;
+                best = std::min(best, d - (b.halfWidth + track.runoff() + 10.0f) - (a.halfWidth + rr::Track::kPitBarrier));
+            }
+            pitReach_[i] = std::max(0.0f, best);
+        }
+        for (int pass = 0; pass < 3; ++pass) {  // smooth along the lap (the minimum of neighbours first, so it never grows back)
+            std::vector<float> src = pitReach_;
+            for (int i = 0; i < n; ++i) {
+                float m = src[i];
+                for (int o = -12; o <= 12; o += 4) m = std::min(m, src[track.wrap(i + o)]);
+                pitReach_[i] = m;
+            }
+        }
+    }
     seed_ = seed;
     buildTerrain(seed);
     buildRoad(seed);
@@ -1135,7 +1171,7 @@ bool TrackScene::grandstandAt(float s) const {
 
 float TrackScene::flatUntil(float s, int side, float hw) const {
     const rr::Track& tr = *tr_;
-    if (tr.hasPit() && side == tr.pit().side && tr.inPitArea(s)) return hw + rr::Track::kPitBarrier + 45.0f;
+    if (tr.hasPit() && side == tr.pit().side && tr.inPitArea(s)) return hw + rr::Track::kPitBarrier + pitReach(s);
     if (tr.hasPit() && side != tr.pit().side && grandstandAt(s)) return hw + tr.runoff() + 24.0f;
     float flat = tr.barrierOffset(s, side, hw);
     // the ground stays level under the stands and buildings the feature lines put beside the track
@@ -1282,7 +1318,7 @@ void TrackScene::buildProps(const std::string& assetsDir) {
                 if (!tr.inPitArea(s)) { st.cut(); continue; }
                 const auto& sm = tr.at(i);
                 float in = ps * (sm.halfWidth + rr::Track::kPitBarrier + (garagesAt(s) ? 0.3f + 14.0f : 0.3f));
-                float out = ps * (sm.halfWidth + rr::Track::kPitBarrier + 45.0f);
+                float out = ps * (sm.halfWidth + rr::Track::kPitBarrier + pitReach(s));
                 Vertex v0 = vert(W(sm.p + sm.n * in, ground(s, in)), {0, 1, 0}, {in, s});
                 Vertex v1 = vert(W(sm.p + sm.n * out, ground(s, out)), {0, 1, 0}, {out, s});
                 for (Vertex* v : {&v0, &v1}) v->c[0] = v->c[1] = v->c[2] = 255;

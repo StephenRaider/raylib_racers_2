@@ -97,6 +97,10 @@ private:
     // How far out (lateral, from the centreline) the ground stays level with the track
     // before blending into the land: the barrier, or the paddock and grandstand behind it.
     float flatUntil(float s, int side, float halfWidth) const;
+    // How far the paddock behind the garages reaches (m, up to 45) at each centreline sample: less where another part
+    // of the track is close behind it (a hairpin's inside), so the slab never hangs over a road at another height.
+    std::vector<float> pitReach_;
+    float pitReach(float s) const { return pitReach_.empty() ? 45.0f : pitReach_[tr_->indexAt(s)]; }
     // 0..1: how much a plan-view point lies in a conifer plantation (before keeping clear of the track)
     float plantation(rr::Vec2 p) const;
     unsigned seed_ = 1;

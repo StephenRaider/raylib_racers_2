@@ -434,6 +434,7 @@ void TrackScene::buildFeatures(const std::string& assetsDir) {
                     for (int row = 0; row < 2; ++row) {
                         const float r = rnd(k, row, 71);
                         if (r < 0.15f) continue;
+                        if (21.0f + row * 15.0f + 14.0f > pitReach(st)) continue;  // not where the slab stops short
                         const float l0 = side * (sm.halfWidth + rr::Track::kPitBarrier + 21.0f + row * 15.0f);
                         const float l1 = l0 + side * (r < 0.55f ? 6.0f : 2.6f);
                         const float g = ground(st, l0) + 0.02f;
