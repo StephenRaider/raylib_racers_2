@@ -87,6 +87,24 @@ int main(int argc, char** argv) {
     bool bench = false, benchLap = false, vsync = false;
     int startCam = 1, msaa = 4;
     float yawDeg = 0;
+    // --view name,s,lat,up,ahead,latTarget,upTarget,fov: a screenshot from the road at track distance s
+    // (eye lat metres off the centreline and up metres high, looking at the road `ahead` metres on);
+    // --aerial name,s,dx,dy,dz,fov: from that offset above the road point at s. Either replaces the presets.
+    struct Custom { std::string name; float v[7]; bool aerial; };
+    std::vector<Custom> custom;
+    auto parseCustom = [&](const std::string& spec, bool aerial) {
+        Custom c{};
+        c.aerial = aerial;
+        size_t pos = spec.find(',');
+        c.name = spec.substr(0, pos);
+        int k = 0;
+        while (pos != std::string::npos && k < 7) {
+            size_t e = spec.find(',', pos + 1);
+            c.v[k++] = (float)std::atof(spec.substr(pos + 1, e == std::string::npos ? e : e - pos - 1).c_str());
+            pos = e;
+        }
+        custom.push_back(c);
+    };
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -97,6 +115,8 @@ int main(int argc, char** argv) {
         else if (a == "--height") height = std::atoi(next().c_str());
         else if (a == "--ssaa") ssaa = std::max(1, std::atoi(next().c_str()));
         else if (a == "--yaw") yawDeg = (float)std::atof(next().c_str());
+        else if (a == "--view") parseCustom(next(), false);
+        else if (a == "--aerial") parseCustom(next(), true);
         else if (a == "--bench") bench = true;
         else if (a == "--bench-lap") bench = benchLap = true;
         else if (a == "--vsync") vsync = true;
@@ -181,7 +201,12 @@ int main(int argc, char** argv) {
                 if (tn.id == id) return tn.apex_s;
             return 0.0f;
         };
-        const Shot shots[] = {
+        std::vector<Shot> list;
+        for (const Custom& c : custom) {
+            if (c.aerial) list.push_back({c.name.c_str(), 0, c.v[0], 0, 0, c.v[0], 0, 0, c.v[4], {c.v[1], c.v[2], c.v[3]}});
+            else list.push_back({c.name.c_str(), 0, c.v[0], c.v[1], c.v[2], c.v[0] + c.v[3], c.v[4], c.v[5], c.v[6]});
+        }
+        const Shot presets[] = {
             {"00_paddock", 0, -170, 4.0f, 16.0f, 20, 0.0f, 3.0f, 55},
             {"00d_pit_entry", 0, -280, -15.0f, 0, -280, -15.0f, 0.0f, 60, {0.5f, 110, 0.5f}},
             {"00e_pit_exit", 0, 340, -15.0f, 0, 340, -15.0f, 0.0f, 60, {0.5f, 110, 0.5f}},
@@ -200,8 +225,9 @@ int main(int argc, char** argv) {
             {"10_aerial", 7, 0, 0, 0, 0, 0, 0, 50, {-330, 240, 380}},
             {"11_kerb_close", 6, -8, 3.5f, 1.3f, -2, 6.0f, 0.0f, 50},
         };
+        if (list.empty()) list.assign(std::begin(presets), std::end(presets));
         RenderTexture2D out = LoadRenderTexture(width, height);
-        for (const Shot& sh : shots) {
+        for (const Shot& sh : list) {
             Camera3D cam{};
             float base = sh.turn ? apex(sh.turn) : 0.0f;
             cam.target = scene.roadPoint(base + sh.dsTgt, sh.latTgt, sh.upTgt);

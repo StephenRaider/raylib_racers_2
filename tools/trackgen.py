@@ -7,6 +7,10 @@ in race order (clockwise, y up):
     (x, y, radius, width)   # comment naming the real corner it is inspired by
 Every corner is rounded with an arc of that radius, joined by straights, then the
 whole lap is scaled to the target length. `start` is a point on the main straight.
+A traced track may also carry: `profile` (+ `profile_anchor`, `profile_base`): road heights along the lap from
+tools/track_refs/<profile>.json; `banks`: camber at named corners; `barrier`, `surfaces` and `features`: the .trk's
+barrier, surface and feature lines, placed by metres along the lap from a named corner (`out` / `in` mean the outside /
+inside of that corner; a label of None means absolute track distance).
 Run it from the repo root:
 
     python3 tools/trackgen.py              # writes tracks/<key>.trk
@@ -35,7 +39,71 @@ TRACKS = {
     "spa": dict(
         name="Ardennes Ring", scenery="forest", length=6900, stretch=(0.95, 1.08), width=13, runoff=9, pitspeed=22,
         about="Long and fast: La Source hairpin, the Eau Rouge-Raidillon kink, Kemmel straight, Pouhon and Blanchimont.",
-        ref="spa", start_width=14, start_shift=70, bend=-0.1, edits=[
+        ref="spa", start_width=14, start_shift=70, bend=-0.1,
+        # Elevation along the lap from the real circuit (tools/track_refs/spa_profile.json, measured from the
+        # CC BY 1992 model, see CREDITS.md): La Fontaine plays La Source, so the road drops to Ruisseau (Eau Rouge),
+        # climbs La Montee (Raidillon) and the Kemmel straight to Les Crêtes, 100 m above the lowest point.
+        profile="spa_profile", profile_anchor="La Fontaine", profile_base=12.0,
+        # camber in degrees at the corners (banked towards the inside of each; the road kinks both ways in the chicanes)
+        banks=[("La Fontaine", 1.5, 90), ("Ruisseau", 3.5, 70), ("La Montee", 4.5, 70), ("Les Crêtes", 2.0, 60),
+               ("Malvaux", 2.5, 70), ("Rivière", 3.0, 80), ("Grand Virage", 5.0, 160), ("Bruyères", 2.5, 90),
+               ("Stavel", 3.5, 90), ("Blanchepierre", 4.0, 130), ("Le Kink", 1.5, 60)],
+        # the wall's distance from the tarmac edge, where it is not the default 9 m:
+        # (label, side, from, to, metres), offsets in metres along the lap from the label
+        barrier=[("La Fontaine", "out", -80, 200, 24), ("Ruisseau", "both", -120, 220, 5.5),
+                 ("La Montee", "both", -100, 120, 5.5), ("La Montee", "both", 120, 900, 6.5),
+                 ("Les Crêtes", "out", -140, 120, 17), ("Malvaux", "out", -100, 120, 14),
+                 ("Rivière", "out", -90, 120, 15), ("Grand Virage", "out", -250, 260, 24),
+                 ("Bruyères", "out", -90, 110, 14), ("Stavel", "out", -100, 120, 17),
+                 ("Blanchepierre", "out", -300, 260, 28), ("Le Kink", "both", -150, 120, 11)],
+        # strips beyond the tarmac: (label, side, surface, from, to, metres out from the edge: start, end)
+        surfaces=[("La Fontaine", "out", "runoff", -60, 190, 1.2, 14), ("Le Kink", "both", "runoff", -120, 100, 1.2, 8),
+                  ("Ruisseau", "out", "runoff", 110, 330, 1.2, 4),
+                  ("Grand Virage", "out", "gravel", -230, 240, 8, 24), ("Blanchepierre", "out", "gravel", -270, 230, 10, 28)],
+        features=[
+            # (kind, label, side, from, to, numbers...)
+            ("brakeboards", None, "right", 0, 6899),
+            ("paddock", None, "right", 6785, 195),
+            ("bank", "Ruisseau", "both", -150, 150, 14),
+            ("bank", "La Montee", "out", -120, 220, 10),
+            ("bank", "Malvaux", "both", -120, 150, 9),
+            ("bank", "Blanchepierre", "in", -250, 150, 6),
+            ("concrete", "Ruisseau", "both", -110, 200),
+            ("concrete", "La Montee", "both", -70, 80),
+            ("tyrewall", "La Fontaine", "out", -40, 170, 2),
+            ("tyrewall", "Les Crêtes", "out", -110, 90, 2),
+            ("tyrewall", "Rivière", "out", -70, 90, 2),
+            ("tyrewall", "Stavel", "out", -80, 90, 2),
+            ("tyrewall", "Bruyères", "out", -60, 80, 2),
+            ("tyrewall", "Le Kink", "both", -100, 90, 2),
+            ("fence", "La Montee", "both", 80, 1000),
+            ("fence", "Les Crêtes", "both", -240, 100),
+            ("fence", "Malvaux", "both", -60, 70),
+            ("fence", "Grand Virage", "out", -240, 250, 3.5),
+            ("fence", "Blanchepierre", "out", -280, 230, 3.5),
+            ("fence", "Le Kink", "both", -190, 180),
+            ("marshal", "La Fontaine", "out", -250, 380, 90),
+            ("marshal", "La Montee", "both", 150, 1000, 220),
+            ("marshal", "Les Crêtes", "both", -200, 4500, 260),
+            ("grandstand", "Les Crêtes", "in", -90, 90, 7),
+            ("grandstand", "Rivière", "in", -60, 100, 6),
+            ("grandstand", "Grand Virage", "in", -70, 60, 6),
+            ("grandstand", "Le Kink", "in", -80, 90, 5),
+            ("building", "La Fontaine", "out", 40, 150, 14),
+            ("bridge", "La Montee", "both", 330, 0),
+            ("bridge", "Les Crêtes", "both", -420, 0),
+            ("bridge", "Blanchepierre", "both", 260, 0),
+            ("billboard", "La Montee", "out", 380, 700, 5),
+            ("billboard", "Blanchepierre", "in", 100, 400, 5),
+            ("forest", "La Montee", "both", 100, 1000, 0.95),
+            ("forest", "Malvaux", "both", -100, 800, 0.9),
+            ("forest", "Bruyères", "both", -200, 700, 0.9),
+            ("forest", "Blanchepierre", "both", -600, 300, 0.85),
+            ("clearing", "La Fontaine", "out", -150, 260),
+            ("skyline", "La Fontaine", "out", -450, 150, 900, 70, 0),
+            ("skyline", "Stavel", "out", -400, 300, 1100, 60, 0),
+        ],
+        edits=[
             ("flatten", "Le Kink", 90, 1.0),          # a fast kink instead of the Bus Stop
             ("flatten", "Blanchepierre", 160, 0.5),    # an easier flat-out left
             ("chicane", "Les Crêtes", 90, 25, -380),   # a chicane halfway along the long straight
@@ -308,9 +376,80 @@ def traced(key, t, step=5.0):
     return pts, [((i - sh) % n, name) for i, name, _ in labels]
 
 
+def turn_sign(pts, i, span=60.0):
+    """+1 a left turn, -1 a right turn at point i (the heading change over `span` metres each side)."""
+    n = len(pts)
+    k = max(1, int(span / 5.0))
+    a, b, c = pts[(i - k) % n], pts[i % n], pts[(i + k) % n]
+    cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+    return 1 if cross > 0 else -1
+
+
+def side_of(pts, i, word):
+    """+1 left, -1 right, 0 both; 'out' and 'in' mean the outside and inside of the corner at point i."""
+    if word == "both":
+        return 0
+    if word in ("out", "in"):
+        sg = turn_sign(pts, i)
+        return -sg if word == "out" else sg
+    return 1 if word == "left" else -1
+
+
+def decorate(t, pts, labels):
+    """Traced tracks: heights from a measured profile and camber at the corners (the tuple grows
+    to (x, y, width, in_corner, h, bank)), and the barrier / surface / feature lines for the .trk."""
+    import json
+    s, total = arc_s(pts)
+    where = {name: i for i, name in labels}
+    n = len(pts)
+    if "profile" in t:
+        prof = json.load(open(f"tools/track_refs/{t['profile']}.json"))
+        H, step, plen = prof["h"], prof["step"], prof["length"]
+        s0 = s[where[t["profile_anchor"]]]
+        base = t.get("profile_base", 0.0)
+        def height(sv):
+            d = ((sv - s0) % total) * plen / total / step
+            i = int(d)
+            f = d - i
+            return base + H[i % len(H)] * (1 - f) + H[(i + 1) % len(H)] * f
+        banks = []
+        for name, deg, half in t.get("banks", []):
+            i = where[name]
+            banks.append((s[i], half, -turn_sign(pts, i) * deg))  # + raises the left edge: + for a right-hander
+        def bank(sv):
+            tot = 0.0
+            for c, half, deg in banks:
+                d = min(abs(sv - c), total - abs(sv - c))
+                if d < half:
+                    tot += deg * math.cos(d / half * math.pi / 2) ** 2
+            return tot
+        pts = [p[:4] + (height(sv), bank(sv)) for p, sv in zip(pts, s)]
+    lines = []
+    def at(name, off):
+        return (s[where[name]] + off) % total
+    for name, side, a, b, m in t.get("barrier", []):
+        sd = {0: "both", 1: "left", -1: "right"}[side_of(pts, where[name], side)]
+        lines.append(f"barrier {sd} {at(name, a):.0f} {at(name, b):.0f} {m:g}")
+    for name, side, surf, a, b, f0, f1 in t.get("surfaces", []):
+        sd = {0: "both", 1: "left", -1: "right"}[side_of(pts, where[name], side)]
+        lines.append(f"surface {surf} {sd} {at(name, a):.0f} {at(name, b):.0f} {f0:g} {f1:g}")
+    for kind, name, side, a, b, *args in t.get("features", []):
+        if name is None:  # absolute track distances
+            sd = side
+            s0, s1 = a % total, b % total
+        else:
+            sd = {0: "both", 1: "left", -1: "right"}[side_of(pts, where[name], side)]
+            s0 = at(name, a)
+            s1 = at(name, b) if kind != "bridge" else s0
+        extra = " ".join(f"{v:g}" for v in args)
+        lines.append(f"feature {kind} {sd} {s0:.0f} {s1:.0f}" + (f" {extra}" if extra else ""))
+    return pts, lines
+
+
 def build(key, t):
     if "ref" in t:
         pts, labels = traced(key, t)
+        pts, t["_lines"] = decorate(t, pts, labels)
     else:
         pts = path(t["verts"], t["start"])
         k = t["length"] / arc_s(pts)[1]
@@ -385,6 +524,7 @@ def relief(t, verts, pts, apex):
 
 
 def write(key, t, pts):
+    extra = t.get("_lines", [])
     s, total = arc_s(pts)
     # the straight the start line sits on: from the last corner exit to the first corner entry
     ahead = next(s[i] for i in range(len(pts)) if pts[i][3])
@@ -403,7 +543,7 @@ def write(key, t, pts):
         f"runoff {t['runoff']}",
         f"pit right {entry % total:.0f} {lane_start % total:.0f} {lane_end:.0f} {exit_s:.0f}",
         f"pitspeed {t['pitspeed']}",
-    ]
+    ] + extra
     acc = 24.0
     for a, b in zip([pts[-1]] + pts, pts):
         acc += math.hypot(b[0] - a[0], b[1] - a[1])

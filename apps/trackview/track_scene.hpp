@@ -82,6 +82,15 @@ private:
     void buildTerrain(unsigned seed);
     void buildTrees(const std::string& assetsDir, unsigned seed);
     void buildProps(const std::string& assetsDir);
+    // What the track file's "feature" lines ask for beside the track (track_features.cpp): tyre walls, catch
+    // fences, marshal posts, grandstands, buildings, footbridges, hoardings, distant skylines.
+    void buildFeatures(const std::string& assetsDir);
+    // The first feature of this kind that covers track distance s on that side (+1 left, -1 right).
+    const rr::Track::Feature* featureAt(const char* kind, float s, int side) const;
+    // 0..1: how much the "forest" and "clearing" lines push the woodland here (-1: they say nothing).
+    float forestBias(float s, int side) const;
+    Texture2D skylineTex_{};
+    gfx::TextureSet skyline_;
     // The paddock: pit garages along the pit lane, a grandstand across from them.
     bool garagesAt(float s) const;     // pit side, along the pit lane
     bool grandstandAt(float s) const;  // the other side of the pit straight

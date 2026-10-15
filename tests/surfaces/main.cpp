@@ -71,6 +71,28 @@ int main() {
     }
     CHECK(trap && kerb);
 
+    // "barrier" zones set the wall's distance (easing in and out), the narrowest is runoff(); "feature" lines are kept
+    {
+        std::ofstream out(tmp);
+        out << text << "\nbarrier right 300 500 25\nbarrier both 700 800 4\nfeature tyrewall left 100 160 2\nfeature bridge both 400 400\n";
+    }
+    rr::Track b;
+    CHECK(b.load(tmp, &err));
+    const float bh = b.at(b.indexAt(400)).halfWidth;
+    CHECK(std::fabs(b.barrierOffset(400, -1, bh) - (bh + 25.0f)) < 0.5f);     // inside the zone, right
+    CHECK(std::fabs(b.barrierOffset(400, 1, bh) - (bh + b.runoff())) > 1.0f);  // the left stays the default (or the narrowest)
+    CHECK(std::fabs(b.barrierOffset(750, 1, bh) - (bh + 4.0f)) < 0.5f && std::fabs(b.barrierOffset(750, -1, bh) - (bh + 4.0f)) < 0.5f);
+    CHECK(b.runoff() <= 4.0f + 1e-3f);
+    CHECK(std::fabs(b.barrierOffset(299, -1, bh) - b.barrierOffset(301, -1, bh)) < 2.5f);  // eased: no step across the zone start
+    CHECK(b.features().size() == 2 && b.features()[0].kind == "tyrewall" && b.features()[0].side == 1 &&
+          b.features()[0].args.size() == 1 && b.features()[1].kind == "bridge" && b.features()[1].side == 0);
+    {
+        std::ofstream out(tmp);
+        out << text << "\nbarrier up 1 2 3\n";
+    }
+    rr::Track bad;
+    CHECK(!bad.load(tmp, &err));
+
     std::remove(tmp.c_str());
     std::printf(fails ? "surfaces: %d failure(s)\n" : "surfaces ok\n", fails);
     return fails ? 1 : 0;

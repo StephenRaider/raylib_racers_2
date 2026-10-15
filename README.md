@@ -417,6 +417,8 @@ drs 3900 4000 4300       # optional DRS zone: detection, start, end (metres alon
                          # without any, the longest straights (450 m or more, at most three) get one
 offtrack grass           # what lies beyond the kerbs: grass (default), gravel, dirt, ...
 surface gravel right 800 900 1.2 20   # type, side (left/right/both), from s, to s, metres out from the edge (optional)
+barrier left 800 900 24               # side, from s, to s, metres from the tarmac edge to the wall (default: runoff)
+feature tyrewall left 800 880 2       # what the viewer builds beside the track: kind, side, from s, to s, numbers
 p 0 0
 p 300 0
 p 400 120 16     # wider here
@@ -428,6 +430,16 @@ Surfaces (tarmac, kerb, grass, gravel, dirt, pit, runoff) each have their own gr
 with the most drag, run-off 95%). Robots read the one under the car in `surface` (ABI 11). The viewer plays kerb rumble, grass and
 gravel sounds, generated in `apps/viewer/surface_sound.cpp`.
 
+A `barrier` line sets the wall's distance in a stretch (it eases between values over about 50 m; the
+narrowest one is the `runoff` robots see). `feature` lines are for the viewer only (the sim ignores them):
+`tyrewall` (stacked tyres in front of the barrier, rows and height optional), `concrete` (a Jersey wall instead
+of armco), `fence` (a catch fence, height), `marshal` (a post every n metres), `grandstand` (rows, setback),
+`building` (height, setback, depth), `bridge` (a footbridge over the track at s), `billboard` (hoardings, board
+length), `paddock` (tents and transporters behind the garages), `brakeboards` (150/100/50 m boards before the
+slower corners), `bank` (the land rises beside the track, height), `forest` and `clearing` (woodland up to the fence,
+density, or none) and `skyline` (a flat cut-out village or row of towers far off, to fake a town beyond the hills:
+distance, height, style 0 village or 1 towers). The tarmac and run-off `surface` strips are drawn too.
+
 Besides Circuit Raylib, the oval and Highmoor Ridge there are seven circuits inspired by real
 ones (shape kept, details changed): Autodromo Monzetta (Monza), Ardennes Ring
 (Spa), Silverfield (Silverstone), Magyar Park (Hungaroring), Brands Lane (Brands
@@ -438,6 +450,14 @@ from circuit maps (`tools/track_refs/`), then bent, reshaped corner by corner an
 given their own widths and pit lanes. `python3 tools/trackgen.py --plot DIR`
 also draws a 2D map of each.
 
+**Ardennes Ring** (`spa`) is the detailed one: its road follows the real circuit's heights (103 m of relief:
+the dip at Ruisseau, the Raidillon-style climb of La Montee at up to 15%, the long rise of the Kemmel-style
+straight, the fall to Stavel), measured off a 3D model of Spa-Francorchamps (see CREDITS.md) and laid over the
+traced layout by `tools/trackgen.py`; it has camber in the corners, walls close to the road on the climb and 24-28 m
+of run-off and gravel at La Fontaine, Grand Virage and Blanchepierre, and beside it tyre walls, concrete walls, catch
+fences, marshal posts, grandstands, a paddock, footbridges, hoardings, brake boards, a village skyline and a spruce
+forest right up to the fence.
+
 **Highmoor Ridge** (`highmoor`) is RR2's test track: an original 4.6 km hill circuit
 with 37 m of elevation, a banked summit hairpin and a corkscrew that drops at 14%.
 Its corners carry heights and banks in `tools/trackgen.py`, and `--plot` adds an
@@ -447,7 +467,7 @@ elevation profile.
 
 `rr_trackview` draws a track in 3D with RR2's new renderer: the road built from the
 track's heights and banking, kerbs, armco and concrete walls, gravel traps, tyre
-walls, marshal posts, pit garages and a grandstand, conifer plantations and the
+walls, marshal posts, pit garages and a grandstand, whatever a track's `feature` lines add, conifer plantations and the
 moorland around it with baked sky occlusion, lit by an HDRI sky and a sun with two
 shadow cascades, all with PBR materials. No race or cars yet. `--bench` drives a lap
 and prints the frame time (`--cam 1-4` picks the camera, `--msaa 1/2/4` the
@@ -459,6 +479,8 @@ laptop GPU.
 ```
 ./build/rr_trackview --track highmoor                # 1-4 cameras, F2 sky, [ ] turn the sky, F12 screenshot
 ./build/rr_trackview --shots shots/ --ssaa 2          # render the preset views to PNGs and exit
+./build/rr_trackview --track spa --shots shots/ --view "kemmel,1500,0,1.4,260,0,3,60" --aerial "hairpin,300,-90,70,-110,60"
+                                                      # your own views: name,s,lateral,up,ahead,latTarget,upTarget,fov
 ```
 
 ### Viewer v2

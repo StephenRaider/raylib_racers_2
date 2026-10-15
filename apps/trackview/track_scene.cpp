@@ -227,6 +227,7 @@ bool TrackScene::build(const rr::Track& track, const std::string& assetsDir, uns
     buildRoad(seed);
     buildTrees(assetsDir, seed);
     buildProps(assetsDir);
+    buildFeatures(assetsDir);
     for (Part& p : parts_) {
         p.boxes.clear();
         for (Mesh& mesh : p.lod) {
@@ -267,7 +268,7 @@ void TrackScene::unload() {
     treeTiles_.clear();
     for (Texture2D* t : {&colorNear_, &colorFar_})
         if (t->id) UnloadTexture(*t), t->id = 0;
-    for (gfx::TextureSet* s : {&asphalt_, &asphaltWorn_, &concrete_, &grass_, &gravel_, &dirt_, &metal_, &rubber_, &foliage_, &chain_})
+    for (gfx::TextureSet* s : {&asphalt_, &asphaltWorn_, &concrete_, &grass_, &gravel_, &dirt_, &metal_, &rubber_, &foliage_, &chain_, &skyline_})
         gfx::unloadTextureSet(*s);  // foliage_ owns the tree atlas
     treeAtlas_ = Texture2D{};
 }
@@ -372,7 +373,7 @@ void TrackScene::buildRoad(unsigned seed) {
                 const auto& a = tr.at(i);
                 const float s = sAt(i);
                 float off = tr.barrierOffset(s, sd, a.halfWidth);
-                const bool concrete = concreteAt(s);
+                const bool concrete = concreteAt(s) || featureAt("concrete", s, sd) != nullptr;
                 if (sd == tr.pit().side && garagesAt(s) && garagesAt(sAt(std::max(i - 1, 0)))) {
                     wall.cut();
                     rail.cut();
@@ -477,6 +478,27 @@ void TrackScene::buildRoad(unsigned seed) {
             };
             if (side > 0) quad(paint, Q(-0.3f, lo), Q(0.3f, lo), Q(0.3f, hi), Q(-0.3f, hi), {0, 0}, {0, 0}, {0, 0}, {0, 0});
             else quad(paint, Q(-0.3f, lo), Q(-0.3f, hi), Q(0.3f, hi), Q(0.3f, lo), {0, 0}, {0, 0}, {0, 0}, {0, 0});
+        }
+    }
+    // paved run-off: the track file's "surface tarmac|runoff" strips beyond the kerb, out to the barrier
+    for (const auto& z : tr.surfaceZones()) {
+        if (z.type != RR_SURF_TARMAC && z.type != RR_SURF_RUNOFF) continue;
+        for (int sd : {1, -1}) {
+            if (z.side != 0 && z.side != sd) continue;
+            Strip st{&apron};
+            for (int i = 0; i <= n; ++i) {
+                const auto& a = tr.at(i);
+                const float s = sAt(i);
+                if (!tr.inSpan(s, z.s0, z.s1)) { st.cut(); continue; }
+                // beyond the kerbs where there are any, else right up to the tarmac edge
+                const float lo = a.halfWidth + std::max(z.from, tr.kerbAt(i) ? 1.25f : 0.3f);
+                const float hi = std::min(a.halfWidth + z.to, tr.barrierOffset(s, sd, a.halfWidth) - 0.3f);
+                if (hi <= lo + 0.3f) { st.cut(); continue; }
+                const float in = sd * lo, out = sd * hi;
+                std::vector<Vertex> r = {vert(P(i, in, 0.03f), {0, 1, 0}, {in, s}), vert(P(i, out, 0.03f), {0, 1, 0}, {out, s})};
+                if (sd < 0) std::swap(r[0], r[1]);
+                st.ring(r);
+            }
         }
     }
     // start / finish line
@@ -654,9 +676,12 @@ void TrackScene::buildTerrain(unsigned seed) {
                 int side = lat > 0 ? 1 : -1;
                 float barrier = tr.barrierOffset(loc.s, side, loc.halfWidth);
                 float edge = edgeProfile(z0, bank, loc.halfWidth, lat);
+                float flat = flatUntil(loc.s, side, loc.halfWidth);
+                // a "bank" line of the track file raises the land beside the track (a cutting's wall)
+                if (const rr::Track::Feature* bk = featureAt("bank", loc.s, side))
+                    h += (bk->args.empty() ? 8.0f : bk->args[0]) * smoothstepf(flat + 2.0f, flat + 26.0f, al);
                 // embankments and cuttings no steeper than about 1 in 2.5
                 float band = 25.0f + 2.5f * std::fabs(h - edge);
-                float flat = flatUntil(loc.s, side, loc.halfWidth);
                 float w = smoothstepf(flat + 1.5f, flat + 1.5f + band, al);
                 h = edge + (h - edge) * w;
                 bool paved = al < loc.halfWidth + 1.3f || (tr.hasPit() && tr.inPitArea(loc.s) && side == tr.pit().side &&
@@ -674,7 +699,10 @@ void TrackScene::buildTerrain(unsigned seed) {
                 float foot = 1.0f - smoothstepf(0.3f, 1.4f, std::fabs(al - barrier - 0.3f));
                 dirt = std::max(dirt * smoothstepf(barrier, barrier + 8.0f, al), foot * 0.7f);
                 if (zs == RR_SURF_DIRT) dirt = 0.95f;
-                forest *= smoothstepf(barrier + 10.0f, barrier + 16.0f, al);
+                // the track file's "forest" and "clearing" lines push the woodland up or away
+                const float fb = forestBias(loc.s, side);
+                if (fb >= 0) forest = fb <= 0 ? 0.0f : std::max(forest, fb * (0.6f + 0.4f * fbm(x / 41.0f, z / 41.0f, 3, (int)seed_ + 52)));
+                forest *= smoothstepf(barrier + (fb > 0 ? 3.5f : 10.0f), barrier + (fb > 0 ? 8.0f : 16.0f), al);
                 if (tr.hasPit() && tr.inPitArea(loc.s)) forest *= smoothstepf(88.0f, 96.0f, al);  // as the trees
             }
             dirt = std::max(dirt, forest * 0.9f);  // needles and bare earth under the trees
@@ -891,7 +919,8 @@ void TrackScene::buildTerrain(unsigned seed) {
 
 float TrackScene::plantation(Vec2 p) const {
     float m = fbm(p.x / 420.0f + 31.0f, p.y / 420.0f - 7.0f, 4, (int)seed_ + 40);
-    return smoothstepf(0.57f, 0.63f, m);
+    // a forest track (the Ardennes) is mostly woodland, with the meadows as the clearings
+    return tr_ && tr_->scenery() == "forest" ? smoothstepf(0.45f, 0.53f, m) : smoothstepf(0.57f, 0.63f, m);
 }
 
 namespace {
@@ -970,25 +999,41 @@ void TrackScene::buildTrees(const std::string& assetsDir, unsigned seed) {
             Vec2 p{wx, -wz};
             float forest = plantation(p);
             float dist;
+            bool verge = false, forestLine = false;
+            float vergeP = 0.5f;
             int i = nearest(p, 400.0f, &dist);
             if (i >= 0) {
                 rr::TrackLoc loc = tr.locate(p, i, 4);
                 float al = std::fabs(loc.lateral);
-                float barrier = tr.barrierOffset(loc.s, loc.lateral > 0 ? 1 : -1, loc.halfWidth);
-                if (al < barrier + 14.0f) continue;  // keep the runoff and the view clear
+                const int sideT = loc.lateral > 0 ? 1 : -1;
+                float barrier = tr.barrierOffset(loc.s, sideT, loc.halfWidth);
+                // the "forest" lines of the track file bring the trees up to the fence, with undergrowth in front
+                const float fb = forestBias(loc.s, sideT);
+                forestLine = fb > 0;
+                if (al < barrier + (fb > 0 ? 5.0f : 14.0f)) {  // keep the runoff and the view clear
+                    // (scrub along the fence: on a woodland track in the forest lines, a little less in the meadows)
+                    if ((fb > 0.3f || (tr.scenery() == "forest" && fb != 0)) && al > barrier + 2.0f) verge = true;
+                    else continue;
+                    vergeP = fb > 0.3f ? 0.5f : 0.2f;
+                }
                 if (tr.hasPit() && tr.inPitArea(loc.s) && al < 90.0f) continue;  // the paddock
-                forest *= smoothstepf(barrier + 10.0f, barrier + 16.0f, al);
+                if (fb >= 0) forest = fb <= 0 ? 0.0f : std::max(forest, fb * (0.6f + 0.4f * fbm(wx / 41.0f, wz / 41.0f, 3, (int)seed_ + 52)));
+                forest *= smoothstepf(barrier + (fb > 0 ? 3.5f : 10.0f), barrier + (fb > 0 ? 8.0f : 16.0f), al);
                 if (tr.hasPit() && tr.inPitArea(loc.s)) forest *= smoothstepf(88.0f, 96.0f, al);  // as the trees
             }
             float r = hashf(cx, cy, sd + 2);
             int m = -1;
             float scale = 1;
             int pick = (int)(hashf(cx, cy, sd + 3) * 1000);
-            if (r < forest * 0.92f) {
+            if (verge) {
+                if (hashf(cx, cy, sd + 60) > vergeP) continue;
+                m = bushes[pick % bushes.size()];
+                scale = 1.5f + 1.9f * hashf(cx, cy, sd + 4);
+            } else if (r < forest * (forestLine ? 0.84f : 0.92f)) {
                 m = conifers[pick % conifers.size()];
-                scale = 13.0f + 8.0f * hashf(cx, cy, sd + 4);
-            } else if (r < forest * 0.92f + 0.08f * smoothstepf(0.05f, 0.4f, forest) + 0.012f) {
-                bool bush = hashf(cx, cy, sd + 5) < 0.55f;
+                scale = forestLine ? 16.0f + 11.0f * hashf(cx, cy, sd + 4) : 13.0f + 8.0f * hashf(cx, cy, sd + 4);
+            } else if (r < forest * (forestLine ? 0.84f : 0.92f) + (forestLine ? 0.16f : 0.08f) * smoothstepf(0.05f, 0.4f, forest) + 0.012f) {
+                bool bush = hashf(cx, cy, sd + 5) < (forestLine ? 0.45f : 0.55f);
                 m = bush ? bushes[pick % bushes.size()] : broadleaf[pick % broadleaf.size()];
                 scale = bush ? 1.4f + 2.2f * hashf(cx, cy, sd + 4) : 7.0f + 7.0f * hashf(cx, cy, sd + 4);
             }
@@ -1016,7 +1061,8 @@ void TrackScene::buildTrees(const std::string& assetsDir, unsigned seed) {
             std::vector<int> tris;
             for (int q = 0; q + 2 < (int)m.p.size(); q += 3) {
                 float lo = std::min({m.p[q].y, m.p[q + 1].y, m.p[q + 2].y}), hi = std::max({m.p[q].y, m.p[q + 1].y, m.p[q + 2].y});
-                if (lod == 0 || hi - lo > 0.5f * m.height) tris.push_back(q);
+                // (a broadleaf tree's big cards alone are bare trunks and branches, which read as dark specks far off)
+                if (lod == 0 || hi - lo > 0.5f * m.height || aoFloor > 0.5f) tris.push_back(q);
             }
             if (lod == 1 && tris.size() < 2) {
                 tt.lod[1] = tt.lod[0];
@@ -1091,7 +1137,16 @@ float TrackScene::flatUntil(float s, int side, float hw) const {
     const rr::Track& tr = *tr_;
     if (tr.hasPit() && side == tr.pit().side && tr.inPitArea(s)) return hw + rr::Track::kPitBarrier + 45.0f;
     if (tr.hasPit() && side != tr.pit().side && grandstandAt(s)) return hw + tr.runoff() + 24.0f;
-    return tr.barrierOffset(s, side, hw);
+    float flat = tr.barrierOffset(s, side, hw);
+    // the ground stays level under the stands and buildings the feature lines put beside the track
+    for (const rr::Track::Feature& f : tr.features()) {
+        if ((f.side != 0 && f.side != side) || (f.kind != "grandstand" && f.kind != "building") || !tr.inSpan(s, f.s0, f.s1))
+            continue;
+        auto arg = [&](size_t i, float d) { return i < f.args.size() ? f.args[i] : d; };
+        if (f.kind == "grandstand") flat = std::max(flat, tr.barrierOffset(s, side, hw) + arg(1, 6.0f) + std::clamp(arg(0, 8.0f), 3.0f, 24.0f) * 0.9f + 5.0f);
+        else flat = std::max(flat, tr.barrierOffset(s, side, hw) + arg(1, 14.0f) + arg(2, 16.0f) + 3.0f);
+    }
+    return flat;
 }
 
 namespace {

@@ -129,7 +129,8 @@ if(RR_BUILD_VIEWER)
   # RR2's PBR renderer and 3D track, shared by the track view and viewer v2
   add_library(rr_gfx STATIC
     apps/trackview/gfx.cpp
-    apps/trackview/track_scene.cpp)
+    apps/trackview/track_scene.cpp
+    apps/trackview/track_features.cpp)
   target_include_directories(rr_gfx PUBLIC apps/trackview)
   target_link_libraries(rr_gfx PUBLIC rr_core raylib)
   target_compile_options(rr_gfx PRIVATE ${RR_WARNINGS} $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wno-missing-field-initializers>)

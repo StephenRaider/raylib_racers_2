@@ -99,6 +99,28 @@ bool Track::load(const std::string& path, std::string* err) {
             float a, b;
             if (ss >> a >> b) { z.from = a; z.to = b; }
             zones_.push_back(z);
+        } else if (key == "barrier") {
+            std::string side;
+            BarrierZone z{};
+            ss >> side;
+            z.side = side == "left" ? 1 : side == "right" ? -1 : 0;
+            if ((side != "left" && side != "right" && side != "both") || !(ss >> z.s0 >> z.s1 >> z.dist)) {
+                if (err) *err = path + ":" + std::to_string(lineNo) + ": expected 'barrier left|right|both s0 s1 metres'";
+                return false;
+            }
+            barrierZones_.push_back(z);
+        } else if (key == "feature") {
+            std::string side;
+            Feature f{};
+            ss >> f.kind >> side;
+            f.side = side == "left" ? 1 : side == "right" ? -1 : 0;
+            if (f.kind.empty() || (side != "left" && side != "right" && side != "both") || !(ss >> f.s0 >> f.s1)) {
+                if (err) *err = path + ":" + std::to_string(lineNo) + ": expected 'feature <kind> left|right|both s0 s1 [numbers]'";
+                return false;
+            }
+            float v;
+            while (ss >> v) f.args.push_back(v);
+            features_.push_back(f);
         } else if (key == "pitspeed") {
             ss >> pitCfg_.speed_limit;
         } else if (key == "drs") {
@@ -282,7 +304,9 @@ void Track::finalize() {
     }
     info_.name = name_.c_str();
     info_.length = length_;
-    info_.runoff = runoff_;
+    minRunoff_ = runoff_;
+    for (const BarrierZone& z : barrierZones_) minRunoff_ = std::min(minRunoff_, z.dist);
+    info_.runoff = minRunoff_;
     info_.num_points = n;
     info_.points = apiPoints_.data();
     info_.points3 = apiPoints3_.data();
@@ -334,6 +358,29 @@ void Track::finalize() {
     for (SurfaceZone& z : zones_) {
         z.s0 = std::fmod(z.s0, length_); if (z.s0 < 0) z.s0 += length_;
         z.s1 = std::fmod(z.s1, length_); if (z.s1 < 0) z.s1 += length_;
+    }
+    // Barrier distance: the runoff, or what a "barrier" line says, eased over about 25 m so the
+    // wall does not step.
+    barrierL_.clear();
+    barrierR_.clear();
+    if (!barrierZones_.empty()) {
+        barrierL_.assign(n, runoff_);
+        barrierR_.assign(n, runoff_);
+        for (const BarrierZone& z : barrierZones_)
+            for (int i = 0; i < n; ++i)
+                if (inSpan(at(i).s, z.s0, z.s1)) {
+                    if (z.side >= 0) barrierL_[i] = z.dist;
+                    if (z.side <= 0) barrierR_[i] = z.dist;
+                }
+        for (std::vector<float>* b : {&barrierL_, &barrierR_})
+            for (int pass = 0; pass < 4; ++pass) {
+                std::vector<float> src = *b;
+                for (int i = 0; i < n; ++i) {
+                    float sum = 0;
+                    for (int o = -10; o <= 10; ++o) sum += src[wrap(i + o)];
+                    (*b)[i] = sum / 21.0f;
+                }
+            }
     }
 }
 
@@ -463,7 +510,8 @@ bool Track::inPitLane(float s) const { return hasPit() && inSpan(s, info_.pit.la
 
 float Track::barrierOffset(float s, int side, float halfWidth) const {
     if (side == info_.pit.side && inPitArea(s)) return halfWidth + kPitBarrier;
-    return halfWidth + runoff_;
+    if (barrierL_.empty()) return halfWidth + runoff_;
+    return halfWidth + (side > 0 ? barrierL_ : barrierR_)[indexAt(s)];
 }
 
 bool Track::paved(float s, float lateral, float halfWidth) const {

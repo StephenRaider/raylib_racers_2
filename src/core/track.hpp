@@ -60,6 +60,13 @@ struct TrackLoc {
 //                              (may wrap the line), from..to metres out from the edge (default
 //                              from the kerb to the barrier). Later lines win. Surfaces: tarmac,
 //                              kerb, grass, gravel, dirt, pit, runoff.
+//   barrier <left|right|both> <s0> <s1> <metres>
+//                              the barrier this far beyond the tarmac edge between s0 and s1
+//                              (default: the runoff; the wall eases between values over ~25 m)
+//   feature <kind> <left|right|both> <s0> <s1> [numbers...]
+//                              what the viewer builds beside the track (grandstand, tyrewall,
+//                              fence, marshal, building, forest, clearing, ...; see
+//                              apps/trackview/track_scene.cpp). The simulation ignores them.
 //   drs <detect_s> <start_s> <end_s>
 //                              a DRS zone (s in metres, may wrap the line); with none given
 //                              the zones are the longest straights, see findDrsZones. "drs none"
@@ -75,7 +82,7 @@ public:
     // The viewer's scenery theme ("scenery forest" in the file; "" = the default mix).
     const std::string& scenery() const { return scenery_; }
     float length() const { return length_; }
-    float runoff() const { return runoff_; }
+    float runoff() const { return minRunoff_; }  // the narrowest runoff, the one a robot can rely on
     float spacing() const { return ds_; }
     int size() const { return (int)samples_.size(); }
     const TrackSample& at(int i) const { return samples_[wrap(i)]; }
@@ -134,6 +141,15 @@ public:
     // The surface a "surface" line gives this spot, or -1 for none.
     int zoneSurface(float s, float lateral, float halfWidth) const;
 
+    // Things the viewer builds beside the track (the "feature" lines).
+    struct Feature {
+        std::string kind;
+        int side;                 // +1 left, -1 right, 0 both
+        float s0, s1;             // track distance range (may wrap the line)
+        std::vector<float> args;  // kind-specific numbers
+    };
+    const std::vector<Feature>& features() const { return features_; }
+
     // Self-intersection / overlap warnings found while building.
     const std::vector<std::string>& warnings() const { return warnings_; }
 
@@ -169,6 +185,11 @@ private:
     std::vector<float> gravelSide_;
     bool autoGravel_ = true;
     std::vector<SurfaceZone> zones_;
+    struct BarrierZone { int side; float s0, s1, dist; };
+    std::vector<BarrierZone> barrierZones_;
+    std::vector<float> barrierL_, barrierR_;  // per sample: tarmac edge to barrier, left and right
+    float minRunoff_ = 6;
+    std::vector<Feature> features_;
     int offtrack_ = 2;  // RR_SURF_GRASS
     std::string name_ = "unnamed";
     std::string scenery_;

@@ -43,6 +43,17 @@ split into one folder per car (body and wheels, metres, RR layout; see each `car
 wing's DRS flap cut out and hinged (`tools/rig_drs.py`), and the paint re-mapped as a livery sheet
 (`tools/unwrap_livery.py`). Only `f1_2013_02` carries the wheels; the others use its.
 
+## tools/track_refs/spa_profile.json
+
+The road heights of the Ardennes Ring come from "Circuit de Spa-Francorchamps 1992 layout"
+(https://skfb.ly/pLQ7P) by Dave Love, licensed under Creative Commons Attribution 4.0
+(http://creativecommons.org/licenses/by/4.0/). Only the height of its road along the lap was read off
+(metres above the lowest point, every 10 m); none of its geometry or textures is in the repository.
+
+The layout of the structures beside the track (where grandstands, tyre walls, fences, marshal posts and buildings
+stand, how thick the forest is) was designed with the real circuits in mind; the 3D scenes of Real Racing 3
+were looked at as a reference only, and nothing from them is in the repository.
+
 ## assets/sound
 
 `exhaust_f1v10.wav` is `smooth_35.wav` from [engine-sim](https://github.com/ange-yaghi/engine-sim)
